@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# profile.sm -- Outline holes, trims, fillets and a slot to a bend line
+# Copyright (c) 2026 Jakob Kastelic
+
+sheet 2 1 0.44
+plate p 0 0 100 50 origin 0 0 0 axes +x +y
+flange f p +y -90 20
+# A slot through the flange, from its free end to the bend line.
+cut 40 -30 60 -3 along y at 52 depth 4
+# A notch with fillets of its inner corners.
+cut 70 -1 90 10 along z
+round p 3 at 70 10 0
+round p 3 at 90 10 0
+# A stadium slot and a D-shaped hole.
+outline along z
+point 10 20
+point 30 20 arc 30 25 ccw
+point 30 30
+point 10 30 arc 10 25 ccw
+outline along z
+point 45 30
+point 55 30 arc 50 25 cw
+# A trimmed corner: an arc, then a line to the bottom edge.
+trim along z
+point 100 10 arc 95 10 cw
+point 95 5
+point 95 0
+# A countersunk hole, and one countersunk from the other face.
+hole 4 80 35 along z csink 6 82 near
+hole 4 90 35 along z csink 6 82 far

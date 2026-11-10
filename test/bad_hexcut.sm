@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_hexcut.sm -- A hex pattern on a rectangular cut
+# Copyright (c) 2026 Jakob Kastelic
+
+sheet 1.5 1 0.44
+plate p 0 0 80 80 origin 0 0 0 axes +x +y
+cut 38 38 42 42 along z pattern hex 5.5 within 30

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# channel.params -- Sizes of the test channel
+# Copyright (c) 2026 Jakob Kastelic
+
+W = 100 mm
+L = 4 in
+H = 25
+T = 1.5
+R = 1
+K = 0.44

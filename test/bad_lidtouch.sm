@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_lidtouch.sm -- A lid that rests on the walls it closes over
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding 0007: the cube without its back wall.  The lid lies on
+# the tops of the left and front walls and its bend touches the corner
+# of the front wall, so the part would touch itself.
+
+S = 50
+t = 1
+r = 1
+tr = t + r
+sheet t r 0.44
+plate base tr tr S-tr S-tr origin 0 S 0 axes +x -y
+flange left base -x -90 S-t-tr
+flange right base +x -90 S-2*tr
+flange lid right +x -90 S-tr
+flange front base -y -90 S-t-tr

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_frac.sm -- A fractional pattern count, which smfold must reject
+# Copyright (c) 2026 Jakob Kastelic
+
+sheet 2 1 0.44
+plate p 0 0 100 50 origin 0 0 0 axes +x +y
+hole 5 10 25 along z pattern x 2.5 20

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_duppoint.sm -- An outline with the same point twice in a row
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding 0010: the repeated point made an edge of no length,
+# and OCCT read the STEP file as a solid of the wrong volume.
+
+T = 3
+R = 6.8237
+sheet T R 0.4074
+ox = 54.1673
+oy = 5.0293
+oz = -45.971
+plate base 23.6507 26.4881 89.3212 130.6038 origin ox oy oz axes +y +x
+outline along z
+point 87.0926 55.1029
+point 81.9134 65.4692
+point 81.9134 65.4692
+point 81.9134 55.1029 arc 84.503 55.1029 ccw

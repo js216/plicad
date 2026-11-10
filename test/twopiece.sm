@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# twopiece.sm -- A plate that a cut divides into two pieces
+# Copyright (c) 2026 Jakob Kastelic
+
+# tostep writes one solid for each piece.
+sheet 1 1 0.44
+plate base 0 0 30 10 origin 0 0 0 axes +x +y
+cut 14 -1 16 11 along z

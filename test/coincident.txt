@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# coincident.txt -- Three copies of a part in one place
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding 0008: interfere took long to count the samples of parts
+# that lie wholly in each other, once for each face of the other part.
+# Each pair now counts each sample once, up to POINTS_MAX.
+
+a0 bends.fold rot y -118.7 rot z -121.85 rot z -90 at 16.39 -30.22 -25.77
+a0 bends.fold rot y -118.7 rot z -121.85 rot z -90 at 16.39 -30.22 -25.77
+a1 bends.fold rot y -118.7 rot z -121.85 rot z -90 at 16.39 -30.22 -25.77

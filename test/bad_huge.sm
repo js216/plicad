@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_huge.sm -- A plate far beyond any part
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding 0009: the origin at -1e308 mm left no solid that
+# OCCT could read.  Numbers beyond 1e6 are an error.
+
+sheet 1 2.0442 0.2875
+plate base 0 0 62.6326 136.9872 origin 46.7812 0 -1e308 axes +y +z

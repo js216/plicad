@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# holeclear.sm -- A lid over a wall it clears by a hole
+# Copyright (c) 2026 Jakob Kastelic
+
+# A narrow wall stands up to the lid, which runs on past it, under a
+# hole in the lid: the two would touch at the top of the wall, but the
+# hole leaves air there.
+sheet 1 1 0.44
+plate base 2 2 48 48 origin 0 50 0 axes +x -y
+flange left base -x -90 47 span 20 22
+flange right base +x -90 46
+flange lid right +x -90 51
+hole 3 0.5 29 along z at 49.5 depth 1

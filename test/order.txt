@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# order.txt -- The move applies after the rotations, wherever it is written
+# Copyright (c) 2026 Jakob Kastelic
+
+a ../build/plate.fold at 10 0 0 rot z 90
+b ../build/plate.fold rot z 90 at 10 0 0

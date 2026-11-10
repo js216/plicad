@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# channel.sm -- A channel with a jog, tabs on a window and a hem-like return
+# Copyright (c) 2026 Jakob Kastelic
+
+include channel.params
+sheet T R K
+tr = T + R
+plate web tr 0 W-tr L origin 0 0 0 axes +x +y
+flange left web -x -90 H-tr span -5 L+5
+flange right web +x -90 H-tr
+phi = atan2(T, 6)
+flange jog right +x -phi 5
+flange lip jog +x phi 10
+# A window in the web, with a tab bent down from its edge.
+cut 30 40 70 80 along z
+cut 44 75 46 84 along z
+cut 54 75 56 84 along z
+flange tab web -y -90 3 at 80+tr span 46 54
+flange ledge tab -y 90 4
+hole 3 20 -10 along x pattern y 4 15
+hole 4 W/2 10 along z

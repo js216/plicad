@@ -1,0 +1,7 @@
+part outline_ray
+volume 4807.9097
+area 9974.7752
+bbox 0.0000 0.0000 -1.0000 100.0000 50.0000 0.0000
+faces 11 plane 8 cylinder 3
+hole 30.0000 10.1000 -0.5000 d 2.0000 axis 0 0 1
+flat 100.0000 50.0000 area 4807.910 holes 1 bends 0

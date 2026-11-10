@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# arc_hole.sm -- A hole near a rounded corner, clear of its arc
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding: the hole was rejected, measured to the whole circle
+# of the arc.
+sheet 1 1 0.4
+plate base 0 0 100 50 origin 0 0 0 axes +x +y
+round base 10 at 0 0 0
+hole 6 20 8 along z

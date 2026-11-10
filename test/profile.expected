@@ -1,0 +1,8 @@
+part profile
+volume 12465.4843
+area 13552.7720
+bbox 0.0000 0.0000 -23.0000 100.0000 53.0000 0.0000
+faces 34 plane 22 cylinder 10 cone 2
+hole 80.0000 35.0000 -1.0000 d 4.0000 axis 0 0 1
+hole 90.0000 35.0000 -1.0000 d 4.0000 axis 0 0 1
+flat 100.0000 72.9531 area 6222.325 holes 2 bends 1

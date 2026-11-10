@@ -1,0 +1,6 @@
+part corner
+volume 30354.3313
+area 27835.9261
+bbox 0.0000 0.0000 0.0000 100.0000 43.0480 60.0000
+faces 42 plane 30 cylinder 12
+flat 179.4578 89.4578 area 13215.458 holes 0 bends 4

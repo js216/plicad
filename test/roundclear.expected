@@ -1,0 +1,6 @@
+part roundclear
+volume 6740.0309
+area 13955.0486
+bbox 0.0000 2.0000 0.0000 50.0000 48.0000 50.0000
+faces 22 plane 14 cylinder 8
+flat 193.7858 46.0000 area 6731.172 holes 0 bends 3

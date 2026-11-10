@@ -1,0 +1,6 @@
+part twopiece
+volume 280.0000
+area 656.0000
+bbox 0.0000 0.0000 -1.0000 30.0000 10.0000 0.0000
+faces 12 plane 12 cylinder 0
+flat 30.0000 10.0000 area 280.000 holes 0 bends 0

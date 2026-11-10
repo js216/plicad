@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# cube.sm -- A cubical cup folded from a cross-shaped blank
+# Copyright (c) 2026 Jakob Kastelic
+
+# The base plate is the centre of the cross. Four walls fold up from its
+# edges to the full height, and the top stays open.
+
+S = 50                  # outer edge length, mm
+t = 1                   # sheet thickness
+r = 1                   # inside bend radius
+tr = t + r              # setback of a 90 degree bend
+sheet t r 0.44
+plate base tr tr S-tr S-tr origin 0 S 0 axes +x -y
+flange left base -x -90 S-tr
+flange right base +x -90 S-tr
+flange front base -y -90 S-tr
+flange back base +y -90 S-tr

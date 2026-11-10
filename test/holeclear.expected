@@ -1,0 +1,7 @@
+part holeclear
+volume 6886.4137
+area 14268.3893
+bbox -3.0000 2.0000 0.0000 50.0000 48.0000 50.0000
+faces 23 plane 16 cylinder 7
+hole 0.5000 29.0000 49.5000 d 3.0000 axis 0 0 1
+flat 196.7858 46.0000 area 6877.554 holes 1 bends 3

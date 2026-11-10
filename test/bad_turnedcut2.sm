@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_turnedcut2.sm -- A cut on a turned flange with a span and zone
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding 0003: the flat area of measure missed the model.
+sheet 2.286 5.7003 0.3245
+plate base 0 -46.0752 110.3492 20.676 origin 49.2298 0 9.1558 axes +z +y
+flange f0 base -y 95.6947 64.0201 radius 0.371
+flange f1 f0 -x 90 37.4167 span -116.5998 -40.7361 zone -91.4036 -65.3054
+cut 44.8966 -10.8933 40.6663 -5.8269 along z at 2.3125 depth 3.0703

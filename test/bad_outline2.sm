@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_outline2.sm -- Outlines without a part, the last with no points
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding 0002: the location of the patterned outline leaked.
+outline along z at -68.5875 depth 3.3861 pattern -x 5 8.2725
+point -107.8714 -6.9962
+point -108.8937 -7.8722
+outline along y at -0.25 depth 0.966
