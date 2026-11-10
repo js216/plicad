@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_huge.txt -- A part placed far beyond any assembly
+# Copyright (c) 2026 Jakob Kastelic
+
+a ../build/plate.fold at 0 0 1e300*1e300

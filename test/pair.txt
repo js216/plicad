@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# pair.txt -- Three test plates: a and b overlap, a and c only touch
+# Copyright (c) 2026 Jakob Kastelic
+
+a ../build/plate.fold
+b ../build/plate.fold at 50 0 -1
+c ../build/plate.fold rot z 90 at 50 -60 -2

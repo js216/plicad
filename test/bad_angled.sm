@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_angled.sm -- A hole along z through the plate and a flange over it
+# Copyright (c) 2026 Jakob Kastelic
+
+# The hole runs through every slab across z, so also through the flange
+# folded back over the plate at an angle.
+sheet 1.5 1 0.44
+plate p 0 0 60 40 origin 0 0 0 axes +x +y
+flange f p +x 140 20
+hole 4 50 20 along z

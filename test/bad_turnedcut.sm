@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_turnedcut.sm -- A cut on a flange turned against the cut axes
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding: the cut removed a wrong rectangle, half the area.
+sheet 1 1 0.4
+plate base 0 0 50 40 origin 0 0 0 axes +x +y
+flange f0 base +x 30 30
+flange f1 f0 +y 90 30
+cut 53.4904 19.4904 57.4904 23.4904 along y

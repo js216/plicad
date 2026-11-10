@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# deps.sm -- A plate whose size uses a parameter through another
+# Copyright (c) 2026 Jakob Kastelic
+
+# smfold -M lists A, which B uses, besides B and C.
+include deps.params
+sheet B 1 0.44
+plate base 0 0 C*4 C*2 origin 0 0 0 axes +x +y

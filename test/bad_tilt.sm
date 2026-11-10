@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_tilt.sm -- A hole along z through a flange tilted by 0.001 degree
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding: a tilt of up to 0.0026 degree passed as square, and the
+# hole went square to the slab instead of along its axis.
+sheet 1 1 0.4
+plate p 0 0 50 40 origin 0 0 0 axes +x +y
+flange f p +x 0.001 30
+hole 4 70 20 along z

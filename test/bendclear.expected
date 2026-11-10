@@ -1,0 +1,6 @@
+part bendclear
+volume 1247.1239
+area 2658.9602
+bbox 0.0000 0.0000 -1.0000 42.0000 20.0000 21.0000
+faces 10 plane 8 cylinder 2
+flat 62.2619 20.0000 area 1245.239 holes 0 bends 1

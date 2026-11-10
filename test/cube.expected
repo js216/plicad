@@ -1,0 +1,6 @@
+part cube
+volume 11381.5398
+area 23349.9291
+bbox 0.0000 0.0000 0.0000 50.0000 50.0000 50.0000
+faces 30 plane 22 cylinder 8
+flat 146.5239 146.5239 area 11364.198 holes 0 bends 4

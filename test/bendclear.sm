@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bendclear.sm -- A short hole in the corner of the box of a bend
+# Copyright (c) 2026 Jakob Kastelic
+
+# A hole along z, beside the outer face of the bend of a flange, lies
+# inside the box of the bend but clear of its material.  It cuts no
+# slab, so smfold warns that it misses the part.
+sheet 1 1 0.44
+plate base 0 0 40 20 origin 0 0 0 axes +x +y
+flange w base +x 90 20
+hole 0.4 41.7 10 along z at -0.8 depth 0.8

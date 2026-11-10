@@ -1,0 +1,7 @@
+part angled
+volume 5037.7138
+area 7108.6295
+bbox 0.0000 0.0000 -1.5000 62.5000 40.0000 15.7709
+faces 11 plane 8 cylinder 3
+hole 50.0000 20.0000 -0.7500 d 4.0000 axis 0 0 1
+flat 84.0561 40.0000 area 3349.679 holes 1 bends 1

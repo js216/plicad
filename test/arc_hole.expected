@@ -1,0 +1,7 @@
+part arc_hole
+volume 4950.2655
+area 10215.0885
+bbox 0.0000 0.0000 -1.0000 100.0000 50.0000 0.0000
+faces 8 plane 6 cylinder 2
+hole 20.0000 8.0000 -0.5000 d 6.0000 axis 0 0 1
+flat 100.0000 50.0000 area 4950.265 holes 1 bends 0

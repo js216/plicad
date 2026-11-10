@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# outlines.sm -- An outline that misses the part, then one that hits it
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding: the location of the first outline leaked when the
+# second one followed.
+sheet 1 1 0.4
+plate p 0 0 50 40 origin 0 0 0 axes +x +y
+outline along z
+point 100 10
+point 120 10
+point 120 20
+outline along z
+point 10 10
+point 20 10
+point 20 20

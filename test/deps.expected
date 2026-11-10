@@ -1,0 +1,6 @@
+part deps
+volume 400.0000
+area 520.0000
+bbox 0.0000 0.0000 -2.0000 20.0000 10.0000 0.0000
+faces 6 plane 6 cylinder 0
+flat 20.0000 10.0000 area 200.000 holes 0 bends 0

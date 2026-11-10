@@ -1,0 +1,6 @@
+part outlines
+volume 1950.0000
+area 4114.1421
+bbox 0.0000 0.0000 -1.0000 50.0000 40.0000 0.0000
+faces 9 plane 9 cylinder 0
+flat 50.0000 40.0000 area 1950.000 holes 0 bends 0

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# colours -- A colour table for the colour test
+# Copyright (c) 2026 Jakob Kastelic
+
+red 0.8 0.1 0.1 0.5     # NAME R G B ROUGHNESS
+grey_TBD 0.62 0.62 0.6 0.6

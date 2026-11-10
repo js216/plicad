@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# csink.sm -- A plate with a countersunk hole, for interfere
+# Copyright (c) 2026 Jakob Kastelic
+
+sheet 2 1 0.44
+plate p 0 0 40 20 origin 0 0 0 axes +x +y
+hole 3 20 10 along z csink 6 90 near

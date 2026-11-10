@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_round2.sm -- A round on a part without flanges, for smfold to reject
+# Copyright (c) 2026 Jakob Kastelic
+
+sheet 2 1 0.44
+plate p 0 0 100 50 origin 0 0 0 axes +x +y
+round

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# colour.txt -- Two coloured plates: the colours reach the fold and STEP
+# Copyright (c) 2026 Jakob Kastelic
+
+colours colours
+a ../build/plate.fold colour red
+b ../build/plate.fold at 0 0 10 colour grey_TBD

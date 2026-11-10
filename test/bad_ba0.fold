@@ -1,0 +1,14 @@
+part a
+t 1
+map 0 rigid 1 0 0 0 1 0 0 0 1 0 0 0
+map 1 bend 0 0 0 1 0 0 90 1
+face 0 1
+vertex 0 0 0
+vertex 1 1 0
+vertex 2 1 1
+vertex 3 0 1
+edge 0 0 1 0 -
+edge 1 1 2 0 -
+edge 2 2 3 0 -
+edge 3 3 0 0 -
+end

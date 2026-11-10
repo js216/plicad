@@ -1,0 +1,7 @@
+part csink
+volume 1571.7257
+area 1839.3589
+bbox 0.0000 0.0000 -2.0000 40.0000 20.0000 0.0000
+faces 8 plane 6 cylinder 1 cone 1
+hole 20.0000 10.0000 -1.0000 d 3.0000 axis 0 0 1
+flat 40.0000 20.0000 area 792.931 holes 1 bends 0

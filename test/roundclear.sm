@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# roundclear.sm -- A lid over a wall it clears by a round of its corner
+# Copyright (c) 2026 Jakob Kastelic
+
+# A narrow wall stands up to the lid, under a corner that a round takes
+# off: the two would touch at the corner of the lid, but its material
+# is gone there.
+sheet 1 1 0.44
+plate base 2 2 48 48 origin 0 50 0 axes +x -y
+flange left base -x -90 47 span 2 4
+flange right base +x -90 46
+flange lid right +x -90 48
+round lid 6

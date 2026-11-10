@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# outline_ray.sm -- A hole level with the end of an arc of an outline
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding: the inside test missed the crossing at the end of the
+# arc, and the hole was rejected.
+sheet 1 1 0.4
+plate p 0 0 100 50 origin 0 0 0 axes +x +y
+outline along z
+point 60 10.1
+point 70 10.1 arc 70 15.3 ccw
+point 70 20.5
+point 60 20.5 arc 60 15.3 ccw
+hole 2 30 10.1 along z

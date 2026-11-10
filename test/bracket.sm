@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bracket.sm -- An L bracket: one 90 degree flange with rounded corners
+# Copyright (c) 2026 Jakob Kastelic
+
+t = 2
+r = 2
+sheet t r 0.44
+plate base 0 0 100 50 origin 0 0 0 axes +x +y
+flange wall base +y 90 30
+round wall 5
+hole 6 50 25 along z
+hole 4 20 20 along y pattern x 3 30

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# deps.params -- Parameters of deps.sm, some through others
+# Copyright (c) 2026 Jakob Kastelic
+
+A = 1 mm
+B = 2 * A
+C = 5 mm
+D = 3 mm

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_twosheet.sm -- A sheet statement after the plate, which smfold must reject
+# Copyright (c) 2026 Jakob Kastelic
+
+sheet 2 1 0.44
+plate p 0 0 100 50 origin 0 0 0 axes +x +y
+sheet 3 1 0.44
+flange f p +x 90 20
