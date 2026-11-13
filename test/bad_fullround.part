@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_fullround.part -- A round as wide as the face it runs on
+# Copyright (c) 2026 Jakob Kastelic
+
+# The round of 6.5 takes all of the bottom, 6.5 wide, and with it the
+# two short edges at its ends, while the faces of those edges stay.
+
+profile p along z 0 0 0 6.5 0 0 6.5 24 0 0 24 0
+extrude blk from 0 to 19.5 p
+round 6.5 blk.start blk.p.3

@@ -4,7 +4,8 @@
 # Copyright (c) 2026 Jakob Kastelic
 
 # Usage: test/run.sh [GROUP...]
-# The groups are arith, parts, place, bad, tools, docs, args and occt;
+# The groups are arith, parts, solids, fillet, place, bad, tools, docs,
+# args and occt;
 # with none it runs all of them.  It builds the programs with make
 # first, and the tests run the sanitized ones in build/san.  It prints
 # ok or FAIL for each group and exits non-zero if any fails.  The occt
@@ -19,9 +20,15 @@ TESTS=$(for f in test/*.sm; do
 	b=$(basename "$f" .sm)
 	case $b in bad_*) ;; *) echo "$b" ;; esac
 done)
+SOLIDS=$(for f in test/*.part; do
+	b=$(basename "$f" .part)
+	case $b in bad_* | bootsharp | roundfirst) ;; *) echo "$b" ;; esac
+done)
+STOL="-t volume=rel:1e-9 -t area=rel:1e-9 -t centre=abs:2e-4 \
+-t bbox=abs:2e-4"
 
 build() {
-	targets="all $S/test_arith"
+	targets="all build/mould $S/test_arith $S/mould"
 	for p in $PROGS; do
 		targets="$targets $S/$p"
 	done
@@ -47,6 +54,43 @@ parts() {
 	done
 	test "$(grep -c MANIFOLD_SOLID_BREP build/twopiece.step)" -eq 2 ||
 		{ echo "FAIL twopiece solids"; return 1; }
+}
+
+# The stream of the part source $1 through every program that makes
+# solids, into $2.
+solid() {
+	$S/extrude "$1" > "$2.1" && $S/bool "$2.1" > "$2.2" &&
+		$S/fillet "$2.2" > "$2"
+}
+
+# Each test/NAME.part makes its solids, their measure output matches
+# test/NAME.expected, and tostep takes the stream.  The mould check
+# finds the walls and the drafts of the boot as test/boot.mould has
+# them: the faces of the screw holes, whose names start with h and c,
+# are pins, and no face is an undercut.
+solids() {
+	for t in $SOLIDS; do
+		solid test/$t.part build/part_$t.st &&
+			$S/measure build/part_$t.st > build/part_$t.measure &&
+			$S/numdiff $STOL test/$t.expected \
+				build/part_$t.measure &&
+			$S/tostep build/part_$t.st > build/part_$t.step ||
+			{ echo "FAIL solid $t"; return 1; }
+	done
+	$S/mould y build/part_boot.st 'h*' 'c*' '*+h*' '*+c*' |
+		cmp -s - test/boot.mould ||
+		{ echo "FAIL mould boot"; return 1; }
+	! grep -q '^undercut' test/boot.mould
+}
+
+# The fillet program lists the edges of a part, and bool refuses a solid
+# with round faces.
+fillet() {
+	$S/extrude test/oneround.part | $S/fillet -l - |
+		cmp -s - test/oneround.edges || return 1
+	$S/extrude test/roundfirst.part | $S/fillet - > build/roundfirst.st &&
+		! $S/bool build/roundfirst.st > /dev/null 2> build/bad.err &&
+		grep -q 'bool takes faces on planes' build/bad.err
 }
 
 # The place and interfere programs find the one overlapping pair, the
@@ -77,6 +121,16 @@ place() {
 # Each malformed input makes its program fail with a message.
 bad() {
 	parts > /dev/null || return 1
+	for f in test/bad_*.part; do
+		if solid "$f" build/bad.st 2> build/bad.err &&
+			$S/tostep build/bad.st > /dev/null 2>> build/bad.err ||
+			! test -s build/bad.err ||
+			grep -q 'Sanitizer' build/bad.err; then
+			echo "FAIL $f"
+			cat build/bad.err
+			return 1
+		fi
+	done
 	for f in test/bad_*.sm test/bad_*.fold test/bad_*.txt; do
 		case $f in
 		*.sm) p=smfold ;;
@@ -94,8 +148,9 @@ bad() {
 }
 
 # The programs numdiff and lint accept good input and reject bad, lint
-# takes the Makefile and the dot files without a header, and smfold -M
-# lists the parameters a part uses through others too.
+# takes the Makefile and the dot files without a header, smfold -M lists
+# the parameters a part uses through others too, and a second fuzzer in
+# one WORK directory fails at once.
 tools() {
 	$S/smfold -M test/deps.sm | sort | tr '\n' ' ' | grep -qx 'A B C ' ||
 		{ echo "FAIL smfold -M"; return 1; }
@@ -124,6 +179,16 @@ tools() {
 	sed 's|^#!/bin/sh|#!/bin/sh|; 2,4d' build/ok.sh > build/bare/no.sh
 	$S/lint build/bare/Makefile build/bare/.ignore &&
 		! $S/lint build/bare/no.sh > /dev/null || return 1
+	fz=$(mktemp -d) || return 1
+	flock "$fz/fuzz.lock" sleep 5 &
+	sleep 1
+	if test/fuzzrun.sh "$fz" > /dev/null 2> "$fz/err" ||
+		! grep -q 'another fuzzer' "$fz/err"; then
+		echo "FAIL a second fuzzer started"
+		return 1
+	fi
+	wait
+	rm -rf "$fz"
 	$S/lint build/ok.c build/ok.sh &&
 		! $S/lint build/bad.c > /dev/null &&
 		! $S/lint build/bad2.c > /dev/null &&
@@ -158,7 +223,7 @@ docs() {
 # nothing on stdout: with no arguments, with an unknown option and with
 # a file that is missing.
 args() {
-	for p in $PROGS; do
+	for p in $PROGS mould; do
 		for a in "" "-Q build/nofile" "build/nofile build/nofile"; do
 			timeout 5 build/$p $a > build/args.out \
 				2> build/args.err <&-
@@ -177,17 +242,54 @@ args() {
 }
 
 # OCCT reads the STEP files of the test parts as valid solids, as many
-# as each file writes, with the volume and area of measure.
+# as each file writes, with the volume and area of measure, and the
+# solid of nearhem.sm equals the reference solid that test/occtworker.py
+# builds from its source (fuzzer finding 0011).  Each solid of a
+# test/NAME.part is one valid solid to OCCT, with the volume and area of
+# measure, and equals the reference solid of test/occtworker.py, or for
+# bnc.part, the Creo solid in test/bnc.brep.  A part with rounds has no
+# reference solid.  The answers of the worker come on a descriptor of
+# their own, apart from the trace of OCCT.
 occt() {
-	test/occt.sh $S "$(echo $TESTS)"
+	test/occt.sh $S "$(echo $TESTS)" || return 1
+	solids > /dev/null || return 1
+	for t in $SOLIDS; do
+		if test $t = bnc; then
+			ref='"brep": "test/bnc.brep"'
+		elif grep -q '^round' test/$t.part; then
+			ref='"spec": null'
+		else
+			ref="\"spec\": \"test/$t.part\""
+		fi
+		printf '{"step": "build/part_%s.step", %s}\n' $t "$ref"
+	done | OCCTWORKER_FD=3 test/freecad.sh test/occtworker.py \
+		3> build/part_occt.raw > /dev/null 2>&1
+	sed 's/^R //' build/part_occt.raw > build/part_occt.json
+	for t in $SOLIDS; do
+		ref=
+		if grep -q '^round' test/$t.part; then
+			ref=-n
+		fi
+		m=build/part_$t.measure
+		grep "\"build/part_$t.step\"" build/part_occt.json |
+			python3 -I test/occtpart.py $ref $m ||
+			{ echo "FAIL occt solid $t"; return 1; }
+	done
+	printf '{"step": "build/nearhem.step", "spec": "test/nearhem.sm"}\n' |
+		OCCTWORKER_FD=3 test/freecad.sh test/occtworker.py \
+			3> build/nearhem.ref > /dev/null 2>&1
+	grep -q '"symdiff": [0-9.e-]*[0-9]}' build/nearhem.ref &&
+		awk -F'"symdiff": ' '{ split($2, v, "}"); d = v[1] + 0
+			exit !(d < 1e-6 && d > -1e-6) }' build/nearhem.ref
 }
 
 build || { echo "FAIL build"; exit 1; }
-groups=${*:-arith parts place bad tools docs args occt}
+groups=${*:-arith parts solids fillet place bad tools docs args occt}
 fail=0
 for g in $groups; do
 	case $g in
-	arith | parts | place | bad | tools | docs | args | occt) ;;
+	arith | parts | solids | fillet | place | bad | tools | docs | args | \
+		occt) ;;
 	*)
 		echo "unknown group $g"
 		exit 2

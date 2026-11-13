@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bnc.part -- A machined block that holds six BNC connectors
+# Copyright (c) 2026 Jakob Kastelic
+
+# Machined 6061-T6 aluminium; holds six BNCs, each in a 3/8-32 UNEF
+# tapped hole through a boss on the bottom face, countersunk at the boss.
+# Between each pair of BNCs, a 4-40 tapped hole runs through the block,
+# countersunk at the bottom face, and a blind 4-40 tapped hole with a
+# drill point enters the -y face.  Tapped holes are drawn at the tap
+# drill.  The frame is the one of the Creo part: the block runs along x
+# from its -x end, the BNC axes along -z.  Build it with
+#   extrude test/bnc.part | bool - | tostep - > bnc.step
+
+N = 6
+PITCH = 0.8 in
+END = 0.25 in
+X0 = -55.5625
+Y0 = 1.5748
+Y1 = Y0 + 0.617 in
+YB = Y0 + 0.317 in
+Z0 = -29.3243
+Z1 = Z0 + 0.325 in
+BOSS = 0.5 in
+BOSS_H = 0.05 in
+TAP = 0.332 in
+TAP_CS = 0.39 in
+TAP4 = 0.089 in
+TAP4_CS = 0.11 in
+CS = 41
+BLIND = 0.23 in
+BLIND_Z = Z0 + 0.17 in
+POINT = 118
+
+L = 2 * END + (N - 1) * PITCH
+N_M = N / 2
+P_M = 2 * PITCH
+XB = X0 + END
+XM = XB + PITCH / 2
+ZB = Z0 - BOSS_H
+H_CS = (TAP_CS - TAP) / 2 / tan(CS)
+H_CS4 = (TAP4_CS - TAP4) / 2 / tan(CS)
+H_POINT = TAP4 / 2 / tan(POINT / 2)
+
+profile outline along z X0 Y0 0 X0+L Y0 0 X0+L Y1 0 X0 Y1 0
+extrude block from Z0 to Z1 outline
+
+circle boss along z XB YB BOSS
+extrude bosses from ZB to Z0 boss pattern +x N PITCH
+union body block bosses
+
+circle tap along z XB YB TAP
+circle tap_cs along z XB YB TAP_CS
+extrude taps from ZB to Z1 tap pattern +x N PITCH
+extrude tap_sinks from ZB to ZB+H_CS tap_cs draft CS pattern +x N PITCH
+
+circle m4 along z XM YB TAP4
+circle m4_cs along z XM YB TAP4_CS
+extrude m4s from Z0 to Z1 m4 pattern +x N_M P_M
+extrude m4_sinks from Z0 to Z0+H_CS4 m4_cs draft CS pattern +x N_M P_M
+
+circle blind along y XM BLIND_Z TAP4
+circle blind_cs along y XM BLIND_Z TAP4_CS
+extrude blinds from Y0 to Y0+BLIND blind pattern +x N_M P_M
+extrude blind_sinks from Y0 to Y0+H_CS4 blind_cs draft CS pattern +x N_M P_M
+Y_POINT = Y0 + BLIND
+Y_END = Y_POINT + H_POINT
+extrude points from Y_POINT to Y_END blind draft POINT/2 pattern +x N_M P_M
+
+cut bnc body taps tap_sinks m4s m4_sinks blinds blind_sinks points

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_norule.part -- A rule that matches no edge
+# Copyright (c) 2026 Jakob Kastelic
+
+profile r along z 0 0 0 20 0 0 20 10 0 0 10 0
+extrude blk from 0 to 5 r
+round 1 blk.end blk.r.0
+round 2 nothing.* *

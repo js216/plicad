@@ -1,0 +1,6 @@
+part u
+volume 858.6283
+area 737.6991
+centre 10.0000 5.0000 2.5000
+bbox 0.0000 0.0000 0.0000 20.0000 10.0000 5.0000
+faces 8 plane 6 cylinder 2 cone 0 sphere 0 torus 0

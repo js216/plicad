@@ -13,6 +13,18 @@
 # files in WORK/case.
 #
 # Modes of a case:
+#   solid A random part of blocks, cylinders and cones for extrude and
+#         bool.  A clean refusal of bool (surfaces that meet on a curve
+#         other than a line or a conic) is a REJECT.  OCCT checks the
+#         STEP file as for sm, with the volume and area of measure, and
+#         builds the part a second time from the .part text alone, and
+#         the symmetric difference must have no volume.
+#   fillet A random block, at times with a hole or a block on it, with
+#         rules for fillet.  A clean refusal (no room, a corner with no
+#         exact round, a rule that matches no edge) is a REJECT.  The
+#         volume of a plain block with every edge round must match its
+#         formula, and OCCT checks the STEP file as for solid, without a
+#         second solid.
 #   sm    A random valid sheet metal part.  smfold folds it, and every
 #         writer runs on the fold.  The outputs of measure must match
 #         a model of the part (counts, holes, flat area and box)
@@ -67,6 +79,7 @@ LOAD_PAUSE = 25
 MIN_RUNS = 300
 MIN_SECONDS = 600
 MUT_OCCT = 0.25
+PART_MAX = 1200           # bytes of a .part file fit for the corpus
 LOG_MAX = 100 * 2 ** 20      # fuzz.log turns into fuzz.log.1 past this size
 DISK_MIN = 2 * 2 ** 30       # the fuzzer pauses below this much free disk
 FREECADCMD = "/home/jk/prog/freecad/build/bin/FreeCADCmd"
@@ -119,6 +132,10 @@ PIPES = {
            "measure, tostep (out.step), smflat and interfere on it, and "
            "occtworker for INVALID",
     "args": "the program with the lines of argv as its arguments",
+    "solid": "extrude gen.part > gen.1, bool gen.1 > gen.st, fillet gen.st "
+             "> gen.round, then measure and tostep (gen.step) on "
+             "gen.round, then occtworker",
+    "fillet": "as solid",
 }
 
 
@@ -228,6 +245,19 @@ def must(r, argv, gen):
                       r.err)
         raise Refused(r.detail)
     raise Bad(r.verdict, prog, r.sig, r.detail, argv, r.err)
+
+
+def solid_must(r, argv):
+    # As must for a generated part of solids, with the message of a
+    # failure in its signature, numbers and places taken out, so that
+    # the minimiser keeps the same failure.
+    if r.verdict == "FAIL":
+        prog = os.path.basename(argv[0])
+        msg = re.sub(r"^\S*:\d+: ", "", r.err.strip().splitlines()[0])
+        msg = re.sub(r"\S+\.\S+|-?\d[\d.e+-]*", "N", msg)[:80]
+        raise Bad("MISMATCH", prog, "MISMATCH %s %s" % (prog, msg),
+                  "fails on a generated part: " + r.detail, argv, r.err)
+    return must(r, argv, True)
 
 
 # Small 3D algebra.  A rigid motion is (R, t), and R is a tuple of rows.
@@ -1315,6 +1345,200 @@ class SheetGen:
 
 # The generator of prism parts.
 
+
+class SolidGen:
+    # A random part of solids for extrude and bool: a block, or a
+    # cylinder, and tools of blocks, cylinders and cones made from it,
+    # on a coarse grid, so that faces often share a plane, an axis or a
+    # radius, or touch.  The tools of a cut stay smaller than the base
+    # along at least two axes.  Literal numbers only, for the reference
+    # solid of occtworker.py.
+
+    GRID = 0.5
+
+    def __init__(self, rng):
+        self.rng = rng
+        self.lines = []
+        self.n = 0
+        self.base = None
+
+    def g(self, lo, hi):
+        # A number on the grid in [lo, hi].
+        k = self.rng.randint(int(math.ceil(lo / self.GRID)),
+                             int(math.floor(hi / self.GRID)))
+        return k * self.GRID
+
+    def name(self, kind):
+        self.n += 1
+        return "%s%d" % (kind, self.n)
+
+    def block(self, box, rounds):
+        # A block over box (x0, y0, z0, x1, y1, z1) along a random axis,
+        # its corners rounded by up to rounds of the shorter side, and
+        # its sides leaning in by a draft in three of ten.
+        a = self.rng.randrange(3)
+        u, v = [i for i in range(3) if i != a]
+        lo, hi = box[:3], box[3:]
+        side = min(hi[u] - lo[u], hi[v] - lo[v])
+        pts = [(lo[u], lo[v]), (hi[u], lo[v]), (hi[u], hi[v]), (lo[u], hi[v])]
+        if self.rng.random() < 0.5:
+            pts.reverse()
+        words = []
+        for p in pts:
+            r = 0.0
+            if rounds and self.rng.random() < 0.5:
+                r = self.g(0, side * rounds)
+            words += [fmt(p[0]), fmt(p[1]), fmt(r)]
+        prof = self.name("p")
+        self.lines.append("profile %s along %s %s" % (prof, "xyz"[a],
+                                                      " ".join(words)))
+        sol = self.name("s")
+        w0, w1 = lo[a], hi[a]
+        if self.rng.random() < 0.5:
+            w0, w1 = w1, w0
+        draft = ""
+        if self.rng.random() < 0.3:
+            draft = " draft %s" % fmt(self.g(0.5, 8))
+        self.lines.append("extrude %s from %s to %s %s%s" % (
+            sol, fmt(w0), fmt(w1), prof, draft))
+        return sol
+
+    def cylinder(self, box, axis, draft=0.0):
+        # A cylinder or a cone along axis, its circle centred in box.
+        u, v = [i for i in range(3) if i != axis]
+        lo, hi = box[:3], box[3:]
+        cu = self.g(lo[u], hi[u])
+        cv = self.g(lo[v], hi[v])
+        room = min(hi[u] - lo[u], hi[v] - lo[v])
+        d = self.g(self.GRID, max(self.GRID, room))
+        w0, w1 = lo[axis], hi[axis]
+        if self.rng.random() < 0.5:
+            w0, w1 = w1, w0
+        opt = ""
+        if draft > 0:
+            reach = d / 2 / math.tan(math.radians(draft))
+            if draft == 45.0 and self.rng.random() < 0.5:
+                # A cone that ends in a point, where the text of the
+                # numbers holds it exactly.
+                w1 = w0 + math.copysign(reach, w1 - w0)
+            elif abs(w1 - w0) >= reach:
+                w1 = w0 + math.copysign(reach * self.rng.uniform(0.3, 0.95),
+                                        w1 - w0)
+            opt = " draft %s" % fmt(draft)
+        prof = self.name("c")
+        self.lines.append("circle %s along %s %s %s %s" % (
+            prof, "xyz"[axis], fmt(cu), fmt(cv), fmt(d)))
+        sol = self.name("s")
+        self.lines.append("extrude %s from %s to %s %s%s" % (
+            sol, fmt(w0), fmt(w1), prof, opt))
+        return sol
+
+    def tool_box(self, base, small):
+        # A box near the base box; small keeps it inside the base along
+        # two axes.
+        lo, hi = base[:3], base[3:]
+        box = []
+        inside = self.rng.sample(range(3), 2) if small else []
+        for i in range(3):
+            span = hi[i] - lo[i]
+            if i in inside:
+                a = self.g(lo[i] + self.GRID, hi[i] - 2 * self.GRID)
+                b = self.g(a + self.GRID, hi[i] - self.GRID)
+            else:
+                a = self.g(lo[i] - span / 2, hi[i] - self.GRID)
+                b = self.g(max(a, lo[i]) + self.GRID, hi[i] + span / 2)
+            box.append((a, b))
+        return [box[0][0], box[1][0], box[2][0], box[0][1], box[1][1],
+                box[2][1]]
+
+    def gen(self):
+        rng = self.rng
+        base = [0.0, 0.0, 0.0, self.g(4, 30), self.g(4, 30), self.g(2, 20)]
+        if rng.random() < 0.8:
+            acc = self.block(base, 0.45)
+        else:
+            acc = self.cylinder(base, 2)
+        axis = rng.randrange(3)
+        for _ in range(rng.randint(1, 4)):
+            op = rng.choice(["cut", "cut", "union", "common"])
+            box = self.tool_box(base, op == "cut")
+            k = rng.random()
+            if k < 0.4:
+                tool = self.block(box, 0.45)
+            else:
+                ax = axis if rng.random() < 0.85 else rng.randrange(3)
+                draft = 0.0
+                if k > 0.75:
+                    draft = rng.choice([10.0, 30.0, 41.0, 45.0, 59.0])
+                tool = self.cylinder(box, ax, draft)
+            res = self.name("s")
+            self.lines.append("%s %s %s %s" % (op, res, acc, tool))
+            acc = res
+        return "\n".join(self.lines) + "\n"
+
+
+
+class FilletGen(SolidGen):
+    # A random part with rules for fillet: a block, at times with a hole
+    # or with a block on it, and rounds of one or two radii on all its
+    # edges, on those that turn one way, or on those of faces picked by
+    # name.  Many of these leave no room or meet at a corner that has no
+    # exact round, which fillet must refuse.  want holds the volume of a
+    # plain block with every edge round, else None.
+
+    def gen(self):
+        rng = self.rng
+        a, b, c = self.g(4, 30), self.g(4, 30), self.g(2, 20)
+        self.want = None
+        self.lines.append("profile p along z 0 0 0 %s 0 0 %s %s 0 0 %s 0" % (
+            fmt(a), fmt(a), fmt(b), fmt(b)))
+        self.lines.append("extrude blk from 0 to %s p" % fmt(c))
+        small = min(a, b, c)
+        kind = rng.randrange(5)
+        r = self.g(self.GRID, max(self.GRID, small * rng.choice([0.2, 0.45,
+                                                                 0.6])))
+        if kind == 0:
+            self.lines.append("round %s convex" % fmt(r))
+            if 2 * r < small - 1e-9:
+                self.want = a * b * c - (4 - math.pi) * r * r * (
+                    a + b + c - 6 * r) - (8 - 4 * math.pi / 3) * r ** 3
+        elif kind == 1:
+            d = self.g(self.GRID, max(self.GRID, min(a, b) - 1))
+            self.lines.append("circle h along z %s %s %s" % (
+                fmt(a / 2), fmt(b / 2), fmt(d)))
+            self.lines.append("extrude hole from -1 to %s h" % fmt(c + 1))
+            self.lines.append("cut u blk hole")
+            self.lines.append("round %s %s" % (fmt(r), rng.choice(
+                ["convex", "blk.end hole.*", "blk.* hole.*"])))
+        elif kind == 2:
+            r2 = self.g(self.GRID, max(self.GRID, small * 0.45))
+            self.lines.append("round %s blk.p.* blk.p.*" % fmt(r))
+            self.lines.append("round %s blk.%s *" % (
+                fmt(r2), rng.choice(["end", "start", "*"])))
+        elif kind == 3:
+            faces = ["blk.p.0", "blk.p.1", "blk.p.2", "blk.p.3", "blk.start",
+                     "blk.end", "blk.p.*", "blk.*"]
+            for _ in range(rng.randint(1, 3)):
+                self.lines.append("%s %s %s" % (
+                    rng.choice(["round %s" % fmt(r), "round %s" % fmt(
+                        self.g(self.GRID, small)), "sharp"]),
+                    rng.choice(faces), rng.choice(faces)))
+        else:
+            x0, x1 = sorted([self.g(0, a), self.g(0, a)])
+            y0, y1 = sorted([self.g(0, b), self.g(0, b)])
+            self.lines.append("profile q along z %s %s 0 %s %s 0 %s %s 0 %s "
+                              "%s 0" % (fmt(x0), fmt(y0), fmt(x1 + 1),
+                                        fmt(y0), fmt(x1 + 1), fmt(y1 + 1),
+                                        fmt(x0), fmt(y1 + 1)))
+            self.lines.append("extrude top from %s to %s q" % (
+                fmt(c), fmt(c + self.g(1, 8))))
+            self.lines.append("union u blk top")
+            for w in rng.sample(["convex", "blk.end top.*"], 2):
+                self.lines.append("round %s %s" % (
+                    fmt(self.g(self.GRID, max(self.GRID, small / 2))), w))
+        return "\n".join(self.lines) + "\n"
+
+
 def ddmin(units, test, budget):
     # Shrinks the list of units while test(units) stays true.  Returns
     # the smallest list found and the number of runs used.
@@ -1407,10 +1631,14 @@ class Fuzzer:
         corpus = []
         for name in sorted(os.listdir(HERE)):
             ext = os.path.splitext(name)[1]
-            if ext in (".sm", ".fold", ".txt", ".params", ".expected",
-                       ".py"):
+            if ext in (".sm", ".part", ".fold", ".txt", ".params",
+                       ".expected", ".py"):
                 with open(os.path.join(HERE, name), "rb") as f:
                     data = f.read()
+                if ext == ".part" and len(data) > PART_MAX:
+                    # The large parts take longer than TIMEOUT under the
+                    # sanitizers.
+                    continue
                 if ext == ".txt":
                     data = re.sub(rb"\S+\.fold", lambda m: b"a.fold"
                                   if b"bad" not in m.group(0)
@@ -1703,8 +1931,17 @@ class Fuzzer:
             raise Refused("the OCCT worker timed out")
         if "error" in r:
             bad("read", r["error"])
-        if r.get("solids") != 1:
-            bad("solids", "%s solids" % r.get("solids"))
+        want = 1
+        ref = r.get("ref", {})
+        if spec.endswith(".part"):
+            # Solids that touch at a point are one solid to OCCT and
+            # two to PliCad; the symmetric difference decides.
+            want = ref.get("solids", 1)
+            if abs(ref.get("symdiff", 1)) < 1e-6 * r.get("volume", 0):
+                want = r.get("solids")
+        if r.get("solids") != want:
+            bad("solids", "%s solids, %s in the reference" % (
+                r.get("solids"), want))
         if not r["valid"] or not r["closed"]:
             bad("invalid", "valid %s closed %s" % (r["valid"], r["closed"]))
         if not close(r["volume"], m["volume"], 1e-6 * m["volume"] + 2e-4):
@@ -1735,10 +1972,9 @@ class Fuzzer:
                         "%.6f" % (ref["volume"], want))
         return r
 
-    def queue(self, seed, mode, step, data, m, model):
+    def queue(self, seed, mode, step, data, m, model, ext=".sm"):
         if not self.use_occt:
             return
-        ext = ".sm"
         keep = os.path.join(self.qdir, "%d" % seed)
         shutil.copy(step, keep + ".step")
         with open(keep + ext, "wb") as f:
@@ -1755,7 +1991,7 @@ class Fuzzer:
             except Bad as b:
                 with open(spec, "rb") as f:
                     data = f.read()
-                fn = self.sm_check
+                fn = self.solid_check if ext == ".part" else self.sm_check
                 self.finding(mode, seed, b, {"gen" + ext: data},
                              "gen" + ext,
                              lambda dd, x, fn=fn: self.retry(
@@ -1770,6 +2006,119 @@ class Fuzzer:
                 if os.path.exists(keep + e):
                     os.remove(keep + e)
         self.pending = []
+
+    # Generated parts of solids.
+
+    # The messages of a clean refusal of a generated part of solids.
+    SOLID_REFUSALS = ("meet on a curve that is no line",
+                      "touches itself along an edge",
+                      "which bool does not make")
+    # And those of fillet.
+    FILLET_REFUSALS = ("the round of ", "the rounds of ",
+                       "this rule matches no edge")
+
+    def solid_check(self, d, data, occt=False):
+        # Makes the solids of the part in data, and measures and writes
+        # them.  Returns a Bad, or None; raises Refused if bool refuses,
+        # or extrude a draft that closes the outline.
+        src = os.path.join(d, "gen.part")
+        with open(src, "wb") as f:
+            f.write(data)
+        mid = os.path.join(d, "gen.1")
+        st = os.path.join(d, "gen.st")
+        try:
+            argv = [self.prog("extrude"), src]
+            r = run(argv, cwd=d, out=mid)
+            if r.verdict == "FAIL" and "the draft closes" in r.err:
+                raise Refused(r.detail)
+            solid_must(r, argv)
+            argv = [self.prog("bool"), mid]
+            r = run(argv, cwd=d, out=st)
+            if r.verdict == "FAIL" and any(m in r.err for m in
+                                           self.SOLID_REFUSALS):
+                raise Refused(r.detail)
+            solid_must(r, argv)
+            cut = st
+            st = os.path.join(d, "gen.round")
+            argv = [self.prog("fillet"), cut]
+            r = run(argv, cwd=d, out=st)
+            if r.verdict == "FAIL" and any(m in r.err for m in
+                                           self.FILLET_REFUSALS):
+                raise Refused(r.detail)
+            solid_must(r, argv)
+            argv = [self.prog("fillet"), "-l", cut]
+            r = run(argv, cwd=d)
+            if r.verdict not in ("OK", "FAIL"):
+                must(r, argv, True)
+            outs = {}
+            for prog, ext in [("measure", "measure"), ("tostep", "step")]:
+                out = os.path.join(d, "gen." + ext)
+                argv = [self.prog(prog), st]
+                solid_must(run(argv, cwd=d, out=out), argv)
+                outs[ext] = out
+            with open(outs["measure"], "rb") as f:
+                ms = parse_measure(f.read())
+            argv = [self.prog("measure"), st]
+            if len(ms) != 1 or "volume" not in ms[0]:
+                raise Bad("MISMATCH", "measure", "MISMATCH measure solids",
+                          "%d solids, %s" % (len(ms), ms[:1]), argv)
+            if not ms[0]["volume"] > 0:
+                # A common part of solids apart, or a cut of all.
+                if "bbox" in ms[0] or ms[0]["volume"] < 0:
+                    raise Bad("MISMATCH", "measure", "MISMATCH measure empty",
+                              "an empty solid: %s" % ms[0], argv)
+                occt = False
+            if occt:
+                self.occt_judge(outs["step"], src, ms[0], None, argv)
+        except Bad as b:
+            return b
+        self.last = (outs, ms[0])
+        return None
+
+    def gen_fillet(self, seed):
+        gen = FilletGen(random.Random(seed))
+        data = gen.gen().encode()
+        d = self.fresh()
+        try:
+            bad = self.solid_check(d, data)
+        except Refused as e:
+            self.note("fillet", "fillet", "REJECT", str(e)[:150], seed)
+            self.keep_corpus(".part", data)
+            return
+        outs, m = (None, None) if bad else self.last
+        if not bad and gen.want is not None and not close(
+                m["volume"], gen.want, 1e-6 * gen.want + 2e-4):
+            bad = Bad("MISMATCH", "fillet", "MISMATCH fillet volume",
+                      "volume %.4f, a block with round edges has %.6f" % (
+                          m["volume"], gen.want),
+                      [self.prog("fillet"), "gen.2"])
+        if bad:
+            self.finding("fillet", seed, bad, {"gen.part": data}, "gen.part",
+                         lambda dd, x: self.retry(self.solid_check, dd, x))
+            return
+        if m["volume"] > 0:
+            self.queue(seed, "fillet", outs["step"], data, m, None, ".part")
+        self.note("fillet", "all", "PASS", "V=%.3f" % m["volume"], seed)
+        self.keep_corpus(".part", data)
+
+    def gen_solid(self, seed):
+        data = SolidGen(random.Random(seed)).gen().encode()
+        d = self.fresh()
+        try:
+            bad = self.solid_check(d, data)
+        except Refused as e:
+            self.note("solid", "bool", "REJECT", str(e)[:150], seed)
+            self.keep_corpus(".part", data)
+            return
+        if bad:
+            self.finding("solid", seed, bad, {"gen.part": data}, "gen.part",
+                         lambda dd, x: self.retry(self.solid_check, dd, x))
+            return
+        outs, m = self.last
+        if m["volume"] > 0:
+            self.queue(seed, "solid", outs["step"], data, m, None, ".part")
+        self.note("solid", "all", "PASS", "V=%.3f" % m["volume"], seed)
+        self.keep_corpus(".part", data)
 
     # Assemblies.
 
@@ -2036,6 +2385,8 @@ class Fuzzer:
                 return None
             if ext in (".py", ".c", ".sh", ".h"):
                 return None
+            if ext == ".part":
+                return self.mut_part(d, src)
             if ext == ".params":
                 for name in ("channel.params", "inc.params"):
                     with open(os.path.join(d, name), "wb") as f:
@@ -2085,6 +2436,25 @@ class Fuzzer:
             return None
         except Bad as b:
             return b
+        return None
+
+    def mut_part(self, d, src):
+        # The programs of solids on a damaged part: each must succeed or
+        # fail with a message.
+        prev = src
+        for prog in ("extrude", "bool", "fillet"):
+            out = os.path.join(d, "mut." + prog)
+            argv = [self.prog(prog), prev]
+            r = run(argv, cwd=d, out=out)
+            if r.verdict == "FAIL":
+                return None
+            must(r, argv, False)
+            prev = out
+        for prog in ("measure", "tostep", "interfere"):
+            argv = [self.prog(prog), prev]
+            r = run(argv, cwd=d)
+            if r.verdict not in ("OK", "FAIL"):
+                must(r, argv, False)
         return None
 
     def mut_occt(self, step, meas, src):
@@ -2196,10 +2566,12 @@ class Fuzzer:
 
     # The main loop.
 
-    MODES = ["sm"] * 9 + ["asm"] + ["mut"] * 8 + ["args"] * 2
+    MODES = ["sm"] * 9 + ["solid"] * 6 + ["fillet"] * 4 + ["asm"] + \
+        ["mut"] * 8 + ["args"] * 2
 
     def one(self, mode, seed):
-        {"sm": self.gen_sm, "asm": self.gen_asm,
+        {"sm": self.gen_sm, "asm": self.gen_asm, "solid": self.gen_solid,
+         "fillet": self.gen_fillet,
          "mut": self.gen_mut, "args": self.gen_args}[mode](seed)
 
     def loop(self, cases=None):

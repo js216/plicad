@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# blind.part -- A blind hole from the top face of a block
+# Copyright (c) 2026 Jakob Kastelic
+
+profile r along z 0 0 0 20 0 0 20 10 0 0 10 0
+extrude blk from 0 to 5 r
+circle c along z 10 5 6
+extrude hole from 2 to 5 c
+cut u blk hole

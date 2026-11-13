@@ -38,6 +38,9 @@ the [classic rules](https://doi.org/10.1002/j.1538-7305.1978.tb02135.x):
 | interfere | Prints one line for each pair of colliding parts               |
 | numdiff   | Compares two outputs of measure within tolerances              |
 | lint      | Checks the text of each source file against the house rules    |
+| extrude   | Makes solids of outlines pushed along an axis, with a draft    |
+| bool      | Unites, cuts and intersects solids                             |
+| fillet    | Rounds the edges of solids, as a ball rolls along them         |
 
 ### Usage
 

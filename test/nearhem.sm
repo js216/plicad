@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# nearhem.sm -- A bend of 179.999 degrees, with a flange and a hole beyond
+# Copyright (c) 2026 Jakob Kastelic
+
+# Fuzzer finding 0011: OCCT got the common part of this solid and the
+# reference solid of test/occtworker.py wrong, so the symmetric
+# difference came out at -12.5 mm3 of two equal solids.
+
+sheet 2.286 0.8263 0.4145
+plate base 0 0 174.4625 129.2657 origin -1.8797 19.1186 0 axes +z +y
+flange f0 base +y -179.999 15.2402
+flange f2 f0 -x -90 11.9419 span 135.2171 146.7268
+hole 3.2349 -8.5002 145.6025 along z

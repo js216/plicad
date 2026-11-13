@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_twice.part -- Two solids of one name
+# Copyright (c) 2026 Jakob Kastelic
+
+circle c along z 0 0 10
+extrude a from 0 to 1 c
+extrude a from 1 to 2 c

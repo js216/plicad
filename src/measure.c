@@ -3,6 +3,7 @@
 // Copyright (c) 2026 Jakob Kastelic
 
 // Usage: measure part.fold
+//        measure STREAM|-
 //
 // For each part it prints one item per line:
 //   part NAME
@@ -12,21 +13,37 @@
 //   faces N plane P cylinder C [cone K]
 //   hole X Y Z d D axis AX AY AZ      (axis components without sign)
 //   flat W H area A holes N bends B  (W >= H, the box of the blank)
-// The faces line counts the cones only if there are any.
+// The faces line counts the cones only if there are any.  For each solid
+// of a stream (stream.h), the lines are
+//   part NAME
+//   volume V
+//   area A
+//   centre X Y Z                      of the volume
+//   bbox XMIN YMIN ZMIN XMAX YMAX ZMAX
+//   faces N plane P cylinder C cone K sphere S torus T
+// without the centre and the box for a solid of no faces, as a common
+// part of solids apart leaves.
 
 #include "brep.h"
 #include "bsolid.h"
 #include "fold.h"
 #include "geom.h"
+#include "integ.h"
+#include "isect.h"
+#include "shape.h"
+#include "stream.h"
 #include "util.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 // The keys of a hole: its axis, diameter and centre.
 enum { K_AX, K_AY, K_AZ, K_D, K_CX, K_CY, K_CZ, K_N };
 #define ROUND_TO 1000.0 // Holes sort by keys rounded to 1 / ROUND_TO.
 #define ALONG 1e-9 // Sine below which a side runs along a bend axis.
+
+enum { STEPS = 256 }; // Points of a curve other than a circle, for its box.
 
 struct hole_out {
 	double k[K_N];
@@ -240,13 +257,60 @@ static void print_flat(const struct part *p)
 	       fmin(w, h), area, p->nholes, bends);
 }
 
+// Grows x by the points of edge e: its ends and the points of a conic
+// that lie furthest along an axis.
+static void print_shape(const struct shape *sh)
+{
+	static const char *const names[SF_KINDS] = { "plane", "cylinder",
+						     "cone", "sphere",
+						     "torus" };
+	struct solid_mass m = shape_mass(sh);
+	struct box x = box_empty();
+	size_t count[SF_KINDS] = { 0, 0, 0, 0, 0 };
+	struct vec c = mul(m.moment, 1 / m.volume);
+
+	for (size_t i = 0; i < sh->ne; i++) {
+		struct box e = edge_box3(&sh->e[i]);
+
+		box_add(&x, e.lo);
+		box_add(&x, e.hi);
+	}
+	for (size_t i = 0; i < sh->nf; i++) {
+		count[sh->f[i].s.kind]++;
+	}
+	printf("part %s\nvolume %.4f\narea %.4f\n", sh->name, m.volume, m.area);
+	if (sh->nf) {
+		printf("centre %.4f %.4f %.4f\n", c.x + 0.0, c.y + 0.0,
+		       c.z + 0.0);
+		printf("bbox %.4f %.4f %.4f %.4f %.4f %.4f\n", x.lo.x + 0.0,
+		       x.lo.y + 0.0, x.lo.z + 0.0, x.hi.x + 0.0, x.hi.y + 0.0,
+		       x.hi.z + 0.0);
+	}
+	printf("faces %zu", sh->nf);
+	for (int k = 0; k < SF_KINDS; k++) {
+		printf(" %s %zu", names[k], count[k]);
+	}
+	printf("\n");
+}
+
 int main(int argc, char **argv)
 {
 	struct part *ps = NULL;
 	size_t n = 0;
 
 	if (argc != 2) {
-		die("usage: measure part.fold");
+		die("usage: measure part.fold|STREAM|-");
+	}
+	if (stream_file(argv[1])) {
+		struct stream st;
+
+		stream_read(&st, argv[1]);
+		for (size_t i = 0; i < st.nsh; i++) {
+			print_shape(&st.sh[i]);
+		}
+		stream_free(&st);
+		close_stdout();
+		return 0;
 	}
 	n = read_fold(argv[1], &ps);
 	for (size_t i = 0; i < n; i++) {

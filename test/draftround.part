@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# draftround.part -- Rounds on the faces of an outline with a draft
+# Copyright (c) 2026 Jakob Kastelic
+
+# The L of draft.part without the hole.  The rounds of its two ends run
+# along planes at a slant, as cylinders, and round cones, as tori; at
+# the one sharp corner two of them end on each other.  The crease at
+# y = 10 stays sharp, and so do the two edges of the sharp corner, which
+# turn there.
+
+profile p along y 0 0 2 30 0 3 30 20 0 20 20 2 20 8 2 0 8 1
+extrude a from 0 to 10 p
+extrude b from 10 to 30 p draft 1
+union s a b
+round 0.4 convex
+sharp a.p.* b.p.*
+sharp a.p.3 a.p.4
+sharp b.p.3 b.p.4

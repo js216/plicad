@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bigsmall.part -- Upright edges of 3 mm, then the top edge of 1 mm
+# Copyright (c) 2026 Jakob Kastelic
+
+profile r along z 0 0 0 20 0 0 20 10 0 0 10 0
+extrude blk from 0 to 5 r
+round 3 blk.r.* blk.r.*
+round 1 blk.end *

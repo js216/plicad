@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_closes.part -- A draft that closes a side of the outline
+# Copyright (c) 2026 Jakob Kastelic
+
+profile p along z 0 0 0 20 0 0 20 2 0 0 2 0
+extrude blk from 0 to 10 p draft 10

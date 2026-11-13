@@ -1,0 +1,6 @@
+part s
+volume 10372.1520
+area 3497.1119
+centre 18.3549 14.7345 7.3499
+bbox -0.0000 0.0000 -0.0000 30.0000 30.0000 20.0000
+faces 46 plane 14 cylinder 17 cone 5 sphere 0 torus 10

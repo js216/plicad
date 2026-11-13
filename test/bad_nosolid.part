@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_nosolid.part -- A union of a solid that no statement makes
+# Copyright (c) 2026 Jakob Kastelic
+
+profile r along z 0 0 0 20 0 0 20 10 0 0 10 0
+extrude blk from 0 to 5 r
+union u blk nothing

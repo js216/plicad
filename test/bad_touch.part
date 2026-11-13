@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_touch.part -- A cylinder that touches a block at one point
+# Copyright (c) 2026 Jakob Kastelic
+
+# After fuzzer finding 0019, two solids that touched at a point and went
+# out as one part.
+
+profile p along z -5 0 0 2 0 0 2 10 0 -5 10 0
+extrude blk from 7 to 12 p
+circle c along x 3 6 2
+extrude rod from 2 to 8 c
+union u blk rod

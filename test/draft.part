@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# draft.part -- An outline with a draft, joined to a straight one, with a hole
+# Copyright (c) 2026 Jakob Kastelic
+
+# An L with round and sharp corners: straight from 0 to 10, then leaning
+# in by 1 degree to 30, so that every side turns at y = 10, the lines to
+# planes at a slant and the arcs to cones.  A hole along x goes through
+# both: it leaves the plane wall in a circle and the wall at a slant in
+# an ellipse.
+
+profile p along y 0 0 2 30 0 3 30 20 0 20 20 2 20 8 2 0 8 1
+extrude a from 0 to 10 p
+extrude b from 10 to 30 p draft 1
+union s a b
+circle c along x 10 14 6
+extrude h from 15 to 31 c
+cut u s h

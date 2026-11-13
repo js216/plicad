@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# touchhole.part -- A hole that touches the foot of a leaning wall
+# Copyright (c) 2026 Jakob Kastelic
+
+# The hole touches one edge of the bottom of the block and breaks out
+# through the wall above it, which leans in: the notch in the wall
+# starts in a point.  OCCT cuts the same solid but joins its faces
+# wrongly afterwards (fuzzer finding 0021).
+
+profile p along z 0 4.5 1.5 10 4.5 0 10 0 0 0 0 0
+extrude blk from 0 to 16 p draft 3.5
+circle c along z 3.5 0.5 1
+extrude h from -3 to 17 c
+cut u blk h

@@ -5,7 +5,8 @@
 # Run with FreeCADCmd: FreeCADCmd occtworker.py < requests
 #
 # Each input line is a JSON request {"step": PATH, "spec": PATH or null},
-# or the bare path of a STEP file.  For each one, a line
+# with "brep": PATH in place of the spec for a reference solid read from
+# a BREP file, or the bare path of a STEP file.  For each one, a line
 #   R {"path": ..., "solids": N, "valid": ..., "closed": ...,
 #      "volume": V, "area": A, "bop": "ok" or a message, "ref": {...}}
 # goes to stdout, or to file descriptor N if the environment holds
@@ -13,8 +14,9 @@
 # reader of stdout keeps only the lines that start with "R ", and even
 # these can follow a piece of trace without its newline.
 #
-# With a spec (the .sm file of the part), the worker builds the
-# part a second time from the spec alone, with OCCT primitives, and
+# With a spec (the .sm file of a sheet metal part, or the .part file of
+# a solid), the worker builds the part a second time from the spec
+# alone, with OCCT primitives, and
 # compares the two solids.  The "ref" object holds the volume of this
 # reference solid and the volume of the symmetric difference, as
 # VA + VB - 2 V(A common B).  The construction covers a subset of each
@@ -428,22 +430,281 @@ class SheetPart:
         raise Skip("round at no corner")
 
 
+# Parts of solids (.part files, the extrude and bool programs), with
+# literal numbers and names only.  An outline is a list of corners
+# (u, v, r) in the plane across its axis, each rounded by a tangent arc
+# of radius r.  A drafted circle is a cone.
+
+def corner_wire(a, w, pts):
+    n = len(pts)
+    ends = []
+    for i, (u, v, r) in enumerate(pts):
+        p = uv_point(a, u, v, w)
+        if r <= 1e-9:
+            ends.append((p, None, p))
+            continue
+        pa = uv_point(a, pts[i - 1][0], pts[i - 1][1], w) - p
+        pb = uv_point(a, pts[(i + 1) % n][0], pts[(i + 1) % n][1], w) - p
+        pa.normalize()
+        pb.normalize()
+        h = math.acos(max(-1.0, min(1.0, pa.dot(pb)))) / 2
+        d = r / math.tan(h)
+        m = pa + pb
+        m.normalize()
+        c = p + m * (r / math.sin(h))
+        ends.append((p + pa * d, c - m * r, p + pb * d))
+    edges = []
+    for i in range(n):
+        t1, mid, t2 = ends[i]
+        if mid is not None:
+            edges.append(Part.Arc(t1, mid, t2).toShape())
+        nxt = ends[(i + 1) % n][0]
+        if (nxt - t2).Length > 1e-9:
+            edges.append(Part.LineSegment(t2, nxt).toShape())
+    return Part.Wire(edges)
+
+
+def outline(pts):
+    """The sides and corner arcs of a profile in (u, v), its region on the
+    left: (arc, sharp, a, c, r, ccw) each, a the start, as extrude.c has
+    them."""
+    n = len(pts)
+    area = sum(pts[i][0] * pts[(i + 1) % n][1] -
+               pts[(i + 1) % n][0] * pts[i][1] for i in range(n))
+    if area < 0:
+        pts = pts[::-1]
+    arcs = []
+    for i, (u, v, r) in enumerate(pts):
+        pa = (pts[i - 1][0] - u, pts[i - 1][1] - v)
+        pb = (pts[(i + 1) % n][0] - u, pts[(i + 1) % n][1] - v)
+        la, lb = math.hypot(*pa), math.hypot(*pb)
+        pa, pb = (pa[0] / la, pa[1] / la), (pb[0] / lb, pb[1] / lb)
+        if r <= 0:
+            arcs.append(((u, v), (u, v), None, 0.0, True))
+            continue
+        h = math.acos(max(-1.0, min(1.0, pa[0] * pb[0] + pa[1] * pb[1]))) / 2
+        d = r / math.tan(h)
+        m = (pa[0] + pb[0], pa[1] + pb[1])
+        lm = math.hypot(*m)
+        c = (u + m[0] / lm * r / math.sin(h), v + m[1] / lm * r / math.sin(h))
+        t1 = (u + pa[0] * d, v + pa[1] * d)
+        t2 = (u + pb[0] * d, v + pb[1] * d)
+        ccw = ((t1[0] - c[0]) * (t2[1] - c[1]) -
+               (t1[1] - c[1]) * (t2[0] - c[0])) > 0
+        arcs.append((t1, t2, c, r, ccw))
+    segs = []
+    for i in range(n):
+        t1, t2, c, r, ccw = arcs[i]
+        if c is not None:
+            segs.append([True, False, t1, c, r, ccw])
+        nxt = arcs[(i + 1) % n][0]
+        if math.hypot(nxt[0] - t2[0], nxt[1] - t2[1]) > 1e-9:
+            segs.append([False, c is None, t2, None, 0.0, True])
+    return segs
+
+
+def left_of(segs, i, at_end):
+    """The unit normal to the left of side i, at its start or its end."""
+    arc, _, a, c, r, ccw = segs[i]
+    b = segs[(i + 1) % len(segs)][2]
+    if not arc:
+        d = (b[0] - a[0], b[1] - a[1])
+        ld = math.hypot(*d)
+        return (-d[1] / ld, d[0] / ld)
+    q = b if at_end else a
+    d = ((q[0] - c[0]) / r, (q[1] - c[1]) / r)
+    return (-d[0], -d[1]) if ccw else d
+
+
+def moved_in(segs, d):
+    """The outline moved in by d, as far_outline of extrude.c does it."""
+    n = len(segs)
+    out = []
+    for i in range(n):
+        arc, sharp, a, c, r, ccw = segs[i]
+        lf = left_of(segs, i, False)
+        if arc:
+            r += -d if ccw else d
+        if not sharp or d <= 0:
+            a = (a[0] + lf[0] * d, a[1] + lf[1] * d)
+        else:
+            lp = left_of(segs, (i - 1) % n, True)
+            pv = segs[i - 1][2]
+            o1 = (pv[0] + lp[0] * d, pv[1] + lp[1] * d)
+            d1 = (segs[i][2][0] - pv[0], segs[i][2][1] - pv[1])
+            o2 = (a[0] + lf[0] * d, a[1] + lf[1] * d)
+            nx = segs[(i + 1) % n][2]
+            d2 = (nx[0] - segs[i][2][0], nx[1] - segs[i][2][1])
+            den = d1[0] * d2[1] - d1[1] * d2[0]
+            t = ((o2[0] - o1[0]) * d2[1] - (o2[1] - o1[1]) * d2[0]) / den
+            a = (o1[0] + d1[0] * t, o1[1] + d1[1] * t)
+        out.append([arc, sharp, a, c, r, ccw])
+    return out
+
+
+def outline_wire(a, w, segs):
+    edges = []
+    n = len(segs)
+    for i in range(n):
+        arc, _, p, c, r, ccw = segs[i]
+        q = segs[(i + 1) % n][2]
+        if arc:
+            m = (p[0] + q[0] - 2 * c[0], p[1] + q[1] - 2 * c[1])
+            lm = math.hypot(*m)
+            mid = (c[0] + m[0] / lm * r, c[1] + m[1] / lm * r)
+            edges.append(Part.Arc(uv_point(a, p[0], p[1], w),
+                                  uv_point(a, mid[0], mid[1], w),
+                                  uv_point(a, q[0], q[1], w)).toShape())
+        else:
+            edges.append(Part.LineSegment(uv_point(a, p[0], p[1], w),
+                                          uv_point(a, q[0], q[1], w)).toShape())
+    return Part.Wire(edges)
+
+
+def draft_solid(near, far):
+    """The solid between two outlines with the same sides: a plane on
+    each pair of lines and a ruled face, a cone, on each pair of arcs.
+    A loft gives the planes as splines, which cost exactness."""
+    faces = [Part.Face(near), Part.Face(far)]
+    for e0, e1 in zip(near.Edges, far.Edges):
+        if isinstance(e0.Curve, Part.Line):
+            p = [e0.Vertexes[0].Point, e0.Vertexes[-1].Point,
+                 e1.Vertexes[-1].Point, e1.Vertexes[0].Point]
+            faces.append(Part.Face(Part.makePolygon(p + [p[0]])))
+        else:
+            faces.append(Part.makeRuledSurface(e0, e1))
+    shell = Part.Shell(faces)
+    shell.sewShape()
+    s = Part.Solid(shell)
+    if s.Volume < 0:
+        s.reverse()
+    return s
+
+
+class SolidPart:
+    def __init__(self):
+        self.names = {}
+        self.prof = {}
+        self.solids = {}
+        self.last = None
+
+    def ev(self, w):
+        return evaluate(w, self.names)
+
+    def build(self, path):
+        for words in statements(path):
+            if len(words) >= 3 and words[1] == "=":
+                self.names[words[0]] = self.ev(" ".join(words[2:]))
+            elif words[0] == "profile":
+                pts = self.corners(words[4:])
+                self.prof[words[1]] = [axis_of(words[3])[0], "corners", pts]
+                self.last = words[1]
+            elif words[0] == "corner":
+                self.prof[self.last][2] += self.corners(words[1:])
+            elif words[0] == "circle":
+                self.prof[words[1]] = [axis_of(words[3])[0], "circle",
+                                       [self.ev(x) for x in words[4:7]]]
+                self.last = None
+            elif words[0] == "extrude":
+                self.solids[words[1]] = self.extrude(words)
+            elif words[0] in ("union", "cut", "common"):
+                acc = self.solids.pop(words[2])
+                for w in words[3:]:
+                    b = self.solids.pop(w)
+                    acc = {"union": acc.fuse, "cut": acc.cut,
+                           "common": acc.common}[words[0]](b)
+                self.solids[words[1]] = acc
+            else:
+                raise Skip("unknown statement " + words[0])
+        if len(self.solids) != 1:
+            raise Skip("%d solids" % len(self.solids))
+        s = list(self.solids.values())[0]
+        # Joining the faces on one surface is tidying, and OCCT gets it
+        # wrong where a hole touches an edge of its face (fuzzer finding
+        # 0021): the solid as cut stands then.
+        joined = s.removeSplitter()
+        return joined if joined.isValid() else s
+
+    def corners(self, words):
+        if len(words) % 3:
+            raise Skip("corners come in threes")
+        v = [self.ev(w) for w in words]
+        return [tuple(v[i:i + 3]) for i in range(0, len(v), 3)]
+
+    def extrude(self, words):
+        w0, w1 = self.ev(words[3]), self.ev(words[5])
+        a, kind, data = self.prof[words[6]]
+        i = 7
+        draft = 0.0
+        copies = [V(0, 0, 0)]
+        while i < len(words):
+            if words[i] == "draft":
+                draft = self.ev(words[i + 1])
+                i += 2
+            elif words[i] == "pattern":
+                i += 1
+                while i + 2 < len(words) and words[i] != "draft":
+                    ax, sg = axis_of(words[i])
+                    n = int(round(self.ev(words[i + 1])))
+                    p = sg * self.ev(words[i + 2])
+                    copies = [c + unit(ax, p * j) for c in copies
+                              for j in range(n)]
+                    i += 3
+            else:
+                raise Skip("unknown option " + words[i])
+        h = abs(w1 - w0)
+        sg = 1.0 if w1 > w0 else -1.0
+        if kind != "circle":
+            if draft:
+                near = outline(data)
+                far = moved_in(near, h * math.tan(math.radians(draft)))
+                s = draft_solid(outline_wire(a, w0, near),
+                                outline_wire(a, w1, far))
+            else:
+                s = Part.Face(corner_wire(a, w0, data)).extrude(
+                    unit(a, w1 - w0))
+        else:
+            u, v, dia = data
+            r1 = dia / 2 - h * math.tan(math.radians(draft))
+            p = uv_point(a, u, v, w0)
+            if draft:
+                s = Part.makeCone(dia / 2, r1 if r1 > 1e-9 else 0.0, h, p,
+                                  unit(a, sg))
+            else:
+                s = Part.makeCylinder(dia / 2, h, p, unit(a, sg))
+        return fuse([moved(s, shift(c)) for c in copies])
+
+
 def reference(shape, spec):
     r = {}
     try:
-        ref = SheetPart().build(spec)
+        if spec.endswith(".part"):
+            ref = SolidPart().build(spec)
+        else:
+            ref = SheetPart().build(spec)
     except Skip as e:
         return {"skip": str(e)}
     except Exception as e:
         return {"error": "reference: " + " ".join(str(e).split())[:200]}
     r["volume"] = ref.Volume
     r["valid"] = ref.isValid()
+    r["solids"] = len(ref.Solids)
+    # OCCT gives the symmetric difference two ways: the sum of the two
+    # cuts, and VA + VB - 2 V(A common B).  Each comes out too great at
+    # times: the common part of two solids with faces at a tiny angle is
+    # wrong, as for a bend of 179.999 degrees (fuzzer finding 0011), and
+    # so is a cut of two equal solids where a hole touches an edge of
+    # its face (finding 0021), by the whole volume.  The smaller of the
+    # two counts: no failure of OCCT is known that makes one too small.
     try:
         common = shape.common(ref).Volume
-        if common < 0.5 * min(shape.Volume, ref.Volume):
-            common = shape.common(ref, 1e-6).Volume
-        r["symdiff"] = shape.Volume + ref.Volume - 2 * common
+        r["symdiff"] = min(shape.cut(ref).Volume + ref.cut(shape).Volume,
+                           abs(shape.Volume + ref.Volume - 2 * common))
     except Exception as e:
+        if spec.endswith(".part"):
+            # OCCT fails on its own booleans of solids that touch at a
+            # point; that judges nothing of PliCad.
+            return {"skip": "common: " + " ".join(str(e).split())[:200]}
         r["error"] = "common: " + " ".join(str(e).split())[:200]
         return r
     # A common part of almost nothing between solids with one box and
@@ -458,7 +719,18 @@ def reference(shape, spec):
     return r
 
 
-def check(path, spec):
+def brep_reference(shape, path):
+    # The solid of the BREP file at path as the reference.
+    ref = Part.Shape()
+    ref.read(path)
+    if len(ref.Solids) != 1:
+        return {"error": "reference: %d solids" % len(ref.Solids)}
+    ref = ref.Solids[0]
+    return {"volume": ref.Volume, "valid": ref.isValid(),
+            "symdiff": shape.cut(ref).Volume + ref.cut(shape).Volume}
+
+
+def check(path, spec, brep=None):
     r = {"path": path}
     try:
         shape = Part.read(path)
@@ -469,7 +741,10 @@ def check(path, spec):
     r["solids"] = len(solids)
     if not solids:
         return r
-    s = solids[0]
+    # The solids of a part of solids (.part) may be several; the
+    # reference is the part as a whole.
+    whole = bool(spec) and spec.endswith(".part")
+    s = Part.makeCompound(solids) if whole and len(solids) > 1 else solids[0]
     r["valid"] = all(x.isValid() for x in solids)
     r["closed"] = all(sh.isClosed() for x in solids for sh in x.Shells)
     r["volume"] = sum(x.Volume for x in solids)
@@ -479,9 +754,11 @@ def check(path, spec):
         r["bop"] = "ok"
     except Exception as e:
         r["bop"] = " ".join(str(e).split())[:300]
-    if spec and len(solids) == 1 and r["valid"] and r["closed"] and \
-            r["bop"] == "ok":
+    if spec and (len(solids) == 1 or whole) and r["valid"] and \
+            r["closed"] and r["bop"] == "ok":
         r["ref"] = reference(s, spec)
+    if brep and len(solids) == 1 and r["valid"]:
+        r["ref"] = brep_reference(s, brep)
     return r
 
 
@@ -497,7 +774,7 @@ while True:
         continue
     if line.startswith("{"):
         req = json.loads(line)
-        out = check(req["step"], req.get("spec"))
+        out = check(req["step"], req.get("spec"), req.get("brep"))
     else:
         out = check(line, None)
     OUT.write("R " + json.dumps(out) + "\n")

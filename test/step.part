@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# step.part -- Two blocks that share a face and two side planes
+# Copyright (c) 2026 Jakob Kastelic
+
+profile r along z 0 0 0 20 0 0 20 10 0 0 10 0
+extrude blk from 0 to 5 r
+profile q along z 5 0 0 15 0 0 15 10 0 5 10 0
+extrude top from 5 to 7 q
+union u blk top

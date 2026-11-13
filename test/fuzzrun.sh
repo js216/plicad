@@ -7,10 +7,14 @@
 #
 # Copies src/ and the Makefile to WORK/src_snap, builds the sanitized
 # programs there, copies them to WORK/bin and runs fuzz.py on them until
-# it is killed.  The build and the fuzzer run at nice 19 in a scope of
-# freecad.slice with 2 GB of memory and no swap.  The tree of the
-# project stays untouched.  WORK/fuzz.log grows by one line per case;
-# test/fuzz_history.py WORK/fuzz.log summarises it.
+# it is killed.  The build and the fuzzer run at nice 19 with 2 GB of
+# memory and no swap: in a scope of freecad.slice, or under a systemd
+# service (INVOCATION_ID set), in the service itself, so that the fuzzer
+# dies with it.  One fuzzer at a time works in WORK: the lock on
+# WORK/fuzz.lock, held until fuzz.py exits, makes a second one fail at
+# once.  The tree of the project stays untouched.  WORK/fuzz.log grows
+# by one line per case; test/fuzz_history.py WORK/fuzz.log summarises
+# it.
 
 set -eu
 
@@ -29,9 +33,18 @@ case "$work" in
 	exit 1
 	;;
 esac
+exec 9> "$work/fuzz.lock"
+if ! flock -n 9; then
+	echo "fuzzrun.sh: another fuzzer works in $work" >&2
+	exit 1
+fi
 snap=$work/src_snap
-cap="systemd-run --user --slice=freecad.slice --scope -q -p MemoryMax=2G
-	-p MemorySwapMax=0 nice -n 19"
+if [ -n "${INVOCATION_ID:-}" ]; then
+	cap="nice -n 19"
+else
+	cap="systemd-run --user --slice=freecad.slice --scope -q
+	-p MemoryMax=2G -p MemorySwapMax=0 nice -n 19"
+fi
 
 rm -rf "$snap"
 mkdir -p "$snap"

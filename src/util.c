@@ -124,32 +124,44 @@ static int blank(char c)
 	return c == ' ' || c == '\t';
 }
 
+char *split_first(char **s)
+{
+	char *p = *s;
+	char *word = NULL;
+	int depth = 0;
+
+	while (blank(*p)) {
+		p++;
+	}
+	if (!*p) {
+		*s = p;
+		return NULL;
+	}
+	word = p;
+	while (*p && (depth || !blank(*p))) {
+		depth += *p == '(';
+		depth -= *p == ')';
+		p++;
+	}
+	if (*p) {
+		*p++ = 0;
+	}
+	*s = p;
+	return word;
+}
+
 size_t split_words(char *s, char **words, size_t max)
 {
 	size_t n = 0;
+	char *w = NULL;
 
-	for (;;) {
-		int depth = 0;
-
-		while (blank(*s)) {
-			s++;
-		}
-		if (!*s) {
-			return n;
-		}
+	while ((w = split_first(&s)) != NULL) {
 		if (n == max) {
 			return max + 1;
 		}
-		words[n++] = s;
-		while (*s && (depth || !blank(*s))) {
-			depth += *s == '(';
-			depth -= *s == ')';
-			s++;
-		}
-		if (*s) {
-			*s++ = 0;
-		}
+		words[n++] = w;
 	}
+	return n;
 }
 
 char *base_name(const char *path)
@@ -209,4 +221,30 @@ void sort_doubles(double *v, size_t n)
 			v[j] = x;
 		}
 	}
+}
+
+// Whether the name matches the pattern, a * for any run of characters.
+int glob(const char *pat, const char *name)
+{
+	const char *star = NULL;
+	const char *back = NULL;
+
+	while (*name) {
+		if (*pat == '*') {
+			star = pat++;
+			back = name;
+		} else if (*pat == *name) {
+			pat++;
+			name++;
+		} else if (star) {
+			pat = star + 1;
+			name = ++back;
+		} else {
+			return 0;
+		}
+	}
+	while (*pat == '*') {
+		pat++;
+	}
+	return !*pat;
 }

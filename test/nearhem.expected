@@ -1,0 +1,7 @@
+part nearhem
+volume 60476.2237
+area 54488.6644
+bbox -10.7093 19.1186 -3.1123 4.3452 151.4966 174.4625
+faces 19 plane 14 cylinder 5
+hole -8.5002 145.6025 -1.9693 d 3.2349 axis 0 0 1
+flat 189.1908 150.0786 area 26344.382 holes 1 bends 2

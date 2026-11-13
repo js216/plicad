@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_edge.part -- A cylinder that touches a block along a line
+# Copyright (c) 2026 Jakob Kastelic
+
+profile p along z 0 0 0 20 0 0 20 10 0 0 10 0
+extrude blk from 7 to 12 p
+circle c along x 3 6 2
+extrude rod from 2 to 8 c
+union u blk rod

@@ -60,6 +60,9 @@ char *read_file(const char *path);
 // line end, or NULL.  A carriage return before the newline goes too.
 char *next_line(char **s);
 
+// Splits the first word off *s in place and moves *s past it; returns
+// the word, or NULL if *s holds no more words.
+char *split_first(char **s);
 // Splits s in place into at most max words and returns their number, or
 // max + 1 if there are more.  A word ends at a blank outside parentheses.
 size_t split_words(char *s, char **words, size_t max);
@@ -83,5 +86,7 @@ void sort_doubles(double *v, size_t n);
 #define NUM_MAX 1e6
 // Whether v is a finite number no larger than NUM_MAX either way.
 int num_ok(double v);
+// Whether the name matches the pattern, a * for any run of characters.
+int glob(const char *pat, const char *name);
 
 #endif
