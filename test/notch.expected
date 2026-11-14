@@ -1,0 +1,7 @@
+part notch
+volume 8374.8673
+area 9000.0000
+bbox 0.0000 0.0000 -2.0000 100.0000 50.0000 0.0000
+faces 9 plane 8 cylinder 1
+hole 90.0000 40.0000 -1.0000 d 4.0000 axis 0 0 1
+flat 100.0000 50.0000 area 4187.434 holes 1 bends 0

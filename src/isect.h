@@ -76,7 +76,8 @@ struct box edge_box3(const struct sedge *e);
 // Whether the faces fa of a and fb of b are known to stay clear of
 // each other, so that no curve where their surfaces meet cuts either:
 // they lie on the two sides of a plane across an axis and reach it on
-// their edges alone; one, made of straight lines, lies on one side of
+// their edges alone; both, made of straight lines, lie apart along an
+// axis or a diagonal; one, made of straight lines, lies on one side of
 // the plane of the other; one, on a plane, lies inside the cylinder or
 // the cone of the other; or both lie on cylinders or cones with
 // parallel axes whose circles stay clear of each other.

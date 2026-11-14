@@ -1,11 +1,11 @@
 PROGS := smfold smflat tostep measure place interfere numdiff lint \
-	extrude bool fillet
-LIB := util geom expr fold brep bsolid contact shape stream integ isect \
+	extrude bool fillet mould smview smdim smsheet
+LIB := util font geom expr fold brep bsolid contact shape stream integ isect \
 	split merge
 
 LINTED := $(filter-out test/crlf.sm test/bad_%.fold,$(wildcard src/*.[ch] \
 	test/*.sm test/*.part test/*.txt test/*.params test/*.py test/*.sh \
-	test/*.expected test/*.fold)) test/colours \
+	test/*.expected test/*.fold test/*.draw src/*.sh)) test/colours \
 	Makefile .clang-format .clang-tidy .gitignore README.md
 
 CC := gcc
@@ -39,9 +39,13 @@ SAN := -fsanitize=address,undefined -fno-sanitize-recover=all -g -O1
 
 S := build/san
 
-all: $(addprefix build/,$(PROGS))
+all: $(addprefix build/,$(PROGS) smdraw)
 
-OBJS := $(addsuffix .o,$(LIB) $(PROGS) test_arith mould)
+build/smdraw: src/smdraw.sh
+	@mkdir -p build
+	cp $< $@
+
+OBJS := $(addsuffix .o,$(LIB) $(PROGS) test_arith)
 
 $(addprefix build/,$(OBJS)): build/%.o: src/%.c
 	@mkdir -p build

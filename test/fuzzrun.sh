@@ -6,9 +6,10 @@
 # Usage: test/fuzzrun.sh WORK [SEED]
 #
 # Copies src/ and the Makefile to WORK/src_snap, builds the sanitized
-# programs there, copies them to WORK/bin and runs fuzz.py on them until
-# it is killed.  The build and the fuzzer run at nice 19 with 2 GB of
-# memory and no swap: in a scope of freecad.slice, or under a systemd
+# programs there, copies them and the script smdraw to WORK/bin and
+# runs fuzz.py on them until it is killed.  The build and the fuzzer
+# run at nice 19 with 2 GB of memory and no swap: in a scope of
+# freecad.slice, or under a systemd
 # service (INVOCATION_ID set), in the service itself, so that the fuzzer
 # dies with it.  One fuzzer at a time works in WORK: the lock on
 # WORK/fuzz.lock, held until fuzz.py exits, makes a second one fail at
@@ -56,12 +57,14 @@ for p in $progs; do
 	targets="$targets build/san/$p"
 done
 # Without -fanalyzer and the other warnings the build takes seconds.
-$cap make -s -C "$snap" -j2 WARN=-std=c99 $targets
+$cap make -s -C "$snap" -j1 WARN=-std=c99 $targets
 
 rm -rf "$work/bin"
 mkdir -p "$work/bin"
 for p in $progs; do
 	cp "$snap/build/san/$p" "$work/bin/"
 done
+cp "$snap/src/smdraw.sh" "$work/bin/smdraw"
+chmod +x "$work/bin/smdraw"
 echo "fuzzrun.sh: fuzzing $work/bin, log $work/fuzz.log" >&2
 exec $cap /usr/bin/python3 "$here/fuzz.py" "$work/bin" "$work" "$@"

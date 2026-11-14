@@ -37,8 +37,29 @@
 #         interfere.  Placed parts keep their volume and area, their
 #         boxes move with them, parts far apart do not collide, and two
 #         copies at one place do.
-#   mut   A damaged input file (.sm, .fold, .txt, .params, a
+#   mut   A damaged input file (.sm, .fold, .txt, .params, .draw, a
 #         source header or a measure output) for its programs.
+#   view  A generated part, for smview in every view, with and without
+#         -h.  Every record is well formed, no line or arc is shorter
+#         than SHORT, and the only refusal is a circle seen at an
+#         angle.  In one case of ten, the visible lines of one view
+#         agree with the hidden-line projection of OCCT within HLR_TOL.
+#   dim   smview | smdim in a random view at a random scale.  The view
+#         has the size of the box of measure, its holes are holes of
+#         measure; each ordinate says its place in inches, the last on
+#         each axis the size of the view, each hole has its ordinates
+#         (or a pitch in its callout), each size of hole one callout
+#         with its count, and no text lies on another.
+#   sheet A random drawing file for a generated part, on a plain
+#         template of the tests with random fields, for smdraw and
+#         then Ghostscript.  A refusal must be one that the generator
+#         explains: a boxed note it left without a flag, a flag it gave
+#         a bad number, a view too large for the paper by the sizes the
+#         message gives, and the like.
+#   mutdraw A damaged drawing file (test/*.draw and those of an outside project,
+#         copied into WORK/drawings) for smdraw on a test fold: the
+#         drawing passes Ghostscript, or the refusal names its line, or
+#         is one of the refusals of the file as a whole.
 #   args  Random arguments for a random program.
 # A program must either succeed or exit with a message, and never
 # crash, hang or trip a sanitizer.
@@ -67,6 +88,7 @@ import random
 import re
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -136,6 +158,13 @@ PIPES = {
              "> gen.round, then measure and tostep (gen.step) on "
              "gen.round, then occtworker",
     "fillet": "as solid",
+    "view": "smfold gen.sm > gen.fold, then smview [-h] VIEW gen.fold for "
+            "each view, and occtworker on gen.step and one view",
+    "dim": "smfold gen.sm > gen.fold, smview VIEW gen.fold > gen.view, "
+           "smdim -s SCALE < gen.view, and measure gen.fold",
+    "sheet": "smfold gen.sm > gen.fold, PLICAD=BIN smdraw gen.draw gen.fold "
+             "> out.ps, gs -sDEVICE=nullpage out.ps",
+    "mutdraw": "PLICAD=BIN smdraw mut.draw part.fold > out.ps, gs on out.ps",
 }
 
 
@@ -1585,6 +1614,540 @@ def minimise(data, test, budget=MIN_RUNS):
 
 # The fuzzer.
 
+# The drawing programs.
+
+VIEWS = ["top", "bottom", "front", "back", "left", "right", "flat"]
+# The direction toward the eye of each view, as smview has it.
+VIEW_EYE = {"front": [0, -1, 0], "back": [0, 1, 0], "right": [1, 0, 0],
+            "left": [-1, 0, 0], "top": [0, 0, 1], "bottom": [0, 0, -1]}
+SCALES = ["2", "1.5", "1", "0.75", "0.5", "0.375", "0.25"]
+GS = "/usr/bin/gs"
+FONTDIR = "/home/jk/prog/freecad/FreeCAD/src/Mod/TechDraw/Gui/Resources/fonts"
+OUTSIDE_DRAWINGS = ""
+OUTSIDE_FOLDS = ""
+HLR_TOL = 0.08
+SHORT = 1e-3            # mm: no line or arc of smview is shorter
+VIEW_REFUSAL = re.compile(r"view \w+: the circle about \(.*\) is seen at an "
+                          r"angle")
+# The refusals of smdraw that may name no line: those of the file as a
+# whole.
+DRAW_REFUSAL = re.compile(
+    r"^\S*:\d+: |: no view$|: no template record|has a box, but no view has "
+    r"a flag|the template has no %%PliCad|lies off the paper|"
+    r"the template has no %%PliCadNotes|the notes take|"
+    r"a flag|names no note with a box|: sheet \d+: |: no view \w+, which|"
+    r"^usage|cannot open|cannot read|a note asks for "
+    r"a bend radius|two views \w+ on sheet|^\S+: \S+ is not the next")
+# The widths of the characters of osifont from the space on, in units of
+# its capital height 1515, as smdim has them.
+OSI_W = [890, 450, 801, 1256, 954, 1564, 1258, 417, 522, 522, 950, 952, 477,
+         952, 412, 1006, 958, 700, 955, 984, 1051, 1018, 1013, 979, 1056,
+         1030, 455, 522, 952, 950, 952, 951, 1660, 1258, 1192, 1004, 1205,
+         1003, 1003, 1187, 1210, 452, 847, 1155, 1007, 1364, 1202, 1203,
+         1152, 1222, 1155, 1105, 1101, 1206, 1259, 1559, 1262, 1258, 1106,
+         544, 946, 544, 798, 952, 646, 986, 1030, 829, 1031, 1015, 899, 1029,
+         1031, 447, 446, 1007, 548, 1315, 1011, 1009, 1039, 1039, 834, 954,
+         711, 1012, 954, 1253, 951, 951, 950, 644, 452, 644, 954]
+
+
+def put_templates(d):
+    # The plain templates of the tests in d, under their names and those
+    # of the outside drawings.
+    for k in "bcd":
+        with open(os.path.join(HERE, "plain_%s.ps" % k), "rb") as f:
+            t = f.read()
+        for name in ("plain_%s.ps" % k, "plain_%s.ps" % k):
+            with open(os.path.join(d, name), "wb") as f:
+                f.write(t)
+
+
+def old_draw(data):
+    # A drawing file of the time before templates, with its paper in a
+    # size record and its texts in records of their own, in the form of
+    # today: template and field records.
+    names = {b"title": b"Title", b"number": b"Number", b"rev": b"Rev",
+             b"drawn": b"Drawn", b"eng": b"Eng"}
+    out = []
+    for line in data.split(b"\n"):
+        w = line.split(b" ", 1)
+        if w[0] == b"size" and len(w) > 1:
+            out.append(b"template plain_%s.ps" % w[1].strip().lower())
+        elif w[0] in names and len(w) > 1:
+            out.append(b"field " + names[w[0]] + b" " + w[1])
+        elif w[0] not in (b"company", b"address", b"logo"):
+            out.append(line)
+    return b"\n".join(out)
+
+
+def text_width(s, h):
+    n = 0.0
+    i = 0
+    while i < len(s):
+        if s[i:i + 2] == "%%" and i + 2 < len(s):
+            n += 1800 if s[i + 2] == "v" else 1100
+            i += 3
+            continue
+        if " " <= s[i] <= "~":
+            n += OSI_W[ord(s[i]) - 32]
+        i += 1
+    return n / 1515 * h
+
+
+def inch_text(mm):
+    # The text of smdim for mm on the paper at scale 1: inches to three
+    # decimals, no zero before the point.
+    n = int(math.floor(abs(mm) / 25.4 * 1000 + 0.5))
+    s = "%s%s.%03d" % ("-" if mm < 0 and n else "", str(n // 1000)
+                       if n >= 1000 else "", n % 1000)
+    return s
+
+
+VIEW_SHAPES = {"view": "ss", "thick": "n", "radius": "n", "box": "nnnn",
+               "fill": "", "m": "nn", "l": "nn", "a": "nnnnn", "z": "",
+               "line": "kvnnnn", "arc": "kvnnnnn", "bend": "nnnnn"}
+
+
+def view_records(text):
+    # Whether each record of a view of smview is well formed, with no
+    # line or arc shorter than SHORT: None, or (signature, detail).
+    seen = set()
+    for no, line in enumerate(text.splitlines(), 1):
+        w = line.split()
+        if not w:
+            return ("blank", "line %d is blank" % no)
+        k = w[0]
+        shape = VIEW_SHAPES.get(k)
+        if k == "hole":
+            shape = "nnn" if len(w) == 4 else "nnnsnns"
+            if len(w) == 8 and (w[4] != "csink" or w[7] not in
+                                ("near", "far")):
+                return ("hole", "line %d: %s" % (no, line))
+        if shape is None or len(w) != len(shape) + 1:
+            return ("record", "line %d: %s" % (no, line))
+        for c, x in zip(shape, w[1:]):
+            if c == "n":
+                try:
+                    v = float(x)
+                except ValueError:
+                    return ("number", "line %d: %s" % (no, line))
+                if not math.isfinite(v):
+                    return ("number", "line %d: %s" % (no, line))
+            elif c == "k" and x not in ("e", "i", "o", "b", "s", "c"):
+                return ("kind", "line %d: %s" % (no, line))
+            elif c == "v" and x not in ("v", "h"):
+                return ("visibility", "line %d: %s" % (no, line))
+        if k == "line":
+            x = [float(t) for t in w[3:]]
+            if math.hypot(x[2] - x[0], x[3] - x[1]) < SHORT:
+                return ("short line", "line %d: %s" % (no, line))
+        if k == "arc":
+            x = [float(t) for t in w[3:]]
+            if x[2] * abs(x[4] - x[3]) * math.pi / 180 < SHORT:
+                return ("short arc", "line %d: %s" % (no, line))
+        seen.add(k)
+    if "view" not in seen or "box" not in seen:
+        return ("no box", "no view or box record")
+    return None
+
+
+# The paper axes of each view on the axes of the model, with their
+# signs: (axis of x, sign, axis of y, sign, axis of the eye).
+VIEW_AXES = {"top": (0, 1, 1, 1, 2), "bottom": (0, 1, 1, -1, 2),
+             "front": (0, 1, 2, 1, 1), "back": (0, -1, 2, 1, 1),
+             "right": (1, 1, 2, 1, 0), "left": (1, -1, 2, 1, 0)}
+
+
+def text_rects(dtext):
+    # The room of each text record of smdim, and of each flag.
+    rects = []
+    for line in dtext.splitlines():
+        w = line.split(" ", 6)
+        if w[0] == "text" and len(w) == 7:
+            x, y, ang, al, h = float(w[1]), float(w[2]), int(w[3]), w[4], \
+                float(w[5])
+            wd = text_width(w[6], h)
+            lo = {"l": 0, "c": -wd / 2, "r": -wd}[al]
+            if ang == 0:
+                rects.append((x + lo, y - h / 2, x + lo + wd, y + h / 2,
+                              w[6]))
+            else:
+                rects.append((x - h / 2, y + lo, x + h / 2, y + lo + wd,
+                              w[6]))
+        elif w[0] == "flag":
+            x, y = float(w[1]), float(w[2])
+            rects.append((x - 0.12, y - 0.12, x + 0.12, y + 0.12, "flag"))
+    return rects
+
+
+PS_STR = re.compile(r"\((?:\\.|[^\\)])*\)")
+
+
+def tx_rect(line, dx, dy):
+    # The room of a TX line of smsheet moved by dx, dy, or None.
+    m = re.match(r"\[(.*)\] (\S+) (\S+) (\S+) (\S+) (\S+) TX$", line)
+    if not m:
+        return None
+    text = "".join(re.sub(r"\\(.)", r"\1", t[1:-1])
+                   for t in PS_STR.findall(m.group(1)))
+    x, y, ang, h, al = [float(v) for v in m.groups()[1:]]
+    wd = text_width(text, h)
+    lo = -wd * al / 2
+    # x, y is the middle of the left, the centre or the right end.
+    if abs(ang) < 1:
+        return (x + dx + lo, y + dy - h / 2, x + dx + lo + wd,
+                y + dy + h / 2)
+    return (x + dx - h / 2, y + dy + lo, x + dx + h / 2, y + dy + lo + wd)
+
+
+def arc_box(x, y, r, a0, a1):
+    # The box round the arc of the A of smsheet: about x, y, of radius
+    # r, from a0 to a1 in degrees; arc or arcn, it sweeps the angles
+    # between the two.
+    lo, hi = min(a0, a1), max(a0, a1)
+    if hi - lo >= 360:
+        lo, hi = 0, 360
+    angles = [lo, hi] + [90 * k for k in range(int(math.floor(lo / 90)),
+                                                int(math.ceil(hi / 90)) + 1)
+                         if lo <= 90 * k <= hi]
+    xs = [x + r * math.cos(math.radians(t)) for t in angles]
+    ys = [y + r * math.sin(math.radians(t)) for t in angles]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def ps_pages(ps):
+    # Per page of a drawing of smsheet: the boxes round the ink of each
+    # view, and the rooms of the lines of the notes.
+    pages = []
+    view = None
+    depth = 0
+    for line in ps.splitlines():
+        if line.startswith("%%Page:"):
+            pages.append({"views": [], "notes": []})
+            continue
+        if not pages or line.startswith("%"):
+            continue
+        g = re.match(r"gsave (\S+) (\S+) translate$", line)
+        if g and view is None:
+            view = [float(g.group(1)), float(g.group(2)), None]
+            depth = 1
+            continue
+        if view is None:
+            r = tx_rect(line, 0, 0) if line.endswith(" TX") else None
+            if r and depth == 0 and pages[-1].get("template_done"):
+                pages[-1]["notes"].append(r)
+            if line.startswith("%%EndTemplate") or line == "end grestore":
+                pages[-1]["template_done"] = True
+            continue
+        depth += line.startswith("gsave") - (line == "grestore")
+        if depth == 0:
+            if view[2]:
+                pages[-1]["views"].append(view[2])
+            view = None
+            continue
+        w = line.split()
+        r = None
+        if line.endswith(" TX"):
+            r = tx_rect(line, view[0], view[1])
+        elif w and w[-1] in ("M", "L", "DOT") and len(w) >= 3:
+            x, y = float(w[0]) + view[0], float(w[1]) + view[1]
+            r = (x, y, x, y)
+        elif w and w[-1] == "LN" and len(w) == 5:
+            v = [float(t) for t in w[:4]]
+            r = (min(v[0], v[2]) + view[0], min(v[1], v[3]) + view[1],
+                 max(v[0], v[2]) + view[0], max(v[1], v[3]) + view[1])
+        elif w and w[-1] == "A" and len(w) == 6:
+            r = arc_box(*[float(t) for t in w[:5]])
+            r = (r[0] + view[0], r[1] + view[1], r[2] + view[0],
+                 r[3] + view[1])
+        if r:
+            b = view[2]
+            view[2] = r if b is None else (min(b[0], r[0]), min(b[1], r[1]),
+                                           max(b[2], r[2]), max(b[3], r[3]))
+    return pages
+
+
+def overlap(a, b, tol):
+    # Whether boxes a and b overlap by more than tol both ways.
+    return min(a[2], b[2]) - max(a[0], b[0]) > tol and \
+        min(a[3], b[3]) - max(a[1], b[1]) > tol
+
+
+def sheet_properties(ps, template):
+    # The properties of a drawing of smsheet on the template: each view
+    # in the room, off what the template keeps, off the notes and off
+    # the other views; each line of the notes in the region of the
+    # notes.  None, or (signature, detail).
+    nums = {}
+    for m in re.finditer(r"^%%(PliCad\w+): (.*)$", template, re.M):
+        if m.group(1) in ("PliCadRoom", "PliCadKeep", "PliCadNotes"):
+            nums.setdefault(m.group(1), []).append(
+                [float(v) for v in m.group(2).split()])
+    room = nums["PliCadRoom"][0]
+    keeps = nums.get("PliCadKeep", [])
+    notes = nums.get("PliCadNotes", [None])[0]
+    tol = 0.02
+    for k, page in enumerate(ps_pages(ps), 1):
+        vs = page["views"]
+        for i, v in enumerate(vs):
+            if v[0] < room[0] - tol or v[1] < room[1] - tol or \
+                    v[2] > room[2] + tol or v[3] > room[3] + tol:
+                return ("view off room", "sheet %d: a view %s off the room "
+                        "%s" % (k, ["%.2f" % t for t in v], room))
+            for r in keeps:
+                if overlap(v, r, tol):
+                    return ("view on keep", "sheet %d: a view %s on the "
+                            "keep %s" % (k, ["%.2f" % t for t in v], r))
+            for r in page["notes"]:
+                if overlap(v, r, tol):
+                    return ("view on notes", "sheet %d: a view %s on a line "
+                            "of the notes %s" % (
+                                k, ["%.2f" % t for t in v],
+                                ["%.2f" % t for t in r]))
+            for w in vs[i + 1:]:
+                if overlap(v, w, tol):
+                    return ("views overlap", "sheet %d: views %s and %s" % (
+                        k, ["%.2f" % t for t in v], ["%.2f" % t for t in w]))
+        for r in page["notes"][1:]:
+            if notes and (r[2] - r[0] > 2 * tol) and \
+                    r[2] > notes[2] + tol:
+                return ("notes wide", "sheet %d: a line of the notes %s "
+                        "past the region %s" % (
+                            k, ["%.2f" % t for t in r], notes))
+    return None
+
+
+def dim_properties(view, vtext, dtext, m, scale):
+    # The properties of the dimensions of smdim on a view of smview, and
+    # of the view against the measure m: None, or (signature, detail).
+    box = None
+    holes = []
+    for line in vtext.splitlines():
+        w = line.split()
+        if w[0] == "box":
+            box = [float(x) for x in w[1:5]]
+        elif w[0] == "hole":
+            holes.append((float(w[1]), float(w[2]), float(w[3])))
+    size = (box[2] - box[0], box[3] - box[1])
+    # The view against measure.
+    if view == "flat":
+        want = sorted(m["flat"])
+        if not all(abs(a - b) < 2e-3 for a, b in zip(sorted(size), want)):
+            return ("view size", "flat view %.4f x %.4f, blank %s" % (
+                size[0], size[1], want))
+    else:
+        ax, sx, ay, sy, eye = VIEW_AXES[view]
+        b = m["bbox"]
+        want = (b[ax + 3] - b[ax], b[ay + 3] - b[ay])
+        if not all(abs(a - c) < 2e-3 for a, c in zip(size, want)):
+            return ("view size", "%s view %.4f x %.4f, box %.4f x %.4f" % (
+                view, size[0], size[1], want[0], want[1]))
+        for x, y, dd in holes:
+            if not any(abs(h[3] - dd) < 2e-3 and h[eye] == 1 and
+                       abs(sx * h[4 + ax] - x) < 1e-2 and
+                       abs(sy * h[4 + ay] - y) < 1e-2 for h in m["holes"]):
+                return ("view hole", "%s view: a hole %.4f at %.4f %.4f "
+                        "that measure has not" % (view, dd, x, y))
+    ords = {"x": [], "y": []}
+    called = {}
+    pitch = False
+    far = None
+    for line in dtext.splitlines():
+        w = line.split()
+        if w[:2] == ["dim", "ord"]:
+            mm = float(w[3])
+            if w[4] not in (inch_text(mm - 5e-5), inch_text(mm + 5e-5)):
+                return ("ordinate text", "ordinate %s at %s mm says %s" % (
+                    w[2], w[3], w[4]))
+            ords[w[2]].append(mm)
+        elif w[:2] == ["dim", "hole"]:
+            d = round(float(w[2]), 3)
+            called[d] = called.get(d, 0) + int(w[3])
+        elif w[:2] == ["dim", "pitch"]:
+            pitch = True
+        elif w[0] == "far":
+            far = int(w[1])
+    if far is None:
+        return ("far", "no far record")
+    for i, axis in enumerate("xy"):
+        if not ords[axis] or abs(max(ords[axis]) - size[i]) > 2e-3:
+            return ("last ordinate", "the last %s ordinate is %s, the view "
+                    "is %.4f" % (axis, max(ords[axis]) if ords[axis] else
+                                 None, size[i]))
+    for x, y, dd in holes:
+        u, v = x - box[0], y - box[1]
+        if not pitch and not (any(abs(o - u) < 2e-3 for o in ords["x"]) and
+                              any(abs(o - v) < 2e-3 for o in ords["y"])):
+            return ("hole ordinate", "no ordinates for the hole at %.4f "
+                    "%.4f" % (u, v))
+    count = {}
+    for x, y, dd in holes:
+        count[round(dd, 3)] = count.get(round(dd, 3), 0) + 1
+    if count != called:
+        return ("hole callout", "holes %s, callouts %s" % (
+            sorted(count.items()), sorted(called.items())))
+    r = text_rects(dtext)
+    for i in range(len(r)):
+        for j in range(i + 1, len(r)):
+            a, b = r[i], r[j]
+            if a[0] + 0.01 < b[2] - 0.01 and b[0] + 0.01 < a[2] - 0.01 and \
+                    a[1] + 0.01 < b[3] - 0.01 and b[1] + 0.01 < a[3] - 0.01:
+                return ("text on text", "%r on %r" % (a[4], b[4]))
+    return None
+
+
+FIT_RE = re.compile(r"sheet \d+: view \w+ at scale [\d.e+-]+ takes ([\d.]+) "
+                    r"x ([\d.]+) in with its dimensions, ([\d.]+) x "
+                    r"([\d.]+) in more than the room of the template, "
+                    r"([\d.]+) x ([\d.]+) in")
+# The plain templates of the tests, by paper, and the rooms they give.
+TEMPLATES = {"B": "plain_b.ps", "C": "plain_c.ps", "D": "plain_d.ps"}
+FIELDS = ["Title", "Number", "Rev", "Drawn", "Eng", "Filename"]
+
+
+def refusal_ok(msg, plan):
+    # None if the plan of the drawing explains the refusal msg of
+    # smdraw, else the reason why not.
+    m = FIT_RE.search(msg)
+    if m:
+        w, h, dw, dh, rw, rh = map(float, m.groups())
+        if abs(rw - plan["room"][0]) > 0.05 or abs(rh - plan["room"][1]) > 0.05:
+            return "fit room"
+        # The excess is never none, and the length it is of at least
+        # the room, as printed to the hundredth.
+        if not ((dw > 0 and w >= rw) or (dh > 0 and h >= rh)) or \
+                abs(dw - max(w - rw, 0)) > 0.02 or \
+                abs(dh - max(h - rh, 0)) > 0.02:
+            return "fit numbers"
+        return None
+    m = re.search(r"note (\d+) has a box, but no view has a flag", msg)
+    if m:
+        return None if int(m.group(1)) in plan["unflagged"] else \
+            "flag claimed missing"
+    m = re.search(r"the flag (\S+) names no note with a box", msg)
+    if m:
+        return None if m.group(1) in plan["badflags"] else \
+            "flag claimed bad"
+    m = re.search(r":(\d+): the template has no field (\w+)", msg)
+    if m:
+        return None if m.group(2) in plan["badfields"] else \
+            "field claimed unlisted"
+    m = re.search(r":(\d+): smsheet gives the field (\w+) itself", msg)
+    if m:
+        return None if m.group(2) in plan["badfields"] else \
+            "field claimed reserved"
+    for pat, key in [(r"is crowded at scale|the views at scale .* take|"
+                      r"the notes take|"
+                      r"no room for the (callout|note)|is seen at an angle",
+                      None),
+                     (r"lin [xy]: no edge or hole at", "lin"),
+                     (r"a note asks for a bend radius", "radius")]:
+        if re.search(pat, msg) and (key is None or plan.get(key)):
+            return None
+    return "unexplained"
+
+
+WORDS_NOTE = ["MASK", "PAINT", "SURFACE", "ENTIRE", "FLANGE", "HOLE",
+              "BOTH", "SIDES", "(SHOWN)", "%%c.125", "TYP", "%%p.005",
+              "MARK", "HERE", "PEM", "F-440-2", "INSTALL", "FARSIDE"]
+
+
+class DrawGen:
+    # A random drawing file, and the plan that explains its refusals.
+
+    def __init__(self, rng):
+        self.rng = rng
+
+    def words(self, lo, hi):
+        return " ".join(self.rng.choice(WORDS_NOTE)
+                        for _ in range(self.rng.randint(lo, hi)))
+
+    def gen(self):
+        rng = self.rng
+        size = rng.choice("BCD")
+        w, h = {"B": (17, 11), "C": (22, 17), "D": (34, 22)}[size]
+        plan = {"size": size, "unflagged": set(), "badflags": set(),
+                "lin": False, "radius": False, "badfields": set(),
+                "room": (w - 1.8, h - 1.8)}
+        out = ["template " + TEMPLATES[size]]
+        for f in rng.sample(FIELDS, rng.randint(0, len(FIELDS))):
+            out.append("field %s %s" % (f, self.words(0, 5).replace(
+                "%%", "(\\") if rng.random() < 0.8 else "a ) ( \\ b"))
+            if rng.random() < 0.2:
+                out.append("+ " + self.words(1, 3))
+        if rng.random() < 0.05:
+            bad = rng.choice(["Titel", "Sheet", "Scale", "Revisions"])
+            out.append("field %s X" % bad)
+            plan["badfields"].add(bad)
+        if rng.random() < 0.3:
+            out.append("scale " + rng.choice(SCALES))
+        out.append("material 5052-H32 ALUMINUM, %%t THICK.")
+        out.append("finish " + self.words(1, 8))
+        notes = 2
+        boxed = []
+        plain = []
+        for _ in range(rng.randint(0, 4)):
+            notes += 1
+            if rng.random() < 0.5:
+                boxed.append(notes)
+                out.append("boxed " + self.words(2, 12))
+            else:
+                plain.append(notes)
+                if rng.random() < 0.15:
+                    out.append("note INSIDE BEND RADIUS %%r.")
+                    plan["radius"] = True
+                else:
+                    out.append("note " + self.words(2, 12))
+            if rng.random() < 0.3:
+                out.append("+ " + self.words(1, 8))
+        for _ in range(rng.randint(0, 3)):
+            out.append("revision %s 11/13/26 JK %s" % (
+                rng.choice("ABC"), self.words(1, 6)))
+        names = rng.sample(VIEWS, rng.randint(1, 5))
+        sheets = rng.randint(1, 3)
+        flags = {n: [] for n in names}
+        for b in boxed:
+            if rng.random() < 0.9:
+                flags[rng.choice(names)].append(str(b))
+            else:
+                plan["unflagged"].add(b)
+        if rng.random() < 0.05:
+            bad = str(rng.choice(plain + [notes + 1, 0]))
+            flags[rng.choice(names)].append(bad)
+            plan["badflags"].add(bad)
+        for n in names:
+            line = "view " + n
+            if rng.random() < 0.3:
+                line += " hidden"
+            if rng.random() < 0.2:
+                line += " scale " + rng.choice(SCALES)
+            line += " sheet %d" % rng.randint(1, sheets)
+            if rng.random() < 0.3:
+                line += " title " + self.words(1, 3)
+            out.append(line)
+            for f in flags[n]:
+                out.append(" flag %s %s %s%s" % (
+                    fmt(rng.uniform(0, 4)), fmt(rng.uniform(0, 3)), f,
+                    " FARSIDE" if rng.random() < 0.3 else ""))
+            for _ in range(rng.randint(0, 2)):
+                out.append(" leader %s %s %s" % (
+                    fmt(rng.uniform(0, 4)), fmt(rng.uniform(0, 3)),
+                    self.words(1, 7)))
+            if rng.random() < 0.2:
+                x0, y0 = rng.uniform(0, 3), rng.uniform(0, 2)
+                out.append(" hatch %s %s %s %s" % (
+                    fmt(x0), fmt(y0), fmt(x0 + rng.uniform(0.2, 4)),
+                    fmt(y0 + rng.uniform(0.2, 3))))
+            if rng.random() < 0.1:
+                plan["lin"] = True
+                out.append(" lin %s 0 %s%s" % (
+                    rng.choice("xy"), fmt(rng.uniform(0.1, 4)),
+                    " +.010 -.000" if rng.random() < 0.5 else ""))
+            if rng.random() < 0.1:
+                out.append(" drop %s %s" % (rng.choice("xydr"),
+                                            inch_text(rng.uniform(0, 80))))
+        return ("\n".join(out) + "\n").encode(), plan
+
+
 class Fuzzer:
     def __init__(self, bindir, work, seed, occt=True):
         self.bin = os.path.abspath(bindir)
@@ -1632,7 +2195,7 @@ class Fuzzer:
         for name in sorted(os.listdir(HERE)):
             ext = os.path.splitext(name)[1]
             if ext in (".sm", ".part", ".fold", ".txt", ".params",
-                       ".expected", ".py"):
+                       ".expected", ".py", ".draw"):
                 with open(os.path.join(HERE, name), "rb") as f:
                     data = f.read()
                 if ext == ".part" and len(data) > PART_MAX:
@@ -1651,6 +2214,22 @@ class Fuzzer:
                 if name.endswith((".c", ".h")):
                     with open(os.path.join(src, name), "rb") as f:
                         corpus.append((name[-2:], f.read()))
+        # The outside drawing files, copied into WORK, and the folds
+        # of its parts, for the drawing programs.
+        self.draw_folds = []
+        copies = os.path.join(self.work, "drawings")
+        os.makedirs(copies, exist_ok=True)
+        if os.path.isdir(OUTSIDE_DRAWINGS):
+            for name in sorted(os.listdir(OUTSIDE_DRAWINGS)):
+                if not name.endswith(".draw"):
+                    continue
+                shutil.copy(os.path.join(OUTSIDE_DRAWINGS, name), copies)
+                with open(os.path.join(copies, name), "rb") as f:
+                    corpus.append((".draw", old_draw(f.read())))
+                fold = os.path.join(OUTSIDE_FOLDS, name[:-5] + ".fold")
+                if os.path.isfile(fold) and os.path.getsize(fold) < 2 ** 18:
+                    with open(fold, "rb") as f:
+                        self.draw_folds.append(f.read())
         # Folds of the test parts, for the programs that read folds.
         tmp = os.path.join(self.work, "seed")
         os.makedirs(tmp, exist_ok=True)
@@ -1668,6 +2247,9 @@ class Fuzzer:
             if r.verdict == "OK":
                 with open(out, "rb") as f:
                     corpus.append((".fold", f.read()))
+                if base in ("cube", "bracket", "plate", "notch"):
+                    with open(out, "rb") as f:
+                        self.draw_folds.append(f.read())
         return corpus
 
     def keep_corpus(self, ext, data):
@@ -1895,7 +2477,8 @@ class Fuzzer:
         if self.occt is None or self.occt.poll() is not None:
             self.occt_stop()
             self.occt_start()
-        req = json.dumps({"step": step, "spec": spec}) + "\n"
+        req = json.dumps(spec if isinstance(spec, dict) else
+                         {"step": step, "spec": spec}) + "\n"
         try:
             self.occt.stdin.write(req.encode())
             self.occt.stdin.flush()
@@ -2491,6 +3074,8 @@ class Fuzzer:
     def gen_mut(self, seed):
         rng = random.Random(seed)
         ext, data = rng.choice(self.corpus)
+        if ext == ".draw":
+            return self.gen_mutdraw(seed)
         if ext == ".py":
             ext = rng.choice([".py", ".c", ".sh"])
         data = self.mutate(rng, data)
@@ -2564,15 +3149,323 @@ class Fuzzer:
 
         self.finding("args", seed, bad, files, "argv", check)
 
+    # Drawings.
+
+    def draw_part(self, seed):
+        # A generated part, folded and measured, for the modes of the
+        # drawing programs; None if smfold refuses it or it fails.
+        text = SheetGen(random.Random(seed)).gen()
+        data = text.encode()
+        d = self.fresh()
+        try:
+            bad = self.sm_check(d, data)
+        except Refused:
+            return None
+        if bad:
+            return None
+        return data
+
+    def smview_check(self, d, data, views, hidden, occt_view=None):
+        # Projects the part in data with smview in each of views.
+        # Returns a Bad or None; raises Refused if smfold rejects it.
+        self.last = None
+        bad = self.sm_check(d, data)
+        if bad is not None:
+            return bad
+        fold = self.last[0]
+        try:
+            for v in views:
+                for h in hidden:
+                    argv = [self.prog("smview")] + h + [v, fold]
+                    out = os.path.join(d, "%s%s.view" % (v, "h" if h
+                                                         else ""))
+                    r = run(argv, cwd=d, out=out)
+                    if r.verdict == "FAIL":
+                        if VIEW_REFUSAL.search(r.err):
+                            continue
+                        raise Bad("MISMATCH", "smview",
+                                  "MISMATCH smview refuses",
+                                  "refuses a part: " + r.detail, argv, r.err)
+                    must(r, argv, True)
+                    bad = view_records(r.out.decode("latin-1"))
+                    if bad:
+                        raise Bad("MISMATCH", "smview",
+                                  "MISMATCH smview " + bad[0], bad[1], argv)
+            for v in occt_view or []:
+                if self.view_occt(d, fold, v):
+                    break
+        except Bad as b:
+            return b
+        return None
+
+    def view_occt(self, d, fold, v):
+        # The visible lines of view v against those of OCCT; returns 0
+        # if smview refused the view.
+        lines = os.path.join(d, v + ".view")
+        if not os.path.exists(lines):
+            return 0
+        with open(lines, "rb") as f:
+            if b"\nbox " not in f.read():
+                return 0
+        step = os.path.join(d, "gen.step")
+        r = self.occt_ask(None, {"step": step, "view": VIEW_EYE[v],
+                                 "lines": lines})
+        if "timeout" in r or "error" in r:
+            self.hlr_note = "occt %s %s" % (v, "timeout" if "timeout" in r
+                                            else r["error"][:60])
+            return 1
+        h = r.get("hlr", {})
+        self.hlr_note = "occt %s points %s/%s" % (v, h.get("mine"),
+                                                  h.get("occt"))
+        if h.get("extra") or h.get("lost"):
+            raise Bad("OCCT", "smview", "OCCT smview hlr",
+                      "view %s: %d points of smview and %d of OCCT have "
+                      "no point of the other within %.2f mm" % (
+                          v, h["extra"], h["lost"], HLR_TOL),
+                      ["occtworker", step, lines], json.dumps(r))
+        return 1
+
+    def gen_view(self, seed):
+        rng = random.Random(seed)
+        data = self.draw_part(seed)
+        if data is None:
+            self.note("view", "smfold", "REJECT", "part", seed)
+            return
+        occt = self.use_occt and rng.random() < 0.1
+        ov = rng.sample(VIEWS[:-1], 6) if occt else None
+        self.hlr_note = "no occt"
+        check = lambda dd, x: self.smview_check(dd, x, VIEWS, [[], ["-h"]],
+                                                ov)
+        try:
+            bad = check(self.case, data)
+        except Refused as e:
+            self.note("view", "smfold", "REJECT", str(e)[:150], seed)
+            return
+        if bad:
+            self.finding("view", seed, bad, {"gen.sm": data}, "gen.sm",
+                         lambda dd, x: self.retry(check, dd, x))
+            return
+        self.note("view", "smview", "PASS", self.hlr_note, seed)
+
+    def smdim_check(self, d, data, view, scale):
+        # smview | smdim on the part in data, and the properties of the
+        # dimensions.  Returns a Bad or None.
+        self.last = None
+        bad = self.sm_check(d, data)
+        if bad is not None:
+            return bad
+        fold, outs, m, model = self.last
+        argv = [self.prog("smview"), view, fold]
+        vfile = os.path.join(d, "gen.view")
+        r = run(argv, cwd=d, out=vfile)
+        if r.verdict == "FAIL" and VIEW_REFUSAL.search(r.err):
+            return None
+        try:
+            must(r, argv, True)
+            argv = [self.prog("smdim"), "-s", scale]
+            with open(vfile, "rb") as f:
+                p = subprocess.run(argv, stdin=f, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, timeout=TIMEOUT,
+                                   env=dict(os.environ, **SAN_ENV))
+            r = Run("OK" if p.returncode == 0 else "FAIL", "",
+                    p.stderr.decode("latin-1"), p.stdout, None)
+            if SAN_RE.search(r.err) or p.returncode < 0:
+                s = san_sig(r.err) if SAN_RE.search(r.err) else \
+                    "signal %d" % -p.returncode
+                raise Bad("SANITIZER" if SAN_RE.search(r.err) else "CRASH",
+                          "smdim", "SANITIZER smdim %s" % s, s,
+                          argv + ["<", vfile], r.err)
+            if p.returncode != 0:
+                msg = r.err.strip().splitlines()[0] if r.err.strip() else ""
+                if not msg:
+                    raise Bad("NOMSG", "smdim", "NOMSG smdim", "no message",
+                              argv + ["<", vfile])
+                if "no room for the callout" in msg:
+                    return None
+                raise Bad("MISMATCH", "smdim", "MISMATCH smdim refuses",
+                          msg[:150], argv + ["<", vfile], r.err)
+            with open(vfile, "rb") as f:
+                vtext = f.read().decode("latin-1")
+            bad = dim_properties(view, vtext, r.out.decode("latin-1"), m,
+                                 float(scale))
+            if bad:
+                raise Bad("MISMATCH", "smdim", "MISMATCH smdim " + bad[0],
+                          bad[1], argv + ["<", vfile])
+        except Bad as b:
+            return b
+        return None
+
+    def gen_dim(self, seed):
+        rng = random.Random(seed)
+        data = self.draw_part(seed)
+        if data is None:
+            self.note("dim", "smfold", "REJECT", "part", seed)
+            return
+        view = rng.choice(VIEWS)
+        scale = rng.choice(SCALES)
+        check = lambda dd, x: self.smdim_check(dd, x, view, scale)
+        bad = self.retry(check, self.case, data)
+        if bad:
+            self.finding("dim", seed, bad, {"gen.sm": data}, "gen.sm",
+                         lambda dd, x: self.retry(check, dd, x))
+            return
+        self.note("dim", "smdim", "PASS", "%s %s" % (view, scale), seed)
+
+    def smdraw_run(self, d, draw, fold, files):
+        # smdraw on a drawing file, then Ghostscript on the PostScript.
+        # Returns the first line of a refusal, or None for a drawing;
+        # raises Bad.
+        argv = [self.prog("smdraw"), draw, fold]
+        env = dict(os.environ, PLICAD=self.bin, **SAN_ENV)
+        ps = os.path.join(d, "out.ps")
+        # smdraw runs the other programs: on a timeout, the whole group
+        # of its processes goes.
+        with open(ps, "wb") as f:
+            p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=f,
+                                 stderr=subprocess.PIPE, env=env, cwd=d,
+                                 start_new_session=True)
+            try:
+                err = p.communicate(timeout=TIMEOUT * 6)[1]
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.communicate()
+                raise Bad("HANG", "smdraw", "HANG smdraw", "timeout", argv)
+        err = err.decode("latin-1")
+        if SAN_RE.search(err):
+            s = san_sig(err)
+            raise Bad("SANITIZER", "smdraw", "SANITIZER smdraw %s" % s, s,
+                      argv, err)
+        if p.returncode != 0:
+            msg = err.strip().splitlines()[0] if err.strip() else ""
+            if not msg:
+                raise Bad("NOMSG", "smdraw", "NOMSG smdraw", "no message",
+                          argv)
+            return re.sub(r"^\S*/", "", msg)
+        g = subprocess.run([GS, "-q", "-dNOPAUSE", "-dBATCH", "-dSAFER",
+                            "-sDEVICE=nullpage", "-sFONTPATH=" + FONTDIR,
+                            ps], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           timeout=TIMEOUT * 6)
+        out = g.stdout.decode("latin-1")
+        if g.returncode != 0 or "Error" in out:
+            e = re.search(r"Error: (\S+) in (\S+)", out)
+            what = "%s %s" % e.groups() if e else "exit %d" % g.returncode
+            raise Bad("MISMATCH", "smsheet", "MISMATCH gs " + what,
+                      "Ghostscript: " + what, [GS, ps], out[-3000:])
+        return None
+
+    def sheet_check(self, d, draw, data, plan):
+        # Draws the part in data by the drawing file draw.  A refusal
+        # must be one that the plan of the generator explains.
+        self.last = None
+        bad = self.sm_check(d, data)
+        if bad is not None:
+            return bad
+        fold = self.last[0]
+        path = os.path.join(d, "gen.draw")
+        with open(path, "wb") as f:
+            f.write(draw)
+        put_templates(d)
+        try:
+            msg = self.smdraw_run(d, path, fold, {})
+            self.sheet_msg = "drawn" if msg is None else \
+                "refused: " + re.sub(r"^\S*: ", "", msg)[:80]
+            if msg is None:
+                return self.layout_check(d, path, fold, plan)
+            why = refusal_ok(msg, plan)
+            if why:
+                raise Bad("MISMATCH", "smdraw", "MISMATCH smdraw " + why,
+                          msg[:200], [self.prog("smdraw"), path, fold])
+        except Bad as b:
+            return b
+        return None
+
+    def layout_check(self, d, path, fold, plan):
+        # The properties of the layout of a drawing in d/out.ps on the
+        # template of the plan.
+        with open(os.path.join(d, "out.ps"), encoding="latin-1") as f:
+            ps = f.read()
+        with open(os.path.join(d, TEMPLATES[plan["size"]]),
+                  encoding="latin-1") as f:
+            template = f.read()
+        bad = sheet_properties(ps, template)
+        if bad:
+            return Bad("MISMATCH", "smsheet", "MISMATCH layout " + bad[0],
+                       bad[1], [self.prog("smdraw"), path, fold])
+        return None
+
+    def gen_sheet(self, seed):
+        rng = random.Random(seed)
+        data = self.draw_part(seed)
+        if data is None:
+            self.note("sheet", "smfold", "REJECT", "part", seed)
+            return
+        draw, plan = DrawGen(rng).gen()
+        check = lambda dd, x: self.sheet_check(dd, x, data, plan)
+        bad = self.retry(check, self.case, draw)
+        if bad:
+            self.finding("sheet", seed, bad, {"gen.draw": draw,
+                                              "gen.sm": data},
+                         "gen.draw", lambda dd, x: self.retry(check, dd, x))
+            return
+        self.note("sheet", "smdraw", "PASS", "%s %s" % (
+            plan["size"], getattr(self, "sheet_msg", "")), seed)
+
+    def mutdraw_check(self, d, data, fold):
+        # smdraw on a damaged drawing file: a drawing that Ghostscript
+        # reads, or a refusal that names its line or one of the
+        # refusals of the whole file.
+        path = os.path.join(d, "mut.draw")
+        with open(path, "wb") as f:
+            f.write(data)
+        fpath = os.path.join(d, "part.fold")
+        with open(fpath, "wb") as f:
+            f.write(fold)
+        try:
+            msg = self.smdraw_run(d, path, fpath, {})
+            if msg is not None and not DRAW_REFUSAL.search(msg):
+                raise Bad("MISMATCH", "smdraw",
+                          "MISMATCH smdraw unplaced %s" % re.sub(
+                              r"-?\d[\d.]*|\S+\.\S+", "N", msg)[:60],
+                          "a refusal that names no line: " + msg[:150],
+                          [self.prog("smdraw"), path, fpath])
+        except Bad as b:
+            return b
+        return None
+
+    def gen_mutdraw(self, seed):
+        rng = random.Random(seed)
+        draws = [x for e, x in self.corpus if e == ".draw"]
+        folds = [x for e, x in self.corpus if e == ".fold"]
+        if not draws or not folds:
+            return
+        data = self.mutate(rng, rng.choice(draws))
+        fold = rng.choice(self.draw_folds or folds)
+        d = self.fresh()
+        files = {"mut.draw": data, "part.fold": fold}
+        for k in "bcd":
+            with open(os.path.join(HERE, "plain_%s.ps" % k), "rb") as f:
+                files["plain_%s.ps" % k] = files["plain_%s.ps" % k] = f.read()
+        put_templates(d)
+        bad = self.mutdraw_check(d, data, fold)
+        if bad:
+            self.finding("mut", seed, bad, files, "mut.draw",
+                         lambda dd, x: self.mutdraw_check(dd, x, fold))
+            return
+        self.note("mut", "smdraw", "PASS", ".draw", seed)
     # The main loop.
 
+    # The modes of the drawing programs take half of the cases.
     MODES = ["sm"] * 9 + ["solid"] * 6 + ["fillet"] * 4 + ["asm"] + \
-        ["mut"] * 8 + ["args"] * 2
+        ["mut"] * 8 + ["args"] * 2 + ["view"] * 8 + ["dim"] * 8 + \
+        ["sheet"] * 8 + ["mutdraw"] * 6
 
     def one(self, mode, seed):
         {"sm": self.gen_sm, "asm": self.gen_asm, "solid": self.gen_solid,
          "fillet": self.gen_fillet,
-         "mut": self.gen_mut, "args": self.gen_args}[mode](seed)
+         "mut": self.gen_mut, "args": self.gen_args, "view": self.gen_view,
+         "dim": self.gen_dim, "sheet": self.gen_sheet,
+         "mutdraw": self.gen_mutdraw}[mode](seed)
 
     def loop(self, cases=None):
         self.note("start", "fuzz", "START", "seed %d" % self.seed, self.seed)

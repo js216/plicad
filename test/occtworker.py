@@ -6,7 +6,10 @@
 #
 # Each input line is a JSON request {"step": PATH, "spec": PATH or null},
 # with "brep": PATH in place of the spec for a reference solid read from
-# a BREP file, or the bare path of a STEP file.  For each one, a line
+# a BREP file, or the bare path of a STEP file.  A request with "view":
+# [X, Y, Z], the direction toward the eye, and "lines": PATH, a view of
+# smview, compares its visible lines with the hidden-line projection of
+# OCCT instead (hlr below).  For each one, a line
 #   R {"path": ..., "solids": N, "valid": ..., "closed": ...,
 #      "volume": V, "area": A, "bop": "ok" or a message, "ref": {...}}
 # goes to stdout, or to file descriptor N if the environment holds
@@ -762,6 +765,102 @@ def check(path, spec, brep=None):
     return r
 
 
+# Points along a curve, one each HLR_STEP mm, and the distance within
+# which a point of one drawing must have a point of the other.
+HLR_STEP = 0.1
+HLR_TOL = 0.08
+
+
+def hlr_points(shapes):
+    pts = []
+    for s in shapes:
+        for e in s.Edges:
+            n = max(2, int(e.Length / HLR_STEP) + 1)
+            pts += [(v.x, v.y) for v in e.discretize(Number=n)]
+    return pts
+
+
+def view_points(path):
+    # The points of the visible lines and arcs of a view of smview, but
+    # its centre lines.
+    pts = []
+    with open(path) as f:
+        for line in f:
+            w = line.split()
+            if len(w) < 7 or w[0] not in ("line", "arc") or w[2] != "v" \
+                    or w[1] == "c":
+                continue
+            x = [float(t) for t in w[3:]]
+            if w[0] == "line":
+                n = max(2, int(math.hypot(x[2] - x[0], x[3] - x[1]) /
+                               HLR_STEP) + 1)
+                pts += [(x[0] + (x[2] - x[0]) * k / (n - 1),
+                         x[1] + (x[3] - x[1]) * k / (n - 1))
+                        for k in range(n)]
+            else:
+                a0, a1 = math.radians(x[3]), math.radians(x[4])
+                n = max(2, int(x[2] * abs(a1 - a0) / HLR_STEP) + 1)
+                pts += [(x[0] + x[2] * math.cos(a0 + (a1 - a0) * k / (n - 1)),
+                         x[1] + x[2] * math.sin(a0 + (a1 - a0) * k / (n - 1)))
+                        for k in range(n)]
+    return pts
+
+
+def lower_left(pts):
+    x0 = min(p[0] for p in pts)
+    y0 = min(p[1] for p in pts)
+    return [(x - x0, y - y0) for x, y in pts]
+
+
+def missing(a, b):
+    # The points of a with no point of b within HLR_TOL.
+    grid = {}
+    for x, y in b:
+        grid.setdefault((int(x // HLR_TOL), int(y // HLR_TOL)), []).append(
+            (x, y))
+    n = 0
+    for x, y in a:
+        i, j = int(x // HLR_TOL), int(y // HLR_TOL)
+        n += not any((u - x) ** 2 + (v - y) ** 2 < HLR_TOL ** 2
+                     for di in (-1, 0, 1) for dj in (-1, 0, 1)
+                     for u, v in grid.get((i + di, j + dj), ()))
+    return n
+
+
+def hlr(path, view, lines):
+    # The visible lines of the view in lines against those of OCCT, as
+    # the points of each with no point of the other near them, in the
+    # best of the eight ways to lay the axes of OCCT on those of the
+    # view.
+    import TechDraw
+    r = {"path": path}
+    try:
+        shape = Part.read(path)
+        res = TechDraw.projectEx(shape, FreeCAD.Vector(*view))
+    except Exception as e:
+        r["error"] = "hlr: %s" % e
+        return r
+    occt = hlr_points([res[0], res[1], res[3]])
+    mine = view_points(lines)
+    if not occt or not mine:
+        r["hlr"] = {"mine": len(mine), "occt": len(occt), "lost": len(occt),
+                    "extra": len(mine)}
+        return r
+    mine = lower_left(mine)
+    best = None
+    for sx in (1, -1):
+        for sy in (1, -1):
+            for swap in (0, 1):
+                o = lower_left([((y if swap else x) * sx,
+                                 (x if swap else y) * sy) for x, y in occt])
+                k = (missing(mine, o), missing(o, mine))
+                if best is None or sum(k) < sum(best):
+                    best = k
+    r["hlr"] = {"mine": len(mine), "occt": len(occt), "extra": best[0],
+                "lost": best[1]}
+    return r
+
+
 OUT = sys.stdout
 if os.environ.get("OCCTWORKER_FD"):
     OUT = os.fdopen(int(os.environ["OCCTWORKER_FD"]), "w")
@@ -774,7 +873,10 @@ while True:
         continue
     if line.startswith("{"):
         req = json.loads(line)
-        out = check(req["step"], req.get("spec"), req.get("brep"))
+        if "view" in req:
+            out = hlr(req["step"], req["view"], req["lines"])
+        else:
+            out = check(req["step"], req.get("spec"), req.get("brep"))
     else:
         out = check(line, None)
     OUT.write("R " + json.dumps(out) + "\n")

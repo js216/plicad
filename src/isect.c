@@ -1008,6 +1008,16 @@ int solid_has(const struct shape *sh, struct vec p)
 	    sh->name);
 }
 
+enum { WAYS = 13 }; // The lines that may part two faces.
+
+// The axes, the diagonals of their planes and those of the cube, one
+// way each.
+static const double ways[WAYS][3] = { { 1, 0, 0 },  { 0, 1, 0 },  { 0, 0, 1 },
+				      { 1, 1, 0 },  { 1, -1, 0 }, { 1, 0, 1 },
+				      { 1, 0, -1 }, { 0, 1, 1 },  { 0, 1, -1 },
+				      { 1, 1, 1 },  { 1, 1, -1 }, { 1, -1, 1 },
+				      { 1, -1, -1 } };
+
 #define PIECE (PI / 8) // The longest piece of an arc held in a triangle.
 
 // Whether every point of face f at the height of a plane across the
@@ -1220,10 +1230,34 @@ static int plane_inside(const struct shape *p, size_t fp, const struct shape *o,
 	return 1;
 }
 
+// Whether a line along one of the axes, the diagonals of their planes
+// or those of the cube parts the faces fa of a and fb of b, both made of
+// straight lines: the heights along it of the one lie all above those of
+// the other.  The heights over a face made of straight lines are
+// greatest and least on its edges.
+static int parted(const struct shape *a, size_t fa, const struct shape *b,
+		  size_t fb)
+{
+	if (!ruled(&a->f[fa]) || !ruled(&b->f[fb])) {
+		return 0;
+	}
+	for (int k = 0; k < WAYS; k++) {
+		struct vec d = unit(v3(ways[k][0], ways[k][1], ways[k][2]));
+		struct span ra = face_reach(a, fa, v3(0, 0, 0), d);
+		struct span rb = face_reach(b, fb, v3(0, 0, 0), d);
+
+		if (ra.hi < rb.lo - SH_EPS || rb.hi < ra.lo - SH_EPS) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 int faces_clear(const struct shape *a, size_t fa, const struct shape *b,
 		size_t fb)
 {
-	return only_touch(a, fa, b, fb) || plane_clear(a, fa, b, fb) ||
-	       plane_clear(b, fb, a, fa) || rounds_clear(a, fa, b, fb) ||
-	       plane_inside(a, fa, b, fb) || plane_inside(b, fb, a, fa);
+	return only_touch(a, fa, b, fb) || parted(a, fa, b, fb) ||
+	       plane_clear(a, fa, b, fb) || plane_clear(b, fb, a, fa) ||
+	       rounds_clear(a, fa, b, fb) || plane_inside(a, fa, b, fb) ||
+	       plane_inside(b, fb, a, fa);
 }

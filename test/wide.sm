@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# wide.sm -- A wide thin plate with holes, no bends, the size of a guard
+# Copyright (c) 2026 Jakob Kastelic
+
+# Its top and front views at scale 1 fit a B sheet only beside the
+# notes and under the revision table.
+sheet 0.43 1 0.5
+plate p 0 0 265 86 origin 0 0 0 axes +x +y
+hole 3.5 10 5 along z pattern x 2 230 y 2 76
+hole 10 10 25 along z pattern x 2 230

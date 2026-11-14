@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# notch.sm -- A plate with a notch in a corner of its datum edge
+# Copyright (c) 2026 Jakob Kastelic
+
+# The edge at y = 0 stops at x = 60, and a hole near the far side gets
+# its ordinate there; the datum ordinate on that side starts at x = 60.
+sheet 2 1 0.44
+plate p 0 0 100 50 origin 0 0 0 axes +x +y
+cut 60 -1 101 20 along z
+hole 4 90 40 along z

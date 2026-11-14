@@ -5,7 +5,7 @@
 
 # Usage: test/run.sh [GROUP...]
 # The groups are arith, parts, solids, fillet, place, bad, tools, docs,
-# args and occt;
+# args, draw and occt;
 # with none it runs all of them.  It builds the programs with make
 # first, and the tests run the sanitized ones in build/san.  It prints
 # ok or FAIL for each group and exits non-zero if any fails.  The occt
@@ -28,7 +28,7 @@ STOL="-t volume=rel:1e-9 -t area=rel:1e-9 -t centre=abs:2e-4 \
 -t bbox=abs:2e-4"
 
 build() {
-	targets="all build/mould $S/test_arith $S/mould"
+	targets="all $S/test_arith"
 	for p in $PROGS; do
 		targets="$targets $S/$p"
 	done
@@ -223,7 +223,7 @@ docs() {
 # nothing on stdout: with no arguments, with an unknown option and with
 # a file that is missing.
 args() {
-	for p in $PROGS mould; do
+	for p in $PROGS; do
 		for a in "" "-Q build/nofile" "build/nofile build/nofile"; do
 			timeout 5 build/$p $a > build/args.out \
 				2> build/args.err <&-
@@ -239,6 +239,35 @@ args() {
 			fi
 		done
 	done
+}
+
+# The drawing programs.  Each dimension in the top, front and flat views
+# of the test parts says what measure says of the part (dimcheck.sh);
+# not so for angled, whose hole lies under its flange, nor for profile,
+# whose two holes of one size differ in their countersinks, nor for
+# rowcorner, whose front view sees its holes at an angle.  The views
+# of the bracket with their hidden lines, and the drawings of the cube
+# and the bracket, come out as checked in.  Bad input is refused
+# (drawbad.sh), and the faults once found stay away (drawfix.sh).
+draw() {
+	parts > /dev/null && place > /dev/null || return 1
+	for t in $TESTS; do
+		case $t in angled | profile | rowcorner) continue ;; esac
+		test/dimcheck.sh $S build/$t.fold top front flat ||
+			{ echo "FAIL dimensions $t"; return 1; }
+	done
+	for v in top front right flat; do
+		$S/smview -h $v build/bracket.fold |
+			cmp -s - test/bracket.$v.expected ||
+			{ echo "FAIL view bracket $v"; return 1; }
+	done
+	for t in cube bracket; do
+		PLICAD=$S build/smdraw test/$t.draw build/$t.fold \
+			> build/$t.ps &&
+			cmp -s build/$t.ps test/$t.ps.expected ||
+			{ echo "FAIL drawing $t"; return 1; }
+	done
+	test/drawbad.sh $S && test/drawfix.sh $S
 }
 
 # OCCT reads the STEP files of the test parts as valid solids, as many
@@ -284,12 +313,12 @@ occt() {
 }
 
 build || { echo "FAIL build"; exit 1; }
-groups=${*:-arith parts solids fillet place bad tools docs args occt}
+groups=${*:-arith parts solids fillet place bad tools docs args draw occt}
 fail=0
 for g in $groups; do
 	case $g in
 	arith | parts | solids | fillet | place | bad | tools | docs | args | \
-		occt) ;;
+		draw | occt) ;;
 	*)
 		echo "unknown group $g"
 		exit 2

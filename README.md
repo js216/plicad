@@ -41,6 +41,10 @@ the [classic rules](https://doi.org/10.1002/j.1538-7305.1978.tb02135.x):
 | extrude   | Makes solids of outlines pushed along an axis, with a draft    |
 | bool      | Unites, cuts and intersects solids                             |
 | fillet    | Rounds the edges of solids, as a ball rolls along them         |
+| mould     | Reports the walls, the drafts and the undercuts along a pull   |
+| smview    | Projects a part into the lines of one drawing view             |
+| smdim     | Adds dimensions and callouts to a view                         |
+| smsheet   | Lays views on sheets as PostScript, with title block           |
 
 ### Usage
 

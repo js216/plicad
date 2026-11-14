@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bracket.draw -- The drawing of bracket.sm, with every kind of record
+# Copyright (c) 2026 Jakob Kastelic
+
+template plain_c.ps
+scale 1
+field Title BRACKET, L
+field Number TBD
+field Rev B
+field Drawn JK 11/13/26
+field Eng AB 11/13/26
+material 5052-H32 ALUMINUM ALLOY, %%t THICK.
+finish NONE.
+boxed PART MARKING: PART NUMBER AND REVISION LEVEL USING RUBBER STAMP,
++ APPROXIMATELY WHERE SHOWN (A PAIR OF PARENTHESES AND A \ PASS).
+note REMOVE ALL BURRS AND SHARP EDGES.
+note INSIDE BEND RADIUS %%r.
+revision A 11/01/26 JK INITIAL RELEASE
+revision B 11/13/26 JK ADDED THE HOLES
+view top
+ lin x 0 3.937 +.010 -.000
+ lin y 0 .984
+ drop y 1.969
+ leader 1 1 MARK HERE, %%p.5
+ flag 3 1.5 3 FARSIDE
+ hatch 2.5 .2 3.8 1.2
+ leader 3.2 .4 MASK PRIOR TO PAINT
+view front hidden
+ drop r .197
+view right scale 2
+ drop d .157
+view flat sheet 2 title FLAT PATTERN

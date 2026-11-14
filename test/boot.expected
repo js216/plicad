@@ -1,6 +1,6 @@
 part boot
-volume 200921.2383
-area 109249.7628
-centre 169.5450 9.2090 103.7819
+volume 212642.3515
+area 108659.9908
+centre 169.5450 9.1716 103.0886
 bbox -6.3500 -13.1500 -12.0000 345.4400 34.2900 181.6880
-faces 883 plane 256 cylinder 329 cone 100 sphere 0 torus 198
+faces 1063 plane 325 cylinder 366 cone 132 sphere 46 torus 194

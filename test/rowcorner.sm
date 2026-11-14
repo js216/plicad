@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# rowcorner.sm -- A part whose flat view at scale 1/4 crowds its ordinates
+# Copyright (c) 2026 Jakob Kastelic
+
+# From the fuzzer: the row of ordinates over the flat view spreads past
+# its right side, where the column of ordinates right of it spread up
+# into the same corner, and two texts overlapped.
+sheet 0.5 1.4886 0.3737
+plate base 0 18.3555 109.2467 108.9308 origin -50.2673 0 0 axes +z +y
+flange f0 base -y 123.4003 33.3613
+flange f1 base +y 36.509 10.4825 span 30.2491 80.2725
+flange f2 f1 +x 90 2.6495 span 113.9523 116.5784
+hole 2.2741 57.681 70.6996 along x pattern +y 4 5.0431
+hole 0.4661 -56.01 111.8364 along z at 82.0111 depth 0.8699
+cut 100.4538 27.9244 99.5479 53.3155 along x
+hole 9.3394 67.6442 80.0799 along x

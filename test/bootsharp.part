@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bootsharp.part -- A moulded boot over a chassis end, before its rounds
+# Copyright (c) 2026 Jakob Kastelic
+
+# The boot over either end of the chassis, before its rounds: x across,
+# z up, y back, the front face of the panel at y = 0.  A stack of
+# profiles seen from the front: the sleeve round the chassis end, open
+# at the bottom in a gap; the lip over the panel, round the lip opening,
+# with a recess over the Lexan overlay on its inner face; six bumpers on
+# the lip face; and screw holes, counterbored for the heads, through the
+# side walls and through the top and bottom bands.  The values come
+# from the parameters of the chassis, in mm.  Build it with
+#   extrude test/bootsharp.part | bool - | tostep - > boot.step
+
+W = 339.09
+H = 170.688
+WALL = 6.35
+FOOT = 5.65
+TOP = 11
+LIP = 7.62
+POCKET_X0 = 65.1948
+POCKET_X1 = 273.8952
+COV_T = 1.6002
+BEND_R = 0.762
+CHAN_R = 6.35
+BOOT_R = 12.7
+SOFT_R = 1.016
+OPEN_R = 3.81
+LEXAN_X0 = 5.1522
+LEXAN_X1 = 333.9378
+LEXAN_Z1 = 165.7898
+LEXAN_T = 0.3548
+BOOT_L = 38.1
+LIP_T = 3.81
+BUMP_L = 25
+BUMP_H = 9.34
+BUMP_R = 2
+ROOT_R = 1
+BUMP_Z0 = 64.344
+BUMP_Z1 = 125.144
+SCREW_Y = 10.16
+SCREW_DZ = 56.896
+SLEEVE = 4.7625
+HEAD = 7.62
+HEAD_D = 2.54
+BAND_X = 60
+BAND_XB = 55
+
+X0 = -WALL
+X1 = W + WALL
+Z0 = -WALL - FOOT
+Z1 = H + TOP
+XA = POCKET_X0 + 2 * COV_T
+XB = POCKET_X1 - 2 * COV_T
+RV = COV_T + BEND_R
+LX0 = LEXAN_X0 - 0.2
+LX1 = LEXAN_X1 + 0.2
+LZ0 = LIP - OPEN_R
+LZ1 = LEXAN_Z1 + 0.2
+RL = 0.5
+YR = BOOT_L - LIP_T
+
+# The outer outline, then the cavity: its bottom corners sharp, for the
+# square edges of the front plate; the top ones clear the outer bends of
+# the top cover.
+profile back along y XB Z0 CHAN_R X1 Z0 BOOT_R X1 Z1 BOOT_R X0 Z1 BOOT_R
+corner X0 Z0 BOOT_R XA Z0 CHAN_R
+corner XA 0 RV 0 0 0 0 H SOFT_R W H SOFT_R W 0 0 XB 0 RV
+profile lip along y XB Z0 CHAN_R X1 Z0 BOOT_R X1 Z1 BOOT_R X0 Z1 BOOT_R
+corner X0 Z0 BOOT_R XA Z0 CHAN_R
+corner XA LIP OPEN_R LIP LIP OPEN_R LIP H-LIP OPEN_R W-LIP H-LIP OPEN_R
+corner W-LIP LIP OPEN_R XB LIP OPEN_R
+profile lipx along y XB Z0 CHAN_R X1 Z0 BOOT_R X1 Z1 BOOT_R X0 Z1 BOOT_R
+corner X0 Z0 BOOT_R XA Z0 CHAN_R
+corner XA LZ0 RL LX0 LZ0 RL LX0 LZ1 RL LX1 LZ1 RL LX1 LZ0 RL XB LZ0 RL
+
+extrude sleeve from 0 to YR back
+extrude recess from -LEXAN_T to 0 lipx
+extrude lipband from -LIP_T to -LEXAN_T lip
+union raw sleeve recess lipband
+
+# The bumpers, back from the opening by a flat strip 0.5 mm wide beside
+# the round of the opening and the root fillet.
+BO = SOFT_R + ROOT_R + 0.5
+OX0 = LIP - BO
+OX1 = W - LIP + BO
+OZ0 = LIP - BO
+OZ1 = H - LIP + BO
+BR = BUMP_R + 0.5
+N = 1.5
+YB = -LIP_T - BUMP_H
+
+profile b0 along y X0 Z0 BOOT_R X0+BUMP_L Z0 BR X0+BUMP_L OZ0 BR
+corner OX0 OZ0 N OX0 Z0+BUMP_L BR X0 Z0+BUMP_L BR
+profile b1 along y X1-BUMP_L Z0 BR X1 Z0 BOOT_R X1 Z0+BUMP_L BR
+corner OX1 Z0+BUMP_L BR OX1 OZ0 N X1-BUMP_L OZ0 BR
+profile b2 along y OX1 Z1-BUMP_L BR X1 Z1-BUMP_L BR X1 Z1 BOOT_R
+corner X1-BUMP_L Z1 BR X1-BUMP_L OZ1 BR OX1 OZ1 N
+profile b3 along y X0 Z1-BUMP_L BR OX0 Z1-BUMP_L BR OX0 OZ1 N
+corner X0+BUMP_L OZ1 BR X0+BUMP_L Z1 BR X0 Z1 BOOT_R
+profile b4 along y X0 BUMP_Z0 BR OX0 BUMP_Z0 BR OX0 BUMP_Z1 BR
+corner X0 BUMP_Z1 BR
+profile b5 along y OX1 BUMP_Z0 BR X1 BUMP_Z0 BR X1 BUMP_Z1 BR
+corner OX1 BUMP_Z1 BR
+extrude bump0 from YB to -LIP_T b0
+extrude bump1 from YB to -LIP_T b1
+extrude bump2 from YB to -LIP_T b2
+extrude bump3 from YB to -LIP_T b3
+extrude bump4 from YB to -LIP_T b4
+extrude bump5 from YB to -LIP_T b5
+union bumped raw bump0 bump1 bump2 bump3 bump4 bump5
+
+# The screw holes, each a sleeve hole from the outer face with a
+# counterbore for the head.
+ZS0 = H/2-SCREW_DZ
+ZS1 = H/2+SCREW_DZ
+circle side0 along x SCREW_Y ZS0 SLEEVE
+circle side1 along x SCREW_Y ZS1 SLEEVE
+circle head0 along x SCREW_Y ZS0 HEAD
+circle head1 along x SCREW_Y ZS1 HEAD
+extrude hl0 from X0 to 0 side0
+extrude hl1 from X0 to 0 side1
+extrude hr0 from W to X1 side0
+extrude hr1 from W to X1 side1
+extrude cl0 from X0 to X0+HEAD_D head0
+extrude cl1 from X0 to X0+HEAD_D head1
+extrude cr0 from X1-HEAD_D to X1 head0
+extrude cr1 from X1-HEAD_D to X1 head1
+circle top0 along z BAND_X SCREW_Y SLEEVE
+circle top1 along z W-BAND_X SCREW_Y SLEEVE
+circle tophead0 along z BAND_X SCREW_Y HEAD
+circle tophead1 along z W-BAND_X SCREW_Y HEAD
+circle bot0 along z BAND_XB SCREW_Y SLEEVE
+circle bot1 along z W-BAND_XB SCREW_Y SLEEVE
+circle bothead0 along z BAND_XB SCREW_Y HEAD
+circle bothead1 along z W-BAND_XB SCREW_Y HEAD
+extrude ht0 from H to Z1 top0
+extrude ht1 from H to Z1 top1
+extrude ct0 from Z1-HEAD_D to Z1 tophead0
+extrude ct1 from Z1-HEAD_D to Z1 tophead1
+extrude hb0 from Z0 to 0 bot0
+extrude hb1 from Z0 to 0 bot1
+extrude cb0 from Z0 to Z0+HEAD_D bothead0
+extrude cb1 from Z0 to Z0+HEAD_D bothead1
+cut boot bumped hl0 hl1 hr0 hr1 cl0 cl1 cr0 cr1 ht0 ht1 ct0 ct1 hb0 hb1 cb0 cb1

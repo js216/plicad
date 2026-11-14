@@ -1,9 +1,51 @@
 part boot
 pull y
-wall thin 2.017 at 4.952 -0.059 5.149
-wall thick 10.237 at 284.085 -3.810 -6.244
-side plus faces 596 draft 1.000
-side minus faces 149 draft 90.000
+wall thin 2.052 at 55.567 10.210 172.713
+wall thick 9.907 at 1.484 -4.825 80.471
+side plus faces 764 draft 1.000
+group plus rb faces 18 draft 2.000
+group plus cav1 faces 22 draft 1.000
+group plus recess faces 1 draft 90.000
+group plus tall faces 1 draft 90.000
+group plus ht0 faces 1 draft 90.000
+group plus ht1 faces 1 draft 90.000
+group plus hb0 faces 1 draft 90.000
+group plus hb1 faces 1 draft 90.000
+group plus cb0 faces 1 draft 90.000
+group plus cb1 faces 1 draft 90.000
+group plus kbl faces 16 draft 1.500
+group plus ktl faces 16 draft 1.500
+group plus kbr faces 16 draft 1.500
+group plus ktr faces 16 draft 1.500
+group plus ksl faces 16 draft 1.500
+group plus ksr faces 16 draft 1.500
+group plus wvo faces 40 draft 2.000
+group plus who faces 16 draft 2.000
+group plus gt faces 45 draft 1.500
+group plus gbl faces 15 draft 1.500
+group plus gbr faces 15 draft 1.500
+group plus mbl faces 6 draft 1.500
+group plus mtl faces 6 draft 1.500
+group plus mbr faces 6 draft 1.500
+group plus mtr faces 6 draft 1.500
+group plus msl faces 12 draft 1.500
+group plus msr faces 12 draft 1.500
+group plus mgt faces 54 draft 1.500
+group plus mgbl faces 18 draft 1.500
+group plus mgbr faces 18 draft 1.500
+group plus round faces 351 draft 1.000
+side minus faces 74 draft 90.000
+group minus wv faces 18 draft 90.000
+group minus wh faces 7 draft 90.000
+group minus ht0 faces 1 draft 90.000
+group minus ht1 faces 1 draft 90.000
+group minus ct0 faces 1 draft 90.000
+group minus ct1 faces 1 draft 90.000
+group minus hb0 faces 1 draft 90.000
+group minus hb1 faces 1 draft 90.000
+group minus cb0 faces 1 draft 90.000
+group minus cb1 faces 1 draft 90.000
+group minus round faces 41 draft 90.000
 flat sleeve.back.0
 flat sleeve.back.1
 flat sleeve.back.2
@@ -18,12 +60,10 @@ flat sleeve.back.10
 flat sleeve.back.11
 flat sleeve.back.11
 flat sleeve.back.11
+flat sleeve.back.11
 flat sleeve.back.12
 flat sleeve.back.12
 flat sleeve.back.12
-flat sleeve.back.12
-flat sleeve.back.12
-flat sleeve.back.14
 flat sleeve.back.14
 flat sleeve.back.14
 flat sleeve.back.14
@@ -37,8 +77,7 @@ flat sleeve.back.14
 flat sleeve.back.16
 flat sleeve.back.16
 flat sleeve.back.16
-flat sleeve.back.16
-flat sleeve.back.16
+flat sleeve.back.17
 flat sleeve.back.17
 flat sleeve.back.17
 flat sleeve.back.17

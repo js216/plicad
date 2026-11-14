@@ -18,13 +18,15 @@
 # PART_GAP behind the counterbores of the screws, so that every hole
 # lies on faces without a draft.  The holes lie across the way the
 # mould opens: side pins make them, or a drill.  Ahead of that plane
-# the outside has no draft.  Behind it the sleeve leans in by DRAFT on
-# every side, outside and in the cavity, so that the outside shows a
-# crease all round on the parting line.  Slots cored from the rear
-# leave walls of about CW: they run along y in the inner faces of the
-# sleeve and out at its rear end, and those under a bumper run on
-# forward as pockets under it, whose floors follow the waves.  The
-# lands between the slots bear on the chassis, and the walls stay whole
+# the outside has no draft.  Behind it the outside leans in by
+# BOOT_DRAFT_OUT, for a light texture, and the cavity opens by
+# BOOT_DRAFT_FIT, so that the outside shows a crease all round on the
+# parting line.  Slots and grooves cored from the rear, their walls
+# drawn by BOOT_DRAFT_CORE, leave walls of about CW: they run along y in
+# the inner faces of the sleeve and out at its rear end, and those under
+# a bumper run on forward as pockets under it, whose floors follow the
+# waves.  Seen from behind they make an even rhythm of slots and ribs
+# round the rim.  The ribs bear on the chassis, and the walls stay whole
 # round the screws.  The values come from the parameters of the chassis, in
 # mm.  Build it with
 #   extrude test/boot.part | bool - | fillet - | tostep - > boot.step
@@ -73,16 +75,15 @@ LZ0 = LIP - OPEN_R
 LZ1 = LEXAN_Z1 + 0.2
 RL = 0.5
 YR = BOOT_L - LIP_T
-DRAFT = 1
+BOOT_DRAFT_OUT = 2
+BOOT_DRAFT_FIT = 1
+BOOT_DRAFT_CORE = 1.5
 PART_GAP = 1.5
 PART_Y = SCREW_Y + HEAD / 2 + PART_GAP
 
 # The outer outline, then the cavity: its bottom corners sharp, for the
 # square edges of the front plate; the top ones clear the outer bends of
-# the top cover.  The outline of the rear of the sleeve, backd, has the
-# corners of the gap round, for a sharp corner would turn at the parting
-# line, and no ball rolls round that turn.  The round shrinks with the
-# draft, to SOFT_R less the lean at the rear end.
+# the top cover.
 profile back along y XB Z0 0 X1 Z0 BOOT_R X1 Z1 BOOT_R X0 Z1 BOOT_R
 corner X0 Z0 BOOT_R XA Z0 0
 corner XA 0 RV 0 0 0 0 H SOFT_R W H SOFT_R W 0 0 XB 0 RV
@@ -94,11 +95,34 @@ profile lipx along y XB Z0 0 X1 Z0 BOOT_R X1 Z1 BOOT_R X0 Z1 BOOT_R
 corner X0 Z0 BOOT_R XA Z0 0
 corner XA LZ0 0 LX0 LZ0 RL LX0 LZ1 RL LX1 LZ1 RL LX1 LZ0 RL XB LZ0 0
 
-profile backd along y XB Z0 SOFT_R X1 Z0 BOOT_R X1 Z1 BOOT_R X0 Z1 BOOT_R
-corner X0 Z0 BOOT_R XA Z0 SOFT_R
-corner XA 0 RV 0 0 0 0 H SOFT_R W H SOFT_R W 0 0 XB 0 RV
 extrude sleeve from 0 to PART_Y back
-extrude rear from PART_Y to YR backd draft DRAFT
+
+# Behind the parting plane the outside leans in by BOOT_DRAFT_OUT, for a
+# textured mould face, and the cavity opens by BOOT_DRAFT_FIT, so that
+# the fit on the chassis stays close.  The chain from the outer bottom
+# round the corners of the gap to the top of each band is smooth, so it
+# takes one draft, that of the outside: rb has the outline of the
+# outside and the gap, and fills the cavity but for a box over the gap,
+# whose sides XG lie in the last slots of the bottom bands.  cav1, the
+# cavity less that box, then cuts the cavity at BOOT_DRAFT_FIT.  It
+# grows toward the rear from its outline at PART_Y, so it is drawn at
+# YT, EF further out.  The corners of the gap are round in rb, for a
+# sharp corner would turn at the parting line, and no ball rolls round
+# that turn; the round shrinks with the draft.  XG is the middle of the
+# last slot of each bottom band, below.
+YT = YR+1
+TF = tan(BOOT_DRAFT_FIT)
+EF = (YT-PART_Y)*TF
+XG = 61.57
+ZC = H/2
+profile outd along y XB Z0 SOFT_R X1 Z0 BOOT_R X1 Z1 BOOT_R X0 Z1 BOOT_R
+corner X0 Z0 BOOT_R XA Z0 SOFT_R XA 0 RV XG 0 0 XG ZC 0 W-XG ZC 0
+corner W-XG 0 0 XB 0 RV
+profile cavd along y -EF -EF 0 XG+EF -EF 0 XG+EF ZC-EF 0 W-XG-EF ZC-EF 0
+corner W-XG-EF -EF 0 W+EF -EF 0 W+EF H+EF SOFT_R+EF -EF H+EF SOFT_R+EF
+extrude rb from PART_Y to YR outd draft BOOT_DRAFT_OUT
+extrude cav1 from YT to PART_Y cavd draft BOOT_DRAFT_FIT
+cut rear rb cav1
 extrude recess from -LEXAN_T to 0 lipx
 
 # The waves.  Seen from the side, pv, the front runs at the height of
@@ -158,14 +182,20 @@ extrude cb0 from Z0 to Z0+HEAD_D bothead0
 extrude cb1 from Z0 to Z0+HEAD_D bothead1
 cut holed bumped hl0 hl1 hr0 hr1 cl0 cl1 cr0 cr1 ht0 ht1 ct0 ct1 hb0 hb1 cb0 cb1
 
-# The cores.  Each is an extrusion from YT, past the rear end, toward
-# the front, which shrinks by DRAFT on the way, so the outlines below
-# hold at YT and lie E0 further out than at y = 0.  CW is the wall left
-# to the outside at y = 0, and CL that under the waves.
-TD = tan(DRAFT)
-YT = YR+1
-E0 = YT*TD
-CW = 4
+# The cores.  Each is an extrusion from YS, just behind the parting
+# plane, toward the front, which shrinks by BOOT_DRAFT_CORE on the way,
+# so the outlines below hold at YS and lie E1 further out than at y = 0.
+# Behind YS the mouths, below, go on to YT, past the rear end.  CW is
+# the wall left to the outside at y = 0: it thins toward the rear, as
+# both its faces lean, to CW less YR TC and (YR - PART_Y) TO.  CL is the
+# wall under the waves.
+TC = tan(BOOT_DRAFT_CORE)
+TO = tan(BOOT_DRAFT_OUT)
+STEP = 0.5
+YS = PART_Y+1
+E1 = YS*TC
+E0 = YT*TC
+CW = 4.1
 CL = 3.5
 
 # The floors of the pockets: the waves moved in by CL, their steps
@@ -189,108 +219,207 @@ corner X1U-SL YL A2+CL X1U YD A1-CL X1+1 YD 0 X1+1 YT+1 0
 extrude wvo from X0-1 to X1+1 pvo
 extrude who from Z0-1 to Z1+1 pho
 
-# The slots that run on under the bumpers: one round each corner of the
-# cavity, lbl to ltr, and four along each side wall, psl and psr.  A
-# slot reaches from CW inside the outer face to FIN short of the wall of
-# the recess, across the back of the lip.  Its corners are round: CR,
-# and CRS where the slot is shallow or a screw is near; RCI inside the
-# corner of the cavity.  Two chords, with corners of RC, follow the
-# outer corner round of the sleeve at CW.  The ends of the corner slots
-# lie GAP past the steps of the floor, on its flat parts, since a round
-# corner of a slot meets no step in a line or a circle.
-FIN = 1.4
+# The rhythm of the slots, seen from behind.  Along each run the slots
+# have one width and the ribs between them another, RIB at y = 0 on
+# every run; each rib under a screw has the screw at its middle, and
+# the slots lie the same way about the middle of the boot.  The four
+# corner slots wrap round the corners of the cavity with two legs:
+# LEG_S along the side walls, LEG_T along the top and the bottom bands,
+# both about half a side slot.  On the side walls the ribs lie at the
+# screws and at mid-height, with one slot between each pair, PS apart;
+# on the top they lie PT apart, with the screws on the second and the
+# ninth rib; on each bottom band two slots lie between the rib after
+# the corner slot and the rib of the screw, and one beyond it.
+# RIB is the least that leaves 2 mm of wall from a screw hole to the
+# slots beside it.  Every slot has the round CR in its corners, and the
+# corner slots CRK.  The end of a slot that runs on under a bumper lies
+# GAP clear of the steps of its floor, as a round corner meets a step on
+# no line or circle; CRK lets the ends of the corner slots on the side
+# walls clear them.
+RIB = 9.4
 GAP = 0.12
-CR = 1.75+E0
-CRS = 1+E0
-RC = 2+E0
+CR0 = 1.5
+CR = CR0+E1
+CRK0 = 0.9
+CRK = CRK0+E1
+PS = SCREW_DZ
+LEG_S = ZS0-RIB/2
+PT = (W-2*BAND_X)/7
+LEG_T = BAND_X-PT-RIB/2
+
+# The corner slots, kbl to ktr, and the side slots, two along each side
+# wall, ksl and ksr.  A slot reaches from CW inside the outer face to FIN
+# short of the wall of the recess, across the back of the lip.  Two
+# chords, with corners of RC, follow the outer corner round of the
+# sleeve at CW; RCI is the corner inside the corner of the cavity, and
+# CRP the corners of the legs there, which stay inside the cavity.
+FIN = 1.4
+RC = 2+E1
 RCI = 1.2
-XO = X0+CW-E0
-XI = LX0-FIN
-ZO0 = Z0+CW-E0
-ZI0 = LZ0-FIN
-ZO1 = Z1-CW+E0
-ZI1 = LZ1+FIN
-RO = BOOT_R-CW+E0
+CRP = RCI+E1
+XO = X0+CW-E1
+XI = LX0-FIN-E0+E1
+ZO0 = Z0+CW-E1
+ZI0 = LZ0-FIN-E0+E1
+ZO1 = Z1-CW+E1
+ZI1 = LZ1+FIN+E0-E1
+RO = BOOT_R-CW+E1
 S45 = sqrt(0.5)
 CX = X0+BOOT_R
 CZ0 = Z0+BOOT_R
 CZ1 = Z1-BOOT_R
 AX = CX-RO*S45
-XE = XU+SL+ARC+GAP+CR
-ZE = ZW+SL+ARC+GAP+CR
-ZF = ZT-SL-ARC-GAP-CRS
-profile lbl along y XO CZ0 RC AX CZ0-RO*S45 RC CX ZO0 RC XE ZO0 CR XE ZI0 CR
-corner XI ZI0 RCI XI ZE CR XO ZE CRS
-profile ltl along y XO ZF CRS XI ZF CRS XI ZI1 RCI XE ZI1 CR XE ZO1 CR
+XE = LEG_T+E1
+ZE = LEG_S+E1
+ZF = H-LEG_S-E1
+profile lbl along y XO CZ0 RC AX CZ0-RO*S45 RC CX ZO0 RC XE ZO0 CRK XE ZI0 CRP
+corner XI ZI0 RCI XI ZE CRK XO ZE CRK
+profile ltl along y XO ZF CRK XI ZF CRK XI ZI1 RCI XE ZI1 CRP XE ZO1 CRK
 corner CX ZO1 RC AX CZ1+RO*S45 RC XO CZ1 RC
-profile lbr along y W-XO CZ0 RC W-AX CZ0-RO*S45 RC W-CX ZO0 RC W-XE ZO0 CR
-corner W-XE ZI0 CR W-XI ZI0 RCI W-XI ZE CR W-XO ZE CRS
-profile ltr along y W-XO ZF CRS W-XI ZF CRS W-XI ZI1 RCI W-XE ZI1 CR
-corner W-XE ZO1 CR W-CX ZO1 RC W-AX CZ1+RO*S45 RC W-XO CZ1 RC
-ZP = ZS0+4.95
-SG = 22.2
-SP = 25.4
-profile psl along y XO ZP-E0 CRS XI ZP-E0 CR XI ZP+SG+E0 CR XO ZP+SG+E0 CRS
-profile psr along y W-XO ZP-E0 CRS W-XO ZP+SG+E0 CRS W-XI ZP+SG+E0 CR
-corner W-XI ZP-E0 CR
-extrude kbl from YT to YB lbl draft DRAFT
-extrude ktl from YT to YB ltl draft DRAFT
-extrude kbr from YT to YB lbr draft DRAFT
-extrude ktr from YT to YB ltr draft DRAFT
-extrude ksl from YT to YB psl draft DRAFT pattern z 4 SP
-extrude ksr from YT to YB psr draft DRAFT pattern z 4 SP
+profile lbr along y W-XO CZ0 RC W-AX CZ0-RO*S45 RC W-CX ZO0 RC W-XE ZO0 CRK
+corner W-XE ZI0 CRP W-XI ZI0 RCI W-XI ZE CRK W-XO ZE CRK
+profile ltr along y W-XO ZF CRK W-XI ZF CRK W-XI ZI1 RCI W-XE ZI1 CRP
+corner W-XE ZO1 CRK W-CX ZO1 RC W-AX CZ1+RO*S45 RC W-XO CZ1 RC
+ZP0 = ZS0+RIB/2-E1
+ZP1 = H/2-RIB/2+E1
+profile psl along y XO ZP0 CR XI ZP0 CR XI ZP1 CR XO ZP1 CR
+profile psr along y W-XO ZP0 CR W-XO ZP1 CR W-XI ZP1 CR W-XI ZP0 CR
+extrude kbl from YS to YB lbl draft BOOT_DRAFT_CORE
+extrude ktl from YS to YB ltl draft BOOT_DRAFT_CORE
+extrude kbr from YS to YB lbr draft BOOT_DRAFT_CORE
+extrude ktr from YS to YB ltr draft BOOT_DRAFT_CORE
+extrude ksl from YS to YB psl draft BOOT_DRAFT_CORE pattern z 2 PS
+extrude ksr from YS to YB psr draft BOOT_DRAFT_CORE pattern z 2 PS
 union slots kbl ktl kbr ktr ksl ksr
 common slotv slots wvo
 common core slotv who
 
-# The grooves of the top wall and of the bottom bands, between the
-# corner slots and clear of the screws by BOSS: they end flush with the
-# back of the lip, at y = 0.  LAND is the land between two at y = 0.
-BOSS = 5.05
-LAND = 3.2
-GX0 = XE-E0+LAND
-GT1 = BAND_X-BOSS
-GB1 = BAND_XB-BOSS
-GE0 = BAND_XB+BOSS
-GE1 = XA-4.4
-GN = 8
-GP = (W-2*BAND_X-2*BOSS+LAND)/GN
-profile pgt along y GX0-E0 H-1 0 GT1+E0 H-1 0 GT1+E0 ZO1 CR GX0-E0 ZO1 CR
-profile pgm along y BAND_X+BOSS-E0 H-1 0 BAND_X+BOSS+GP-LAND+E0 H-1 0
-corner BAND_X+BOSS+GP-LAND+E0 ZO1 CR BAND_X+BOSS-E0 ZO1 CR
-profile pgb along y GX0-E0 1 0 GX0-E0 ZO0 CR GB1+E0 ZO0 CR GB1+E0 1 0
-profile pge along y GE0-E0 1 0 GE0-E0 ZO0 CR GE1+E0 ZO0 CR GE1+E0 1 0
-extrude gt from YT to 0 pgt draft DRAFT pattern x 2 W-GT1-GX0
-extrude gm from YT to 0 pgm draft DRAFT pattern x GN GP
-extrude gb from YT to 0 pgb draft DRAFT pattern x 2 W-GB1-GX0
-extrude ge from YT to 0 pge draft DRAFT pattern x 2 W-GE1-GE0
-cut boot holed core gt gm gb ge
+# The grooves of the top wall, nine, and of each bottom band, three, SB
+# wide and PB apart, which leave no rib there thicker than RIB: they end
+# flush with the back of the lip, at y = 0.
+GT0 = LEG_T+RIB-E1
+GT1 = BAND_X-RIB/2+E1
+SB = (BAND_XB-RIB/2-LEG_T-2*RIB)/2
+PB = SB+RIB
+GB0 = LEG_T+RIB-E1
+GB1 = LEG_T+RIB+SB+E1
+GR0 = W-GB1-2*PB
+GR1 = W-GB0-2*PB
+profile pgt along y GT0 H-1 0 GT1 H-1 0 GT1 ZO1 CR GT0 ZO1 CR
+profile pgb along y GB0 1 0 GB0 ZO0 CR GB1 ZO0 CR GB1 1 0
+profile pgr along y GR0 1 0 GR0 ZO0 CR GR1 ZO0 CR GR1 1 0
+extrude gt from YS to 0 pgt draft BOOT_DRAFT_CORE pattern x 9 PT
+extrude gbl from YS to 0 pgb draft BOOT_DRAFT_CORE pattern x 3 PB
+extrude gbr from YS to 0 pgr draft BOOT_DRAFT_CORE pattern x 3 PB
+
+# The mouths.  Behind YS each slot and groove is STEP wider on each side
+# that meets the cavity, so that the edges along the cavity there,
+# which take RIM_R, end on the step at YS and cross no crease.  Ahead of
+# YS those edges stay sharp.  The outlines hold at YT: those of the
+# cores at YS moved out by DM, each side along its normal, with the
+# step.  So a corner of two chords lies RQM from the centre of the
+# outer round along their middle, and a chord meets a straight side
+# DM T11 from where it met it before.
+DM = E0-E1
+XOM = XO-DM
+ZO0M = ZO0-DM
+ZO1M = ZO1+DM
+ROM = RO+DM
+T11 = tan(11.25)
+RQM = (RO*cos(22.5)+DM)/cos(22.5)*S45
+XEM = XE+DM+STEP
+ZEM = ZE+DM+STEP
+ZFM = ZF-DM-STEP
+CRM = CR+DM
+CRKM = CRK+DM
+XIM = XI+DM
+ZI0M = ZI0+DM
+ZI1M = ZI1-DM
+RCIM = RCI-DM
+RCM = RC+DM
+CRPM = CRP+DM
+ZP0M = ZP0-DM-STEP
+ZP1M = ZP1+DM+STEP
+GT0M = GT0-DM-STEP
+GT1M = GT1+DM+STEP
+GB0M = GB0-DM-STEP
+GB1M = GB1+DM+STEP
+GR0M = GR0-DM-STEP
+GR1M = GR1+DM+STEP
+profile lblm along y XOM CZ0-DM*T11 RCM CX-RQM CZ0-RQM RCM CX-DM*T11 ZO0M RCM
+corner XEM ZO0M CRKM
+corner XEM ZI0M CRPM XIM ZI0M RCIM XIM ZEM CRKM XOM ZEM CRKM
+profile ltlm along y XOM ZFM CRKM XIM ZFM CRKM XIM ZI1M RCIM XEM ZI1M CRPM
+corner XEM ZO1M CRKM CX-DM*T11 ZO1M RCM CX-RQM CZ1+RQM RCM
+corner XOM CZ1+DM*T11 RCM
+profile lbrm along y W-XOM CZ0-DM*T11 RCM W-CX+RQM CZ0-RQM RCM
+corner W-CX+DM*T11 ZO0M RCM
+corner W-XEM ZO0M CRKM W-XEM ZI0M CRPM W-XIM ZI0M RCIM W-XIM ZEM CRKM
+corner W-XOM ZEM CRKM
+profile ltrm along y W-XOM ZFM CRKM W-XIM ZFM CRKM W-XIM ZI1M RCIM
+corner W-XEM ZI1M CRPM W-XEM ZO1M CRKM W-CX+DM*T11 ZO1M RCM
+corner W-CX+RQM CZ1+RQM RCM W-XOM CZ1+DM*T11 RCM
+profile pslm along y XOM ZP0M CRM XIM ZP0M CRM XIM ZP1M CRM
+corner XOM ZP1M CRM
+profile psrm along y W-XOM ZP0M CRM W-XOM ZP1M CRM W-XIM ZP1M CRM
+corner W-XIM ZP0M CRM
+profile pgtm along y GT0M H-1 0 GT1M H-1 0 GT1M ZO1M CRM
+corner GT0M ZO1M CRM
+profile pgbm along y GB0M 1 0 GB0M ZO0M CRM GB1M ZO0M CRM GB1M 1 0
+profile pgrm along y GR0M 1 0 GR0M ZO0M CRM GR1M ZO0M CRM GR1M 1 0
+extrude mbl from YT to YS lblm draft BOOT_DRAFT_CORE
+extrude mtl from YT to YS ltlm draft BOOT_DRAFT_CORE
+extrude mbr from YT to YS lbrm draft BOOT_DRAFT_CORE
+extrude mtr from YT to YS ltrm draft BOOT_DRAFT_CORE
+extrude msl from YT to YS pslm draft BOOT_DRAFT_CORE pattern z 2 PS
+extrude msr from YT to YS psrm draft BOOT_DRAFT_CORE pattern z 2 PS
+extrude mgt from YT to YS pgtm draft BOOT_DRAFT_CORE pattern x 9 PT
+extrude mgbl from YT to YS pgbm draft BOOT_DRAFT_CORE pattern x 3 PB
+extrude mgbr from YT to YS pgrm draft BOOT_DRAFT_CORE pattern x 3 PB
+union mouths mbl mtl mbr mtr msl msr mgt mgbl mgbr
+cut boot holed core gt gbl gbr mouths
 
 # The rounds.  Every edge that turns outward takes SOFT_R, but: the
 # outer edge of the front, where the waves meet the outer faces, EDGE_R,
 # up to the walls of the gap, the sides 9 and 19 of the profile; the
 # rear edge of the lip opening on the ceiling of the recess, RECESS_R;
-# the edges of the rear end, REAR_R, less than the round of the corners
-# of the gap there; and the edges that stay sharp.  Those are the edges
-# hidden in use: of the face against the panel, the two short ones where
-# the recess meets the gap, the inner edges of the counterbore floors,
-# under the screw heads, and the edges of the slots along the cavity.
-# Sharp too are the crease on the parting line and the two ends of the
-# sleeve's front part at the gap, which the rounds of its corners take
-# whole.  The front ends of the grooves take
-# FLOOR_R in their inner corners.
+# every edge of the rear end, and the edges of the slots and grooves
+# along the cavity behind the parting plane, RIM_R, so that the round of
+# the rim runs on round each rib and into each mouth, three rounds meet
+# in a ball at each corner of a rib, and each edge along the cavity
+# ends on the cavity face at the parting plane; the front ends of the
+# grooves, FLOOR_R in their inner corners; and the edges that stay
+# sharp.  RIM_R is less than
+# the round of the corners of the gap at the rear end, SOFT_R less the
+# lean of the outside there.  Those that stay sharp are the edges hidden
+# in use: of the face against the panel, the two short ones where the
+# recess meets the gap, the inner edges of the counterbore floors, under
+# the screw heads, and the edges of the slots and grooves along the
+# cavity ahead of the parting plane, a round across which would meet the
+# crease on no line or circle; the creases on the parting line; and the two
+# ends of the sleeve's front part at the gap, which the rounds of its
+# corners take whole.
 RECESS_R = 0.3
 EDGE_R = 5.08
-REAR_R = 0.5
-FLOOR_R = 1.75
+RIM_R = 0.3
+FLOOR_R = 1.2
 round SOFT_R convex
 round EDGE_R sleeve.back.* wv.*
 round EDGE_R sleeve.back.* wh.*
 round SOFT_R sleeve.back.9 wh.*
 round SOFT_R sleeve.back.19 wh.*
 round RECESS_R tall.end *
-round REAR_R rear.end *
-sharp sleeve.back.* rear.backd.*
+round RIM_R rb.end *
+round RIM_R m* cav1.*
+round RIM_R m* rb.*
+sharp m*.end *
+sharp k* cav1.*
+sharp g* cav1.*
+sharp g* rb.outd.*
+sharp k* sleeve.back.*
+sharp g* sleeve.back.*
+sharp sleeve.back.* rb.*
+sharp sleeve.back.* cav1.*
 sharp sleeve.end *
 sharp tall.end recess.lipx.*
 sharp recess.end *
@@ -300,8 +429,4 @@ sharp cl*.end hl*
 sharp cr*.start hr*
 sharp ct*.start ht*
 sharp cb*.end hb*
-sharp sleeve.back.* k*
-sharp rear.backd.* k*
-sharp sleeve.back.* g*
-sharp rear.backd.* g*
 round FLOOR_R recess.end g*

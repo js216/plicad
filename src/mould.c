@@ -11,7 +11,9 @@
 //   wall thin T at X Y Z
 //   wall thick T at X Y Z
 //   side plus faces N draft D
+//   group plus KEY faces N draft D
 //   side minus faces N draft D
+//   group minus KEY faces N draft D
 //   flat NAME
 //   rim NAME
 //   turn NAME
@@ -31,7 +33,9 @@
 // A face is drawn toward the side its normal leans to along the axis,
 // plus or minus.  Its draft is the least angle, over the face and its edges,
 // between the face and the axis, in degrees.  A side counts its faces
-// and gives the least draft of those that have one.  The faces that
+// and gives the least draft of those that have one; so does each group
+// of them, the faces of one extrusion, by the name before the first dot,
+// or the rounds, by KEY round, in the order they come.  The faces that
 // have none are listed: flat, along the axis throughout; rim, where the
 // draft falls to 0 at an edge, as a round does where it runs out on a
 // flat face; turn, where the face leans both ways, and the line where
@@ -375,25 +379,89 @@ static double draft_of(double l)
 	return asin(fmin(1, fabs(l))) * HALF_TURN / PI;
 }
 
+// The least lean of face f toward side, 1 for plus and -1 for minus,
+// or -1 if the face is not drawn that way.
+static double side_lean(const struct job *j, size_t f, int side)
+{
+	double a = side * j->lean[f].lo;
+	double b = side * j->lean[f].hi;
+	double lo = fmin(a, b);
+
+	return lo > -LEAN && fmax(a, b) > LEAN ? lo : -1;
+}
+
+// The length of the key of the group of a face of that name: the name
+// before the first dot; 0 for a round.
+static size_t key_len(const char *name)
+{
+	return strchr(name, '+') ? 0 : strcspn(name, ".");
+}
+
+// Whether the faces of names a and b fall in one group: of one
+// extrusion, by their keys, or both rounds.
+static int one_group(const char *a, const char *b)
+{
+	size_t n = key_len(a);
+
+	return n == key_len(b) && !strncmp(a, b, n);
+}
+
+// Prints the count and the least draft of the faces drawn toward side
+// in the group of face g, if g is the first of them.
+static void print_group(const struct job *j, size_t g, int side)
+{
+	const struct shape *sh = j->sh;
+	size_t n = 0;
+	double least = 1;
+
+	if (side_lean(j, g, side) < 0) {
+		return;
+	}
+	for (size_t f = 0; f < sh->nf; f++) {
+		double l = one_group(sh->f[f].name, sh->f[g].name) ?
+				   side_lean(j, f, side) :
+				   -1;
+
+		if (f < g && !(l < 0)) {
+			return;
+		}
+		if (!(l < 0)) {
+			n++;
+			least = l > LEAN ? fmin(least, l) : least;
+		}
+	}
+	if (n) {
+		const char *name = sh->f[g].name;
+		size_t k = key_len(name);
+
+		printf("group %s %.*s faces %zu draft %.3f\n",
+		       side > 0 ? "plus" : "minus",
+		       k ? (int)k : (int)strlen("round"), k ? name : "round", n,
+		       draft_of(least));
+	}
+}
+
 // Prints one side, 1 for plus and -1 for minus: the count of its faces
-// and the least draft of those that have one.
+// and the least draft of those that have one, then the same for each
+// group of them.
 static void print_side(const struct job *j, int side)
 {
 	size_t n = 0;
 	double least = 1;
 
 	for (size_t f = 0; f < j->sh->nf; f++) {
-		double a = side * j->lean[f].lo;
-		double b = side * j->lean[f].hi;
-		double lo = fmin(a, b);
+		double l = side_lean(j, f, side);
 
-		if (lo > -LEAN && fmax(a, b) > LEAN) {
+		if (!(l < 0)) {
 			n++;
-			least = lo > LEAN ? fmin(least, lo) : least;
+			least = l > LEAN ? fmin(least, l) : least;
 		}
 	}
 	printf("side %s faces %zu draft %.3f\n", side > 0 ? "plus" : "minus", n,
 	       draft_of(least));
+	for (size_t g = 0; g < j->sh->nf; g++) {
+		print_group(j, g, side);
+	}
 }
 
 // What a face without a draft is: flat, turn or rim; NULL for a face
