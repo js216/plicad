@@ -1,0 +1,94 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" draw.5 -- Manual page of the drawing file and template
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH DRAW 5
+.SH NAME
+draw \- drawing file and template
+.SH DESCRIPTION
+A drawing file, for
+.IR smdraw (1)
+and
+.IR smsheet (1),
+is ASCII with one record per line; the text of a record runs to the
+end of the line, and # begins a comment line.
+.PP
+.RS
+.nf
+template FILE
+scale S
+field NAME TEXT
+material TEXT
+finish TEXT
+boxed TEXT
+note TEXT
++ TEXT
+revision REV DATE BY TEXT
+view NAME [hidden] [scale S] [sheet N] [at X Y] [title TEXT]
+.fi
+.RE
+.PP
+The template, a file next to the drawing file, fixes the paper and is
+required.
+A scale record sets one scale for all views.
+A field sets a text listed by the template.
+The material is note 1 and the finish note 2, both with boxed numbers;
+.B boxed
+adds a further note with a boxed number, and
+.B note
+one without.
+In notes, %%t is the sheet thickness and %%r the inside bend radius.
+A + line continues the field or note above.
+Lines beginning with a blank belong to the view above
+(records for
+.IR smdim (1):
+.BR leader ,
+.BR flag ,
+.BR lin ,
+.BR drop ,
+.BR hatch ).
+Each boxed note needs a flag record under some view.
+A view with
+.B at
+has its datum there, in inches from the lower left corner of the sheet.
+.PP
+A template is PostScript that draws the border, title block and
+revision table of one paper, in inches, with the regions given in
+comments:
+.PP
+.RS
+.nf
+%%PliCadPaper: W H
+%%PliCadRoom: X0 Y0 X1 Y1
+%%PliCadKeep: X0 Y0 X1 Y1
+%%PliCadNotes: X0 Y0 X1 Y1
+%%PliCadRevisions: X0 X1 TOP ROW
+%%PliCadFields: NAME ...
+.fi
+.RE
+.PP
+Paper and room are required; keep may be repeated.
+Notes are wrapped to the width of their region and set from its foot.
+The revision table has two heading rows and one row per revision,
+each ROW high, downward from TOP.
+Before the template, these strings are defined: each listed field
+(empty if not set; Filename is the drawing file), Paper, Scale, Sheet,
+Sheets, MaterialNote, FinishNote, and Revisions, an array of
+[REV DATE BY TEXT] (empty except on sheet 1).
+The procedures TX, LN and FLG may be used in the template.
+.SH EXAMPLES
+A C template with a title, and a drawing for it:
+.PP
+.RS
+.nf
+%%PliCadPaper: 22 17
+%%PliCadRoom: 0.9 0.9 21.1 15
+%%PliCadFields: Title
+[ Title ] 11 16 0 0.2 1 TX
+
+template title_c.ps
+field Title BRACKET (L), 2X
+view top
+.fi
+.RE
+.SH SEE ALSO
+smdraw(1), smsheet(1), smdim(1)

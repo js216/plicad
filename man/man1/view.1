@@ -1,0 +1,100 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" view.1 -- Manual page of view
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH VIEW 1
+.SH NAME
+view \- show meshes and pictures in a window
+.SH SYNOPSIS
+.B view
+[
+.B \-c
+|
+.B \-b
+]
+.I scene
+.SH DESCRIPTION
+.I View
+shows the meshes and pictures of a scene file,
+.IR scene (5),
+in a window.
+A file of the scene is reloaded when it changes; a bad file is reported
+and the old one kept.
+.PP
+With the mouse, a left drag turns the view, a middle or right drag
+moves it, and the wheel zooms about the pointer.
+A click picks a part (its name is printed, shown in the lower left,
+and the part highlighted).
+A shift and left drag on a part pulls its scene item out along the line
+from the centre, never past home.
+.PP
+Keys:
+.TP 8
+Space
+Fit all.
+.TP
+.B "i f b l r t u"
+Iso, front, back, left, right, top, bottom.
+.TP
+.B h
+Hide the part under the pointer.
+.TP
+.B o
+Show only the part under the pointer.
+.TP
+.B s
+Make the part under the pointer see-through, or solid again.
+.TP
+.B a
+Show all, all solid, all home.
+.TP
+.B "+ \-"
+Explode a step of 0.25 further, or back, stopping at home.
+.TP
+.B "^Z ^Y"
+Undo, redo (of what is shown, see-through and moved; not the camera).
+.TP
+.B ?
+Help, on or off.
+.TP
+.B q
+Quit.
+.PP
+Commands are read from the standard input, one per line;
+a pattern matches names, * for any run of characters:
+.PP
+.RS
+.nf
+hide|show|only|see|solid PATTERN
+all, reset, home, undo, redo
+key h|o|s X Y          the key with the pointer at pixel X Y
+explode F              F from 0 (home) to 100
+drag NAME D            NAME D mm out, not less than 0
+view iso|front|back|left|right|top|bottom
+fit, turn DX DY, zoom F, size W H
+pick X Y               print the name there, or \-
+list                   NAME TRIS shown|hidden solid|see at X Y Z
+shot FILE.ppm
+spin N                 N frames of a turn about z
+help, quit
+.fi
+.RE
+.PP
+.B Reset
+is the
+.B a
+key,
+.B home
+sets every offset to 0, and the position in a list line is the centre
+of the part's box.
+.TP
+.B \-c
+Check the scene, print
+.I "name tris"
+for each part, and quit.
+.TP
+.B \-b
+Read the commands without a window;
+.B shot
+then draws on the processor.
+.SH SEE ALSO
+scene(5), tomesh(1)

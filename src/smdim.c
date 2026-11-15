@@ -2,12 +2,13 @@
 // smdim.c -- Add dimensions and callouts to a drawing view
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: smview VIEW part.fold | smdim [-s SCALE] > part.dim
+// Usage: smdim [-s SCALE] < part.view > part.dim
 //
-// Reads one view of smview, in mm, and writes it at SCALE in inches on
-// the paper, with the origin at the datum, the lower left corner of the
-// view.  The fill, line and arc records stay as they are but for the
-// units; the view record gains the scale, and these records come new:
+// As in smview VIEW part.fold | smdim -s SCALE > part.dim, reads one
+// view of smview, in mm, and writes it at SCALE in inches on the paper,
+// with the origin at the datum, the lower left corner of the view.  The
+// fill, line and arc records stay as they are but for the units; the
+// view record gains the scale, and these records come new:
 //   line c v X0 Y0 X1 Y1           (the centre marks of the holes)
 //   thin X0 Y0 X1 Y1               (a thin line of a dimension)
 //   text X Y ANGLE ALIGN HEIGHT STRING...
@@ -199,7 +200,8 @@ struct target {
 };
 
 // A callout: its lines of text, or the number of its flag and the
-// text after the box, and the points it may lead to.  Its leader ends in a dot or an arrow.
+// text after the box, and the points it may lead to.  Its leader ends
+// in a dot or an arrow.
 struct note {
 	const char *line[NOTE_LINES]; // In own, or in the input.
 	char own[NOTE_LINES][LABEL];
@@ -1999,7 +2001,7 @@ int main(int argc, char **argv)
 		v.scale = num(&args);
 	}
 	if ((argc != 1 && argc != 3) || !(v.scale > 0)) {
-		die("usage: smview VIEW part.fold | smdim [-s SCALE] > part.dim");
+		die("usage: smdim [-s SCALE] < part.view > part.dim");
 	}
 	v.k = v.scale / INCH;
 	input = read_file("-");

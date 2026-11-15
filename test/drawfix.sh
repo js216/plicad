@@ -19,7 +19,9 @@ fail() {
 
 # No view of a test part, with its hidden lines, has a line or an arc
 # shorter than a micrometre: such a piece printed with no length, and
-# Ghostscript stopped on its dashes (channel, nearhem).
+# Ghostscript stopped on its dashes (channel, nearhem).  Nor does one
+# that rounding to six places makes so: the edge of the cut of endon
+# seen nearly end on (fuzzer finding 0031).
 for f in build/*.fold; do
 	case $f in */bad_* | */pair.fold | */order.fold | */colour.fold | \
 		*/coincident.fold) continue ;; esac
@@ -77,6 +79,14 @@ fi
 { cat test/cube.draw; printf 'note A %0200d\n' 9; } > $B/word.draw
 PLICAD=$S timeout 60 build/smdraw $B/word.draw build/cube.fold > $B/word.ps &&
 	grep -q '^%%Page: 1 1' $B/word.ps || fail "a note with a long word"
+# So too a long word after words that fill part of a line (fuzzer
+# finding 0022, a hang of smdraw).
+{ cat test/cube.draw
+	printf 'note REMOVE ALL BURRS AND SHARP EDGES. %0400d\n' 9; } \
+	> $B/word2.draw
+PLICAD=$S timeout 60 build/smdraw $B/word2.draw build/cube.fold \
+	> $B/word2.ps && grep -q '^%%Page: 1 1' $B/word2.ps ||
+	fail "a long word after words in a note"
 
 # A field of the drawing file reaches the template as its text, with
 # parentheses and backslashes as they are.

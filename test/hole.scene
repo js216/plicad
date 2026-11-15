@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# hole.scene -- A picture with a clear hole in front of the cube
+# Copyright (c) 2026 Jakob Kastelic
+
+# The picture (a PAM file of three by three pixels, all white but the
+# clear one in the middle, written by test/run.sh) stands 5 mm in front of
+# the cube of test/cube.obj, over all of its front.
+mesh cube cube.obj colour 0.8 0.1 0.1
+image window ../build/hole.pam 0 -5 0 50 -5 0 0 -5 50
+view front

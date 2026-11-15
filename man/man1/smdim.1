@@ -1,0 +1,85 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" smdim.1 -- Manual page of smdim
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SMDIM 1
+.SH NAME
+smdim \- dimension a drawing view
+.SH SYNOPSIS
+.B smdim
+[
+.B \-s
+.I scale
+]
+.SH DESCRIPTION
+.I Smdim
+reads a view from
+.IR smview (1)
+on the standard input and writes it in inches on the paper at
+.I scale
+(default 1), with the datum (the lower left corner of the view) at the
+origin, and with its dimensions and callouts.
+Fill, line and arc records are kept; the view record is given the
+scale; thick and radius records are passed through in mm.
+These records are added:
+.PP
+.RS
+.nf
+line c v X0 Y0 X1 Y1     centre mark
+thin X0 Y0 X1 Y1
+text X Y ANGLE ALIGN HEIGHT STRING...
+arrow X Y DX DY
+dot X Y
+flag X Y N
+hatch X0 Y0 X1 Y1
+clear X0 Y0 X1 Y1        background of a text on a hatch
+crowd D
+far N
+dim ord|hole|radius|lin|pitch|bend ...
+.fi
+.RE
+.PP
+.I Align
+is
+.BR l ,
+.B c
+or
+.B r
+(the place of X Y in the text, at half its height).
+In strings, %%c is the diameter sign, %%v the countersink sign,
+%%d the degree sign, and %%p plus or minus.
+.I Crowd
+is the greatest distance of an ordinate text from its place;
+.I far
+is the number of long leaders.
+Dim records repeat the text of each dimension, for tests.
+.PP
+Dimensions are ordinates from the datum in inches, to three decimals,
+without the leading zero: to the far end, to each hole, to each edge of
+a cut-out and each centre line, and to other edges not close to these.
+Equal holes share one callout with their count and pitch, and arcs of
+one radius share one.
+Bend lines of the flat view are marked UP or DOWN, with the angle.
+No text overlaps another, and no leader crosses a text or a leader.
+.PP
+These records after the view change the result:
+.PP
+.RS
+.nf
+drop x|y|d|r STRING      omit that dimension
+lin x|y A B [PLUS MINUS] linear dimension, with tolerances
+leader X Y STRING...     note with a dot at X Y, inches from the datum
+flag X Y N [STRING...]   box of note N, with text after it
+hatch X0 Y0 X1 Y1        hatching across the material there
+.fi
+.RE
+.PP
+After a line
+.BI #line " n name" ,
+messages about the records that follow give line
+.I n
+of
+.IR name .
+.SH EXAMPLES
+smview top part.fold | smdim \-s .5 >top.dim
+.SH SEE ALSO
+smview(1), smsheet(1), smdraw(1), draw(5)

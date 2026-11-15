@@ -1,0 +1,29 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" numdiff.1 -- Manual page of numdiff
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH NUMDIFF 1
+.SH NAME
+numdiff \- compare outputs within tolerances
+.SH SYNOPSIS
+.B numdiff
+[
+.B \-t
+.IB label =rel: x
+|
+.IB label =abs: x
+] ...
+.I expected actual
+.SH DESCRIPTION
+.I Numdiff
+compares two files line by line and field by field.
+Words must be equal; numbers must agree within the tolerance of their
+label (the last word before the number on its line), relative
+.RB ( rel )
+or absolute
+.RB ( abs ),
+or exactly if no tolerance is given.
+Each mismatch is printed on one line.
+.SH SEE ALSO
+measure(1), cmp(1)
+.SH DIAGNOSTICS
+Exit status 1 on a mismatch.

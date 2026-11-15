@@ -1,0 +1,81 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" smview.1 -- Manual page of smview
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SMVIEW 1
+.SH NAME
+smview \- project a part into the lines of a drawing view
+.SH SYNOPSIS
+.B smview
+[
+.B \-h
+]
+.I view part.fold
+.SH DESCRIPTION
+.I Smview
+writes one view of a part, in mm, x to the right and y up,
+one record per line:
+.PP
+.RS
+.nf
+view VIEW PART
+thick T
+box X0 Y0 X1 Y1
+fill, then m X Y, l X Y, a CX CY R A0 A1, z
+line KIND VIS X0 Y0 X1 Y1
+arc KIND VIS CX CY R A0 A1
+hole X Y D [csink DC ANGLE near|far]
+radius R
+bend X0 Y0 X1 Y1 ANGLE
+.fi
+.RE
+.PP
+.I View
+is
+.BR front ,
+.BR back ,
+.BR left ,
+.BR right ,
+.BR top ,
+.B bottom
+or
+.BR flat .
+The front view is seen along +y with z up, the top view along \-z with
+y up, and the others in third-angle projection.
+The flat view is the top view of the unfolded blank, with a centre line
+and a
+.B bend
+record for each bend (the angle positive toward the eye).
+.PP
+A fill begins a region of material, filled by the even-odd rule.
+Arcs are counterclockwise, angles in degrees.
+.I Kind
+is
+.B e
+(sharp edge),
+.B i
+(edge of a cut-out),
+.B o
+(rim of a hole, or arc partly hidden),
+.B b
+(edge or outline of a bend),
+.B s
+(seam where a bend leaves a flat face) or
+.B c
+(centre line);
+.I vis
+is
+.B v
+or
+.BR h .
+There is a hole record for each hole seen along its axis and not
+covered.
+.B Radius
+is the inside radius of the first bend.
+.TP
+.B \-h
+Include hidden lines.
+.SH SEE ALSO
+smdim(1), smdraw(1), fold(5)
+.SH DIAGNOSTICS
+A circle seen at an angle (an ellipse) cannot be written; the input is
+refused, with the view and the place of the circle.

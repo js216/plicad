@@ -1,11 +1,13 @@
 PROGS := smfold smflat tostep measure place interfere numdiff lint \
-	extrude bool fillet mould smview smdim smsheet
+	extrude bool fillet mould smview smdim smsheet tomesh view
 LIB := util font geom expr fold brep bsolid contact shape stream integ isect \
-	split merge
+	split merge mesh obj scene explode
 
 LINTED := $(filter-out test/crlf.sm test/bad_%.fold,$(wildcard src/*.[ch] \
 	test/*.sm test/*.part test/*.txt test/*.params test/*.py test/*.sh \
-	test/*.expected test/*.fold test/*.draw src/*.sh)) test/colours \
+	test/*.expected test/*.fold test/*.draw test/*.scene src/*.sh \
+	man/man1/*.1 man/man5/*.5)) \
+	test/colours \
 	Makefile .clang-format .clang-tidy .gitignore README.md
 
 CC := gcc
@@ -41,8 +43,8 @@ S := build/san
 
 all: $(addprefix build/,$(PROGS) smdraw)
 
-build/smdraw: src/smdraw.sh
-	@mkdir -p build
+build/smdraw $(S)/smdraw: src/smdraw.sh
+	@mkdir -p $(dir $@)
 	cp $< $@
 
 OBJS := $(addsuffix .o,$(LIB) $(PROGS) test_arith)
@@ -54,6 +56,10 @@ $(addprefix build/,$(OBJS)): build/%.o: src/%.c
 build/%: build/%.o $(addprefix build/,$(addsuffix .o,$(LIB)))
 	$(CC) $(LDFLAGS) $^ -lm -o $@
 
+# view alone draws, by X11 and OpenGL.
+build/view: build/view.o $(addprefix build/,$(addsuffix .o,$(LIB)))
+	$(CC) $(LDFLAGS) $^ -lX11 -lGL -lm -o $@
+
 $(addprefix $(S)/,$(OBJS)): $(S)/%.o: src/%.c
 	@mkdir -p $(S)
 	$(CC) $(WARN) $(SAN) -fno-common -MMD -MP -c $< -o $@
@@ -61,15 +67,22 @@ $(addprefix $(S)/,$(OBJS)): $(S)/%.o: src/%.c
 $(S)/%: $(S)/%.o $(addprefix $(S)/,$(addsuffix .o,$(LIB)))
 	$(CC) $(SAN) $^ -lm -o $@
 
+$(S)/view: $(S)/view.o $(addprefix $(S)/,$(addsuffix .o,$(LIB)))
+	$(CC) $(SAN) $^ -lX11 -lGL -lm -o $@
+
 check: lint format cppcheck
 	@echo "check: all passed"
 
 lint: build/lint all
 	build/lint $(LINTED)
-	@for p in $(PROGS); do ldd build/$$p | awk -v p=$$p '\
+	@for p in $(filter-out view,$(PROGS)); do \
+		ldd build/$$p | awk -v p=$$p '\
 		!/linux-vdso|libc\.so|libm\.so|ld-linux/ \
 		{ print p ": links " $$1; bad = 1 } END { exit bad }' || \
 		exit 1; done
+	@readelf -d build/view | awk '/NEEDED/ && \
+		!/\[lib(X11|GL|m|c)\.so\.[0-9]*\]/ \
+		{ print "view: links " $$5; bad = 1 } END { exit bad }'
 	@echo "ok lint, libraries"
 
 format:

@@ -1,0 +1,43 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" fillet.1 -- Manual page of fillet
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH FILLET 1
+.SH NAME
+fillet \- round the edges of solids
+.SH SYNOPSIS
+.B fillet
+[
+.B \-l
+]
+.IR stream | \-
+.SH DESCRIPTION
+.I Fillet
+reads a stream and rounds the edges of its solids as given by the
+.B round
+and
+.B sharp
+statements,
+.IR part (5).
+A round is the surface swept by a ball rolling along the edge
+in contact with both faces
+(a cylinder along a line, a torus along a circle).
+Larger radii are made first.
+At a corner, rounds of one radius are continued along a smooth edge,
+ended on a face, joined in threes by a sphere,
+or mitred in pairs along an ellipse.
+A round is named by the names of its two faces joined by +,
+a corner sphere by the names of its three.
+.TP
+.B \-l
+List the edges instead, one per line
+.RI ( "name name" " convex|concave|smooth" " angle length" ,
+the angle in degrees, 0 when smooth).
+.SH SEE ALSO
+part(5), extrude(1), bool(1), mould(1)
+.SH DIAGNOSTICS
+The following are refused:
+a rule that matches no edge;
+any other kind of corner;
+a radius with no room for a neighbouring face or edge.
+A corner is named by its place and radius, a radius by the two faces
+of its edge.

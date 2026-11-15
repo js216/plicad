@@ -1,0 +1,144 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" sm.5 -- Manual page of the sheet metal part source
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SM 5
+.SH NAME
+sm \- sheet metal part source
+.SH DESCRIPTION
+A part source for
+.IR smfold (1)
+has one statement per line; # begins a comment.
+An argument is an expression without spaces, or one in parentheses:
+numbers, names, + \- * /, the functions
+floor tan sin cos sqrt max hypot atan2 (angles in degrees),
+and the units in, mm and deg.
+Lengths are in mm.
+Flat coordinates are x and y; the sheet occupies z in [\-t, 0], and its
+top face, z = 0, is the reference face.
+Statements are applied in order.
+.TP
+.BI include " file"
+Read
+.I "name = expr"
+lines from
+.IR file ,
+relative to this file.
+.TP
+.I "name = expr"
+A local definition.
+.TP
+.BI sheet " t r k"
+Thickness, inside bend radius, k-factor.
+.TP
+.BI plate " name x0 y0 x1 y1 " origin " ox oy oz " axes " u v"
+The root slab.
+Flat x and y run along the 3D axes
+.I u
+and
+.I v
+(+x, \-z, ...); the top face faces
+.IR u " \(mu " v ,
+and flat (0, 0) is at the origin.
+.TP
+.BI flange " name parent dir angle leg"
+.RB [ at
+.IR c ]
+.RB [ span
+.IR "a b" ]
+.RB [ zone
+.IR "a b" ]
+.br
+A bend zone, then a straight leg, on the edge of
+.I parent
+in flat direction
+.I dir
+(+x \-x +y \-y), or on the line where that coordinate is
+.IR c .
+A positive angle, in degrees, folds toward the top face.
+.I Span
+is the extent along the edge (default that of the parent);
+.I zone
+that of the bend (default the overlap of span and parent).
+.TP
+.BI cut " u0 v0 u1 v1 " along " a"
+.RB [ at
+.I w
+.B depth
+.IR l ]
+.br
+A rectangle cut through every slab so far that lies across the 3D axis
+.I a
+.RI ( u
+and
+.I v
+are the other two axes, in alphabetical order),
+or only to depth
+.I l
+about
+.IR w .
+.TP
+.BI hole " d u v " along " a"
+.RB [ at
+.I w
+.B depth
+.IR l ]
+.RB [ csink
+.I dc angle
+.BR near | far ]
+.RB [ pattern
+.I ax n p
+.RI [ "ax n p" ]
+|
+.B pattern hex
+.I p
+.B within
+.IR r ]
+.br
+A hole, as for a cut.
+A pattern repeats it
+.I n
+times,
+.I p
+apart along the signed axis
+.IR ax ;
+a hex pattern fills the circle of radius
+.I r
+with a hexagonal grid.
+A countersink is made at the top face (near) or the other (far).
+.TP
+.BI outline " along a"
+.RB [ at
+.I w
+.B depth
+.IR l ]
+.br
+.BI point " u v"
+.RB [ arc
+.I cu cv
+.BR ccw | cw ]
+.br
+A hole of any outline, as for a cut, given by the points that follow,
+each joined to the next by a line or an arc about
+.RI ( cu ,
+.IR cv ).
+.TP
+.BI trim " along a"
+.RB [ at
+.I w
+.B depth
+.IR l ]
+.br
+An open curve of points from the outline of a slab face to another
+point of it; the smaller piece is cut off.
+.TP
+.BI round " name r"
+.RB [ at
+.IR "x y z" ]
+.br
+Round the two free corners of flange
+.IR name ,
+or the corner of slab
+.I name
+at the point (a round if convex, a fillet if concave).
+.SH SEE ALSO
+smfold(1), fold(5)

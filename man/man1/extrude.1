@@ -1,0 +1,27 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" extrude.1 -- Manual page of extrude
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH EXTRUDE 1
+.SH NAME
+extrude \- make solids from outlines
+.SH SYNOPSIS
+.B extrude
+.IR part | \-
+.SH DESCRIPTION
+.I Extrude
+reads a part source or a stream and writes a stream on the standard
+output, with a solid added for each
+.B extrude
+statement.
+.BR Profile ,
+.B corner
+and
+.B circle
+statements give the outlines.
+Other statements are passed on.
+The statements are described in
+.IR part (5).
+.SH EXAMPLES
+extrude box.part | bool \- | fillet \- | tostep \- >box.step
+.SH SEE ALSO
+part(5), bool(1), fillet(1), tostep(1)

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# view.scene -- The scene of the tests of view: tomesh and FreeCAD meshes
+# Copyright (c) 2026 Jakob Kastelic
+
+# The cube of test/cube.sm, red, and the conical pit of test/point.part,
+# moved and turned, as tomesh wrote them (test/cube.obj, test/point.obj);
+# the cube again as FreeCAD exports it (test/freecad.obj); and a picture
+# of two by two pixels on the floor in front of them.
+mesh cube cube.obj colour 0.8 0.1 0.1
+mesh point point.obj move 60 0 0 turn 0 0 1 30
+mesh fc freecad.obj move 0 70 0  # FreeCAD names no part.
+image pic ../build/view.ppm 0 -40 0 50 -40 0 0 -10 0
+view front

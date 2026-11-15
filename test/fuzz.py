@@ -60,6 +60,17 @@
 #         copied into WORK/drawings) for smdraw on a test fold: the
 #         drawing passes Ghostscript, or the refusal names its line, or
 #         is one of the refusals of the file as a whole.
+#   mesh  A generated part, sheet metal or solid, for tomesh at a random
+#         chord and angle (15 degrees at most), at times with normals.
+#         Each solid of measure has a mesh of its name, closed (each edge
+#         of a triangle that of one other, the other way round), with the
+#         volume of measure within the area times the chord and the area
+#         within one part in a hundred (objcheck.py).
+#   scene test/view.scene with a generated mesh and picture (PPM, or PAM
+#         with opacity), one of its files damaged (the scene, an OBJ file
+#         or the picture) in half the cases, for view -c, then for view -b
+#         with random commands, among them the explode, the drags, the
+#         keys h, o and s, and undo.  A refusal must come with a message.
 #   args  Random arguments for a random program.
 # A program must either succeed or exit with a message, and never
 # crash, hang or trip a sanitizer.
@@ -81,6 +92,7 @@
 # stderr, and a minimised input in min/ with its command in README.
 
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -103,7 +115,12 @@ MIN_SECONDS = 600
 MUT_OCCT = 0.25
 PART_MAX = 1200           # bytes of a .part file fit for the corpus
 LOG_MAX = 100 * 2 ** 20      # fuzz.log turns into fuzz.log.1 past this size
-DISK_MIN = 2 * 2 ** 30       # the fuzzer pauses below this much free disk
+# The fuzzer pauses below this much free disk: 2 GB, or a tenth of a
+# smaller file system, such as the tmpfs of /tmp, whose free space is
+# memory shared with others.
+DISK_MIN = 2 * 2 ** 30
+DISK_SHARE = 0.1
+PAUSE_LONG = 30 * 60      # seconds of a pause that findings.log hears of
 FREECADCMD = "/home/jk/prog/freecad/build/bin/FreeCADCmd"
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAN_ENV = {
@@ -113,6 +130,11 @@ SAN_ENV = {
                     "max_allocation_size_mb=800",
     "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1:exitcode=99",
 }
+# The checks of OBJ files of test/objcheck.py.
+_spec = importlib.util.spec_from_file_location(
+    "objcheck", os.path.join(HERE, "objcheck.py"))
+OBJCHECK = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(OBJCHECK)
 SAN_RE = re.compile(r"AddressSanitizer|LeakSanitizer|runtime error:|"
                     r"UndefinedBehaviorSanitizer")
 FRAME_RE = re.compile(r"#\d+ 0x[0-9a-f]+ in (\w+) \S*?(\w+\.c):(\d+)")
@@ -165,6 +187,9 @@ PIPES = {
     "sheet": "smfold gen.sm > gen.fold, PLICAD=BIN smdraw gen.draw gen.fold "
              "> out.ps, gs -sDEVICE=nullpage out.ps",
     "mutdraw": "PLICAD=BIN smdraw mut.draw part.fold > out.ps, gs on out.ps",
+    "mesh": "smfold gen.sm > gen.fold (or extrude, bool and fillet of "
+            "gen.part > gen.round), measure, then tomesh OPTS > gen.obj",
+    "scene": "view -c scene.txt, then view -b scene.txt < cmds",
 }
 
 
@@ -1204,8 +1229,10 @@ class SheetGen:
         else:
             fw = q(rng.uniform(0.5, max(0.6, lim)))
             fh = q(rng.uniform(0.5, max(0.6, lim)))
+        # smfold takes a pattern on a hole alone, not on a cut or an
+        # outline.
         pats = []
-        if rng.random() < 0.4:
+        if kind == "hole" and rng.random() < 0.4:
             for dim in rng.sample([0, 1], rng.choice([1, 1, 2])):
                 cnt = rng.randint(2, 5)
                 pitch = q(((fw, fh)[dim] + rng.uniform(0.5, 6)))
@@ -3453,31 +3480,233 @@ class Fuzzer:
                          lambda dd, x: self.mutdraw_check(dd, x, fold))
             return
         self.note("mut", "smdraw", "PASS", ".draw", seed)
+
+    # Meshes and scenes.
+
+    def mesh_check(self, d, data, kind, opts):
+        # Makes the part in data (a .sm part or a .part of solids, as kind
+        # says), meshes it with tomesh and opts, and checks the mesh: each
+        # solid closed, of the volume and area of measure within the
+        # chord.  Returns a Bad or None; raises Refused as the checks of
+        # its kind do.
+        self.last = None
+        if kind == "sm":
+            bad = self.sm_check(d, data)
+            if bad is not None:
+                return bad
+            src, outs = self.last[0], self.last[1]
+        else:
+            bad = self.solid_check(d, data)
+            if bad is not None:
+                return bad
+            src, outs = os.path.join(d, "gen.round"), self.last[0]
+        obj = os.path.join(d, "gen.obj")
+        argv = [self.prog("tomesh")] + opts + [src]
+        try:
+            solid_must(run(argv, cwd=d, out=obj), argv)
+            verts, objs = OBJCHECK.objects(obj)
+            ref = OBJCHECK.measured(outs["measure"])
+            # A solid of no volume, from a cut of all, has no mesh.
+            ref = {k: v for k, v in ref.items() if v.get("volume", 0) > 0}
+            names = set(n for n, t in objs if t)
+            if names != set(ref):
+                raise Bad("MISMATCH", "tomesh", "MISMATCH tomesh parts",
+                          "meshes %s, solids %s" % (sorted(names),
+                                                    sorted(ref)), argv)
+            faults = OBJCHECK.faults(verts, [o for o in objs if o[1]], ref,
+                                     float(opts[1]))
+            if faults:
+                sig = re.sub(r"^FAIL \S+ |[\d.]+", "", faults[0])[:60]
+                raise Bad("MISMATCH", "tomesh", "MISMATCH tomesh " + sig,
+                          faults[0], argv)
+        except Bad as b:
+            return b
+        return None
+
+    def gen_mesh(self, seed):
+        rng = random.Random(seed)
+        kind = rng.choice(["sm", "sm", "solid"])
+        if kind == "sm":
+            data = SheetGen(random.Random(seed)).gen().encode()
+        else:
+            data = SolidGen(random.Random(seed)).gen().encode()
+        # The area of a mesh within one part in a hundred needs turns of
+        # 15 degrees or less.
+        opts = ["-c", fmt(10 ** rng.uniform(-2.3, -0.3)), "-a",
+                fmt(rng.uniform(3, 15))]
+        if rng.random() < 0.3:
+            opts.append("-n")
+        d = self.fresh()
+        check = lambda dd, x: self.mesh_check(dd, x, kind, opts)
+        try:
+            bad = check(d, data)
+        except Refused as e:
+            self.note("mesh", "tomesh", "REJECT", str(e)[:150], seed)
+            return
+        ext = ".sm" if kind == "sm" else ".part"
+        if bad:
+            self.finding("mesh", seed, bad, {"gen" + ext: data}, "gen" + ext,
+                         lambda dd, x: self.retry(check, dd, x))
+            return
+        self.note("mesh", "tomesh", "PASS", " ".join(opts), seed)
+
+    # The words of the commands of view.
+    VIEW_CMDS = ["hide", "show", "only", "all", "view", "fit", "turn", "zoom",
+                 "size", "pick", "shot", "list", "spin", "quit", "iso",
+                 "explode", "drag", "home", "reset", "undo", "redo", "help",
+                 "cube", "gen", "0.5", "25", "background", "key", "h", "o",
+                 "s", "see", "solid", "20", "15",
+                 "front", "top", "*", "a*", "fc", "pic", "-1", "0", "1",
+                 "1e9", "nan", "80", "60", "out.ppm", "/", ""]
+
+    def scene_check(self, d, files, cmds):
+        # Writes files into d, checks scene.txt with view -c and runs the
+        # commands cmds with view -b on it.  Returns a Bad or None; raises
+        # Refused if view -c refuses the scene.
+        for name, data in files.items():
+            with open(os.path.join(d, name), "wb") as f:
+                f.write(data)
+        scene = os.path.join(d, "scene.txt")
+        try:
+            argv = [self.prog("view"), "-c", scene]
+            must(run(argv, cwd=d), argv, False)
+            argv = [self.prog("view"), "-b", scene]
+            env = dict(os.environ, **SAN_ENV)
+            p = subprocess.run(argv, input=cmds, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, timeout=TIMEOUT,
+                               env=env, cwd=d)
+            err = p.stderr.decode("latin-1")
+            if SAN_RE.search(err) or p.returncode != 0:
+                s = san_sig(err) if SAN_RE.search(err) else \
+                    "exit %d" % p.returncode
+                raise Bad("SANITIZER" if SAN_RE.search(err) else "CRASH",
+                          "view", "%s view %s" % (
+                              "SANITIZER" if SAN_RE.search(err) else
+                              "CRASH", s), s, argv + ["<", "cmds"], err)
+        except subprocess.TimeoutExpired:
+            return Bad("HANG", "view", "HANG view -b", "timeout",
+                       [self.prog("view"), "-b", "scene.txt"])
+        except Bad as b:
+            return b
+        return None
+
+    def gen_scene(self, seed):
+        rng = random.Random(seed)
+        d = self.fresh()
+        mesh = None
+        for _ in range(3):
+            data = SheetGen(random.Random(rng.randrange(2 ** 32))).gen()
+            try:
+                if self.mesh_check(d, data.encode(), "sm",
+                                   ["-c", "0.1", "-a", "15"]) is None:
+                    with open(os.path.join(d, "gen.obj"), "rb") as f:
+                        mesh = f.read()
+                    break
+            except Refused:
+                continue
+        if mesh is None:
+            self.note("scene", "smfold", "REJECT", "part", seed)
+            return
+        w, h = rng.randint(1, 5), rng.randint(1, 5)
+        if rng.random() < 0.5:
+            ppm = b"P6\n%d %d\n255\n" % (w, h) + bytes(
+                rng.randrange(256) for _ in range(3 * w * h))
+        else:
+            ppm = (b"P7\nWIDTH %d\nHEIGHT %d\nDEPTH 4\nMAXVAL 255\n"
+                   b"TUPLTYPE RGB_ALPHA\nENDHDR\n" % (w, h)) + bytes(
+                rng.choice([0, 255, rng.randrange(256)])
+                for _ in range(4 * w * h))
+        with open(os.path.join(HERE, "view.scene"), "rb") as f:
+            scene = f.read().replace(b"../build/view.ppm", b"pic.ppm")
+        scene += b"mesh gen gen.obj colour 0.2 0.5 0.9 move 0 0 60\n"
+        files = {"cube.obj": mesh, "point.obj": mesh, "gen.obj": mesh,
+                 "pic.ppm": ppm}
+        with open(os.path.join(HERE, "freecad.obj"), "rb") as f:
+            files["freecad.obj"] = f.read()
+        what = rng.choice(["scene.txt", "gen.obj", "pic.ppm", "freecad.obj"])
+        files["scene.txt"] = scene
+        # Half the cases keep their files whole, for the commands alone.
+        if rng.random() < 0.5:
+            what = "cmds"
+        elif what == "pic.ppm":
+            data = bytearray(ppm)
+            for _ in range(rng.randint(1, 4)):
+                data[rng.randrange(len(data))] = rng.randrange(256)
+            files[what] = bytes(data[:rng.randint(0, len(data))]) \
+                if rng.random() < 0.3 else bytes(data)
+        elif what != "cmds":
+            files[what] = self.mutate(rng, files[what])
+        lines = []
+        for _ in range(rng.randint(1, 30)):
+            lines.append(" ".join(rng.choice(self.VIEW_CMDS) for _ in
+                                  range(rng.randint(1, 4))))
+        lines.insert(0, "size 40 30")
+        cmds = ("\n".join(l for l in lines if not l.startswith("spin")) +
+                "\n").encode()
+        try:
+            bad = self.scene_check(d, files, cmds)
+        except Refused as e:
+            self.note("scene", "view", "REJECT", str(e)[:150], seed)
+            return
+        if bad:
+            files["cmds"] = cmds
+            if what == "cmds":
+                what = "scene.txt"
+            self.finding("scene", seed, bad, files, what,
+                         lambda dd, x: self.retry(
+                             self.scene_check, dd, dict(files, **{what: x}),
+                             cmds))
+            return
+        self.note("scene", "view", "PASS", what, seed)
     # The main loop.
 
     # The modes of the drawing programs take half of the cases.
     MODES = ["sm"] * 9 + ["solid"] * 6 + ["fillet"] * 4 + ["asm"] + \
         ["mut"] * 8 + ["args"] * 2 + ["view"] * 8 + ["dim"] * 8 + \
-        ["sheet"] * 8 + ["mutdraw"] * 6
+        ["sheet"] * 8 + ["mutdraw"] * 6 + ["mesh"] * 4 + ["scene"] * 4
 
     def one(self, mode, seed):
         {"sm": self.gen_sm, "asm": self.gen_asm, "solid": self.gen_solid,
          "fillet": self.gen_fillet,
          "mut": self.gen_mut, "args": self.gen_args, "view": self.gen_view,
          "dim": self.gen_dim, "sheet": self.gen_sheet,
-         "mutdraw": self.gen_mutdraw}[mode](seed)
+         "mutdraw": self.gen_mutdraw, "mesh": self.gen_mesh,
+         "scene": self.gen_scene}[mode](seed)
+
+    def pause_why(self):
+        # Why the fuzzer should wait now, or None: a high load, or a
+        # file system short of free space (DISK_MIN).
+        if os.getloadavg()[0] > LOAD_PAUSE:
+            return "load %.1f" % os.getloadavg()[0]
+        du = shutil.disk_usage(self.work)
+        if du.free < min(DISK_MIN, DISK_SHARE * du.total):
+            return "free disk %d MB" % (du.free // 2 ** 20)
+        return None
+
+    def tell(self, text):
+        # One line to findings.log, for a watcher.
+        line = "%s v=%s fuzz %s" % (
+            time.strftime("%Y-%m-%dT%H:%M:%S%z"), self.version, text)
+        with open(os.path.join(self.work, "findings.log"), "a") as f:
+            f.write(line + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def loop(self, cases=None):
         self.note("start", "fuzz", "START", "seed %d" % self.seed, self.seed)
         while cases is None or self.n < cases:
-            while os.getloadavg()[0] > LOAD_PAUSE:
-                self.note("pause", "fuzz", "PAUSE", "load %.1f" %
-                          os.getloadavg()[0], 0)
+            t0 = time.time()
+            told = False
+            while True:
+                why = self.pause_why()
+                if why is None:
+                    break
+                self.note("pause", "fuzz", "PAUSE", why, 0)
+                if not told and time.time() - t0 >= PAUSE_LONG:
+                    told = True
+                    self.tell("PAUSED %d min: %s" % (
+                        (time.time() - t0) // 60, why))
                 time.sleep(60)
-            while shutil.disk_usage(self.work).free < DISK_MIN:
-                self.note("pause", "fuzz", "PAUSE", "free disk %d MB" % (
-                    shutil.disk_usage(self.work).free // 2 ** 20), 0)
-                time.sleep(300)
             self.n += 1
             mode = self.rng.choice(self.MODES)
             seed = self.rng.randrange(2 ** 32)

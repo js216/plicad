@@ -5,7 +5,7 @@
 
 # Usage: test/run.sh [GROUP...]
 # The groups are arith, parts, solids, fillet, place, bad, tools, docs,
-# args, draw and occt;
+# args, draw, mesh, viewer and occt;
 # with none it runs all of them.  It builds the programs with make
 # first, and the tests run the sanitized ones in build/san.  It prints
 # ok or FAIL for each group and exits non-zero if any fails.  The occt
@@ -28,7 +28,7 @@ STOL="-t volume=rel:1e-9 -t area=rel:1e-9 -t centre=abs:2e-4 \
 -t bbox=abs:2e-4"
 
 build() {
-	targets="all $S/test_arith"
+	targets="all $S/test_arith $S/smdraw"
 	for p in $PROGS; do
 		targets="$targets $S/$p"
 	done
@@ -197,6 +197,10 @@ tools() {
 
 # README.md shows the cube of test/cube.sm, statement for statement, and
 # lists every program; the checked-in cube STEP file is up to date.
+# Each program has a manual page in man/man1 whose SYNOPSIS names it
+# and the options of its usage message, and every page of man/man1
+# and man/man5 renders under groff -ww without a warning
+# (mancheck.sh).
 docs() {
 	awk '/^```$/ { if (inb) exit; if (seen) inb = 1; next }
 		/cube can be described/ { seen = 1 } inb' README.md \
@@ -216,7 +220,10 @@ docs() {
 		return 1
 	}
 	build/smfold test/cube.sm > build/cube.fold &&
-		build/tostep build/cube.fold | cmp -s - test/cube.step
+		build/tostep build/cube.fold | cmp -s - test/cube.step ||
+		return 1
+	test/mancheck.sh $S $PROGS smdraw ||
+		{ echo "FAIL manual pages"; return 1; }
 }
 
 # Each program, with stdin closed, fails with a message on stderr and
@@ -245,14 +252,15 @@ args() {
 # of the test parts says what measure says of the part (dimcheck.sh);
 # not so for angled, whose hole lies under its flange, nor for profile,
 # whose two holes of one size differ in their countersinks, nor for
-# rowcorner, whose front view sees its holes at an angle.  The views
+# rowcorner and shortline, whose front views see holes at an angle.  The views
 # of the bracket with their hidden lines, and the drawings of the cube
 # and the bracket, come out as checked in.  Bad input is refused
 # (drawbad.sh), and the faults once found stay away (drawfix.sh).
 draw() {
 	parts > /dev/null && place > /dev/null || return 1
 	for t in $TESTS; do
-		case $t in angled | profile | rowcorner) continue ;; esac
+		case $t in angled | profile | rowcorner | shortline) continue ;;
+		esac
 		test/dimcheck.sh $S build/$t.fold top front flat ||
 			{ echo "FAIL dimensions $t"; return 1; }
 	done
@@ -277,8 +285,10 @@ draw() {
 # test/NAME.part is one valid solid to OCCT, with the volume and area of
 # measure, and equals the reference solid of test/occtworker.py, or for
 # bnc.part, the Creo solid in test/bnc.brep.  A part with rounds has no
-# reference solid.  The answers of the worker come on a descriptor of
-# their own, apart from the trace of OCCT.
+# reference solid.  The visible lines of the bottom view of shortline,
+# some of them .2 mm long, are those of the hidden-line removal of OCCT
+# (fuzzer finding 0023).  The answers of the worker come on a
+# descriptor of their own, apart from the trace of OCCT.
 occt() {
 	test/occt.sh $S "$(echo $TESTS)" || return 1
 	solids > /dev/null || return 1
@@ -309,16 +319,167 @@ occt() {
 			3> build/nearhem.ref > /dev/null 2>&1
 	grep -q '"symdiff": [0-9.e-]*[0-9]}' build/nearhem.ref &&
 		awk -F'"symdiff": ' '{ split($2, v, "}"); d = v[1] + 0
-			exit !(d < 1e-6 && d > -1e-6) }' build/nearhem.ref
+			exit !(d < 1e-6 && d > -1e-6) }' build/nearhem.ref ||
+		return 1
+	$S/smview bottom build/shortline.fold > build/shortline.view &&
+		printf '{"step": "%s", "view": [0, 0, -1], "lines": "%s"}\n' \
+			build/shortline.step build/shortline.view |
+		OCCTWORKER_FD=3 test/freecad.sh test/occtworker.py \
+			3> build/shortline.hlr > /dev/null 2>&1
+	grep -q '"extra": 0, "lost": 0}' build/shortline.hlr ||
+		{ echo "FAIL occt hlr shortline"; return 1; }
+}
+
+# tomesh writes the cube of test/cube.sm and, with normals, the pit of
+# test/point.part, whose cone ends in a point, as test/cube.obj and
+# test/point.obj have them.  The mesh of every test part is closed, and
+# its volume and area match those of measure within the chord
+# (objcheck.py), and so are those of test/smallhole.sm and
+# test/wrapround.part at the chords and angles of fuzzer findings 0032
+# and 0033.
+mesh() {
+	parts > /dev/null && solids > /dev/null || return 1
+	$S/tomesh build/cube.fold > build/cube.obj &&
+		$S/numdiff -t v=abs:2e-5 test/cube.obj build/cube.obj &&
+		$S/tomesh -n build/part_point.st > build/point.obj &&
+		$S/numdiff -t v=abs:2e-5 -t vn=abs:2e-5 test/point.obj \
+			build/point.obj || return 1
+	$S/tomesh -c 0.2007 -a 4.4786 build/smallhole.fold \
+		> build/smallhole.chord.obj &&
+		python3 -I test/objcheck.py build/smallhole.chord.obj \
+			build/smallhole.measure 0.2007 > build/smallhole.mesh ||
+		{ echo "FAIL mesh smallhole at its chord"; return 1; }
+	$S/tomesh -c 0.2228 -a 13.784 build/part_wrapround.st \
+		> build/wrapround.chord.obj &&
+		python3 -I test/objcheck.py build/wrapround.chord.obj \
+			build/part_wrapround.measure 0.2228 \
+			> build/wrapround.mesh ||
+		{ echo "FAIL mesh wrapround at its chord"; return 1; }
+	for t in $TESTS; do
+		$S/tomesh build/$t.fold > build/$t.obj &&
+			python3 -I test/objcheck.py build/$t.obj \
+				build/$t.measure 0.02 > build/$t.mesh ||
+			{ echo "FAIL mesh $t"; return 1; }
+	done
+	for t in $SOLIDS; do
+		m=build/part_$t
+		$S/tomesh -c 0.05 -a 15 $m.st > $m.obj &&
+			python3 -I test/objcheck.py $m.obj $m.measure 0.05 \
+				> $m.mesh ||
+			{ echo "FAIL mesh solid $t"; return 1; }
+	done
+}
+
+# The pixel X, Y of the PPM file $1 of 80 by 60, as ' R G B'.
+pixel() {
+	od -An -tu1 -j $((13 + 3 * ($3 * 80 + $2))) -N3 "$1" | tr -s ' '
+}
+
+# view checks test/view.scene, with the cube of FreeCAD (test/freecad.obj,
+# by Mesh.export of test/cube.step), closed and of the volume of the cube
+# within its chord of 0.1 mm; runs the commands of a session with no
+# display, its picks, its lists, its refusals and its shot as
+# test/view.expected has them; and refuses broken scenes, meshes and
+# pictures.  Through the clear hole of the picture of test/hole.scene
+# (PAM, RGB_ALPHA) a pick finds the cube, and a shot shows it as with the
+# picture hidden; elsewhere the picture hides it.  The parts explode and
+# drag out, and undo and redo walk back and forth through what shows and
+# the moves, as the picks, lists and shot of test/explode.expected see;
+# help prints the help of the key ?; the keys h, o and s hide the part
+# under the pointer, show it alone, or turn it see-through, and see and
+# solid do so by name.
+# A background line sets the colour round the parts, FreeCAD's grey by
+# default.  With a display, view draws a shot by OpenGL.
+viewer() {
+	parts > /dev/null || return 1
+	printf 'P6\n2 2\n255\n\377\0\0\0\377\0\0\0\377\377\377\377' \
+		> build/view.ppm
+	{ echo 'o cube'; cat test/freecad.obj; } > build/freecad.obj
+	python3 -I test/objcheck.py build/freecad.obj build/cube.measure 0.1 \
+		> build/freecad.mesh || return 1
+	{
+		$S/view -c test/view.scene &&
+			printf '%s\n' 'size 80 60' 'list' 'view top' \
+				'pick 35 30' 'pick 46 30' 'pick 35 11' \
+				'pick 35 52' 'pick 2 2' 'hide cube' \
+				'pick 35 30' 'only f*' 'list' 'all' \
+				'view iso' 'zoom 0.5' 'turn 10 5' \
+				'shot build/view.shot.ppm' 'bogus' \
+				'hide nomatch' 'turn x 1' 'quit' 'list' |
+			$S/view -b test/view.scene 2>&1 &&
+			cksum < build/view.shot.ppm
+	} > build/view.out && cmp -s build/view.out test/view.expected ||
+		{ echo "FAIL view session"; return 1; }
+	for bad in 'mesh a' 'mesh a nofile.obj' 'view sideways' 'thing' \
+		'mesh a ../test/cube.obj move 1 2' \
+		'image a ../test/cube.obj 0' 'mesh a bad.obj' \
+		'image a ../test/cube.obj 0 0 0 1 0 0 0 1 0'; do
+		printf '%s\n' 'f 1 2 3' > build/bad.obj
+		printf '%s\n' "$bad" > build/bad.scene
+		if $S/view -c build/bad.scene > /dev/null 2> build/bad.err ||
+			! grep -q '^view: ' build/bad.err ||
+			grep -q Sanitizer build/bad.err; then
+			echo "FAIL view refuses $bad"
+			return 1
+		fi
+	done
+	{
+		printf '%s\n' 'help' 'size 80 60' 'view top' 'explode 1' 'fit' \
+			'pick 34 30' 'pick 46 30' 'pick 34 6' 'pick 34 54' \
+			'drag cube 30' 'pick 34 30' 'list' 'undo' \
+			'pick 34 30' 'redo' 'list' 'home' 'pick 34 30' \
+			'explode 1' 'hide cube' 'only fc' 'pick 34 6' 'undo' \
+			'undo' 'pick 34 30' 'redo' 'pick 34 30' 'drag fc 10' \
+			'redo' 'list' 'reset' 'list' 'undo' 'list' \
+			'shot build/explode.shot.ppm' 'reset' 'fit' \
+			'key h 35 30' 'key h 2 2' 'key o 35 11' 'list' \
+			'undo' 'list' 'reset' 'see cube' 'key s 35 11' \
+			'list' 'undo' 'list' 'see *' 'solid p*' 'list' \
+			'shot build/see.shot.ppm' |
+			$S/view -b test/view.scene 2>&1 &&
+			cksum < build/explode.shot.ppm &&
+			cksum < build/see.shot.ppm
+	} > build/explode.out &&
+		cmp -s build/explode.out test/explode.expected ||
+		{ echo "FAIL view explode"; return 1; }
+	{
+		printf 'P7\nWIDTH 3\nHEIGHT 3\nDEPTH 4\nMAXVAL 255\n'
+		printf 'TUPLTYPE RGB_ALPHA\nENDHDR\n'
+		w='\377\377\377\377'
+		printf "$w$w$w$w"'\0\0\0\0'"$w$w$w$w"
+	} > build/hole.pam
+	printf '%s\n' 'size 80 60' 'pick 40 30' 'pick 30 20' \
+		'shot build/hole.a.ppm' 'hide window' 'shot build/hole.b.ppm' |
+		$S/view -b test/hole.scene > build/hole.out &&
+		printf '%s\n' cube window | cmp -s - build/hole.out &&
+		test "$(pixel build/hole.a.ppm 40 30)" = \
+			"$(pixel build/hole.b.ppm 40 30)" &&
+		test "$(pixel build/hole.a.ppm 30 20)" = ' 255 255 255' &&
+		test "$(pixel build/hole.b.ppm 30 20)" != ' 255 255 255' ||
+		{ echo "FAIL view hole"; return 1; }
+	printf '%s\n' 'mesh cube ../test/cube.obj' 'background 1 0.5 0' \
+		> build/back.scene
+	printf '%s\n' 'size 80 60' 'shot build/back.ppm' |
+		$S/view -b build/back.scene &&
+		test "$(pixel build/back.ppm 2 2)" = ' 255 128 0' &&
+		test "$(pixel build/hole.a.ppm 2 2)" = ' 81 81 81' ||
+		{ echo "FAIL view background"; return 1; }
+	test -z "$DISPLAY" && return 0
+	printf '%s\n' 'shot build/view.gl.ppm' 'quit' |
+		ASAN_OPTIONS=detect_leaks=0 timeout 30 \
+			$S/view test/view.scene &&
+		test "$(head -c 2 build/view.gl.ppm)" = P6 ||
+		{ echo "FAIL view by OpenGL"; return 1; }
 }
 
 build || { echo "FAIL build"; exit 1; }
-groups=${*:-arith parts solids fillet place bad tools docs args draw occt}
+groups=${*:-arith parts solids fillet place bad tools docs args draw mesh \
+viewer occt}
 fail=0
 for g in $groups; do
 	case $g in
 	arith | parts | solids | fillet | place | bad | tools | docs | args | \
-		draw | occt) ;;
+		draw | mesh | viewer | occt) ;;
 	*)
 		echo "unknown group $g"
 		exit 2

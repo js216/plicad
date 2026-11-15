@@ -4,8 +4,9 @@
 
 // Usage: smflat -f dxf part.fold > out.dxf
 //
-// Layer OUTLINE holds the cut contour with true arcs and circles, and
-// layer BEND holds one centre line per bend zone.  Units are mm.
+// The fold file holds one part (smfold).  Layer OUTLINE holds the cut
+// contour with true arcs and circles, and layer BEND holds one centre
+// line per bend zone.  Units are mm.
 
 #include "fold.h"
 #include "geom.h"

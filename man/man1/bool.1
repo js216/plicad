@@ -1,0 +1,34 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" bool.1 -- Manual page of bool
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH BOOL 1
+.SH NAME
+bool \- unite, cut and intersect solids
+.SH SYNOPSIS
+.B bool
+.IR stream | \-
+.SH DESCRIPTION
+.I Bool
+reads a stream and executes its
+.BR union ,
+.B cut
+and
+.B common
+statements,
+.IR part (5),
+in order.
+Each of the named solids is replaced by the result.
+Other statements are passed on.
+.PP
+Faces are planes, cylinders and cones;
+two faces may meet along a line, a circle or an ellipse,
+or overlap in a common surface.
+.SH SEE ALSO
+part(5), extrude(1), fillet(1)
+.SH DIAGNOSTICS
+The following are refused:
+faces that meet on another curve, unless they are apart;
+a result with a void;
+a result in pieces that touch;
+a result that touches itself along an edge.
+The faces concerned are named.

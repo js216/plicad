@@ -1,0 +1,27 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" tostep.1 -- Manual page of tostep
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH TOSTEP 1
+.SH NAME
+tostep \- write solids as STEP
+.SH SYNOPSIS
+.B tostep
+.I part.fold
+.br
+.B tostep
+.IR stream | \-
+.SH DESCRIPTION
+.I Tostep
+writes each part of a fold file, or each solid of a stream,
+as a manifold solid of one STEP file on the standard output,
+in world mm.
+A part with a colour is given an AP214 surface style in that colour.
+.PP
+From a stream it is the last program of a pipe.
+A solid is written for each shell.
+Source lines left unused by the pipe, and void shells, are refused.
+Faces are planes, cylinders, cones, spheres and tori;
+ellipses and arcs of circles on spheres are written as several edges
+on one curve.
+.SH SEE ALSO
+fold(5), part(5), smfold(1), tomesh(1)

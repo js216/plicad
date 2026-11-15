@@ -1,0 +1,29 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" interfere.1 -- Manual page of interfere
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH INTERFERE 1
+.SH NAME
+interfere \- find colliding parts
+.SH SYNOPSIS
+.B interfere
+.I assembly.fold
+.SH DESCRIPTION
+.I Interfere
+prints a line for each pair of colliding parts:
+.PP
+.RS
+.I "name name"
+.B points
+.I n
+.RE
+.PP
+The material of each part is sampled on a 1 mm grid of its flat faces,
+at three depths.
+A sample collides if it lies inside the other part, 1 um or more from
+its faces; parts that only touch do not collide.
+.I N
+is the number of colliding samples, counted up to a limit.
+.SH SEE ALSO
+place(1)
+.SH BUGS
+An overlap thinner than the grid may be missed.

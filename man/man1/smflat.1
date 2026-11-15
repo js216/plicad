@@ -1,0 +1,18 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" smflat.1 -- Manual page of smflat
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SMFLAT 1
+.SH NAME
+smflat \- write the flat pattern of a part as DXF
+.SH SYNOPSIS
+.B smflat \-f dxf
+.I part.fold
+.SH DESCRIPTION
+.I Smflat
+writes the unfolded blank of a part as DXF on the standard output,
+in mm.
+The fold file must hold one part.
+Layer OUTLINE holds the cut contour, with true arcs and circles;
+layer BEND holds a centre line for each bend zone.
+.SH SEE ALSO
+smfold(1), fold(5)

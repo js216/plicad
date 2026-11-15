@@ -1,0 +1,51 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" measure.1 -- Manual page of measure
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH MEASURE 1
+.SH NAME
+measure \- print volume, area, box and holes of parts
+.SH SYNOPSIS
+.B measure
+.I part.fold
+.br
+.B measure
+.IR stream | \-
+.SH DESCRIPTION
+.I Measure
+prints, for each part of a fold file:
+.PP
+.RS
+.nf
+part NAME
+volume V
+area A
+bbox XMIN YMIN ZMIN XMAX YMAX ZMAX
+faces N plane P cylinder C [cone K]
+hole X Y Z d D axis AX AY AZ
+flat W H area A holes N bends B
+.fi
+.RE
+.PP
+Cones are counted only if present.
+Hole axes are given without sign.
+The flat line gives the box of the blank, W not less than H.
+.PP
+For each solid of a stream:
+.PP
+.RS
+.nf
+part NAME
+volume V
+area A
+centre X Y Z
+bbox XMIN YMIN ZMIN XMAX YMAX ZMAX
+faces N plane P cylinder C cone K sphere S torus T
+.fi
+.RE
+.PP
+The centre is that of the volume.
+An empty solid (the common part of solids that are apart)
+has no centre and no box.
+Lengths are in mm.
+.SH SEE ALSO
+numdiff(1), fold(5), part(5)

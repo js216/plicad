@@ -1,0 +1,36 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" smfold.1 -- Manual page of smfold
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SMFOLD 1
+.SH NAME
+smfold \- fold a sheet metal part
+.SH SYNOPSIS
+.B smfold
+[
+.B \-M
+] [
+.B \-D
+.IR name = expr
+] ...
+.I part.sm
+.SH DESCRIPTION
+.I Smfold
+reads the description of a sheet metal part,
+.IR sm (5),
+and writes the folded part as a fold file,
+.IR fold (5),
+on the standard output.
+.TP
+.BI \-D " name" = expr
+Set the parameter
+.I name
+to
+.IR expr ,
+overriding every definition of it.
+.TP
+.B \-M
+Instead, print the names of the included parameters used by the part.
+.SH SEE ALSO
+sm(5), fold(5), smflat(1), tostep(1), measure(1), smview(1)
+.SH DIAGNOSTICS
+FILE:LINE: and the fault, for a statement that cannot be built.

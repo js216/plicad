@@ -1,0 +1,22 @@
+cube 380
+point 94
+fc 268
+pic 2
+cube 380 shown solid at 25.000 25.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 25.000
+pic 2 shown solid at 25.000 -25.000 0.000
+cube
+point
+fc
+pic
+-
+-
+cube 380 hidden solid at 25.000 25.000 25.000
+point 94 hidden solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 25.000
+pic 2 hidden solid at 25.000 -25.000 0.000
+view: bad command bogus
+view: no part matches nomatch
+view: bad command turn
+2047129983 14413

@@ -1,0 +1,50 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" smsheet.1 -- Manual page of smsheet
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SMSHEET 1
+.SH NAME
+smsheet \- lay views on sheets as PostScript
+.SH SYNOPSIS
+.B smsheet
+.I part.draw
+[
+.I views
+]
+.br
+.B smsheet \-r
+.I part.draw
+.SH DESCRIPTION
+.I Smsheet
+reads a drawing file,
+.IR draw (5),
+and views from
+.IR smdim (1)
+in the file
+.I views
+or on the standard input
+(one per view record, in order; then, if further scales are offered,
+all again at each, largest first),
+and writes a PostScript page for each sheet: the template, the views,
+and on sheet 1 the notes.
+.PP
+A sheet is drawn at the largest scale at which its views fit the
+template and, below scale 1, no ordinate text stands more than .75 in
+from its place.
+The views of a sheet are arranged in third-angle projection around the
+front view, .4 in apart and .25 in clear of the notes and the kept
+regions; a view with
+.B at
+is placed at the given point.
+.PP
+The lettering is osifont, to be found by Ghostscript with
+.BI \-sFONTPATH= dir .
+.TP
+.B \-r
+Print the width and height of the room for views in the template,
+in inches; no views are read.
+.SH SEE ALSO
+draw(5), smdim(1), smdraw(1), gs(1)
+.SH DIAGNOSTICS
+FILE:LINE: and the fault, for a bad record of the drawing file.
+If no scale fits, the size of the views at the smallest scale is given
+with the room of the template.

@@ -771,11 +771,18 @@ HLR_STEP = 0.1
 HLR_TOL = 0.08
 
 
+def steps(length):
+    # The number of points on a curve of the length given, no two more
+    # than HLR_STEP apart: else a short curve had its two ends only, and
+    # a point of the other side near its middle seemed lost.
+    return max(2, int(math.ceil(length / HLR_STEP)) + 1)
+
+
 def hlr_points(shapes):
     pts = []
     for s in shapes:
         for e in s.Edges:
-            n = max(2, int(e.Length / HLR_STEP) + 1)
+            n = steps(e.Length)
             pts += [(v.x, v.y) for v in e.discretize(Number=n)]
     return pts
 
@@ -792,14 +799,13 @@ def view_points(path):
                 continue
             x = [float(t) for t in w[3:]]
             if w[0] == "line":
-                n = max(2, int(math.hypot(x[2] - x[0], x[3] - x[1]) /
-                               HLR_STEP) + 1)
+                n = steps(math.hypot(x[2] - x[0], x[3] - x[1]))
                 pts += [(x[0] + (x[2] - x[0]) * k / (n - 1),
                          x[1] + (x[3] - x[1]) * k / (n - 1))
                         for k in range(n)]
             else:
                 a0, a1 = math.radians(x[3]), math.radians(x[4])
-                n = max(2, int(x[2] * abs(a1 - a0) / HLR_STEP) + 1)
+                n = steps(x[2] * abs(a1 - a0))
                 pts += [(x[0] + x[2] * math.cos(a0 + (a1 - a0) * k / (n - 1)),
                          x[1] + x[2] * math.sin(a0 + (a1 - a0) * k / (n - 1)))
                         for k in range(n)]

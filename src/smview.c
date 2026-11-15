@@ -27,8 +27,9 @@
 // KIND is e for a sharp edge of the sheet, i for an edge of a cut-out
 // inside it, o for the rim of a hole and for an arc that is hidden in
 // part, b for an edge or the outline of a bend, s for the seam where a
-// bend leaves a flat face, and c for a centre line.  VIS is v for visible and h for hidden; the hidden lines
-// are left out unless -h is given.  A hole record stands for each hole
+// bend leaves a flat face, and c for a centre line.  VIS is v for
+// visible and h for hidden; the hidden lines are left out unless -h is
+// given.  A hole record stands for each hole
 // seen along its axis and not covered.
 //
 // A line is hidden where material lies between it and the eye.  The
@@ -51,7 +52,8 @@
 #define FRONT 1e-3 // A face this much nearer the eye hides, in mm.
 #define SAME 1e-6 // Distance below which two pieces are one, in mm.
 #define ZERO 5e-7 // Numbers closer to 0 than this print as 0.
-#define SLIVER 1e-3 // No curve or piece of one is shorter, in mm.
+#define SLIVER 1e-3 // No curve or piece of one is shorter, in mm,
+#define PRINTED 2e-6 // even after its ends are rounded to six places.
 
 enum { K_EDGE, K_INNER, K_HOLE, K_BEND, K_SEAM, K_CENTRE };
 static const char kind_code[] = "eiobsc";
@@ -155,10 +157,17 @@ struct seg3 {
 	struct vec a, b;
 };
 
+// Whether a curve or a piece of length l is too short to write: one a
+// little longer than SLIVER may come out shorter once rounded.
+static int sliver(double l)
+{
+	return l < SLIVER + PRINTED;
+}
+
 // Adds curve c, with its box, unless it is shorter than SLIVER.
 static void add_curve(struct scene *sc, struct curve c)
 {
-	if ((c.arc ? c.r * c.da : dist2(c.a, c.b)) < SLIVER) {
+	if (sliver(c.arc ? c.r * c.da : dist2(c.a, c.b))) {
 		return;
 	}
 	c.box = box_empty();
@@ -914,8 +923,8 @@ static void make_pieces(struct scene *sc)
 		double l = length(&sc->c[c]);
 
 		for (; k < sc->ns && sc->s[k].c == c; k++) {
-			if ((sc->s[k].t - t.lo) * l < SLIVER ||
-			    (1 - sc->s[k].t) * l < SLIVER) {
+			if (sliver((sc->s[k].t - t.lo) * l) ||
+			    sliver((1 - sc->s[k].t) * l)) {
 				continue;
 			}
 			t.hi = sc->s[k].t;

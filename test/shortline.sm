@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# shortline.sm -- A part whose bottom view has visible lines of .2 mm
+# Copyright (c) 2026 Jakob Kastelic
+
+# From the fuzzer (0023): the hidden-line check against OCCT took a line
+# shorter than two steps for its two ends only, and a point of OCCT
+# near its middle seemed to have no point of smview by it.
+sheet 0.5 0.1964 0.4966
+plate base -33.6771 0 142.8122 167.9288 origin -63.0311 0 0 axes -z +y
+flange f0 base -x -90 54.4138 span (0.9573+22.6859) 154.1251
+flange f2 base -y 114.7957 64.0672
+flange f4 f0 +y 90 22.6182 span -83.2656 -60.5004
+round f2 8.542

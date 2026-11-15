@@ -10,13 +10,15 @@
 //
 // Every file:
 //   ASCII only, no carriage return, no trailing blank, a final newline.
-// Files with comments (C, scripts, part and assembly files, params), but
-// the Makefile and the dot files:
+// Files with comments (C, scripts, part and assembly files, params,
+// manual pages), but the Makefile and the dot files:
 //   The header: three comment lines and one blank line,
 //     M SPDX-License-Identifier: GPL-3.0-only
 //     "M NAME -- DESCRIPTION"
 //     M Copyright (c) 2026 Jakob Kastelic
-//   where M is // in C and # elsewhere; after a #! line, on lines 2 to 4.
+//   where M is // in C, .\" in a manual page (.1, .5), and # elsewhere;
+//   after a #! line, on lines 2 to 4.  A manual page has no blank line
+//   after its header, which would print as one.
 // Files without a one-line comment syntax get no header: Markdown (a #
 // starts a heading there) and data files (.expected, .fold, .step,
 // .json).  Nor do the Makefile and the dot files, by the rule of the
@@ -43,18 +45,22 @@
 
 // The opening of a block comment and the start of a typedef of a
 // struct, spelled out so this file has neither.
+#define ROFF_MARK ".\\\"" // The comment mark of a manual page.
 static const char block_start[] = { '/', '*', 0 };
 static const char typedef_struct[] = { 't', 'y', 'p', 'e', 'd', 'e', 'f', ' ',
 				       's', 't', 'r', 'u', 'c', 't', 0 };
 
 // The kinds of file: C, text with # comments and the header, Markdown,
-// data, and the Makefile and the dot files, # comments without a header.
-enum kind { K_C, K_HASH, K_MD, K_DATA, K_BARE };
+// data, the Makefile and the dot files (# comments without a header),
+// and manual pages (.1 and .5, .\" comments and the header, but no
+// blank line after it, which would print as one).
+enum kind { K_C, K_HASH, K_MD, K_DATA, K_BARE, K_ROFF };
 
 enum {
 	COLUMNS = 80, // The widest line of a text file.
 	TAB = 8, // Columns from one tab stop to the next.
 	HEAD_LINES = 5, // The header: SPDX, name, copyright, blank, text.
+	ROFF_HEAD = 3, // The header of a manual page: SPDX, name, copyright.
 	LINE_LEN = 512, // Room for one line of the header.
 	CODE_LEN = 4096, // Room for one line of C without its strings.
 	ASCII_MAX = 0x7f // The highest ASCII byte.
@@ -99,6 +105,9 @@ static enum kind kind_of(const char *name)
 	if (ends_with(name, ".md")) {
 		return K_MD;
 	}
+	if (ends_with(name, ".1") || ends_with(name, ".5")) {
+		return K_ROFF;
+	}
 	for (size_t i = 0; i < sizeof(data) / sizeof(*data); i++) {
 		if (ends_with(name, data[i])) {
 			return K_DATA;
@@ -131,6 +140,10 @@ static void check_comment_line(struct file *f, unsigned no, const char *l)
 	const char *mark = f->kind == K_C ? "//" : "#";
 	struct header_line h = { l, want, NULL };
 
+	if (f->kind == K_ROFF) {
+		mark = ROFF_MARK;
+	}
+
 	if (no == 1) {
 		xsnprintf(want, "%s SPDX-License-Identifier: GPL-3.0-only",
 			  mark);
@@ -150,6 +163,8 @@ static void check_header(struct file *f, unsigned no, const char *l)
 {
 	if (no >= 1 && no <= 3) {
 		check_comment_line(f, no, l);
+	} else if (f->kind == K_ROFF) {
+		return;
 	} else if (no == 4 && *l) {
 		bad(f, no, "a blank line must follow the header");
 	} else if (no == HEAD_LINES && !*l) {
@@ -400,7 +415,7 @@ static void check_line(struct file *f, unsigned no, const char *l)
 	const char *c = NULL;
 
 	check_bytes(f, no, l);
-	if (f->kind == K_C || f->kind == K_HASH) {
+	if (f->kind == K_C || f->kind == K_HASH || f->kind == K_ROFF) {
 		if (no > f->shift) {
 			check_header(f, no - f->shift, l);
 		}
@@ -415,6 +430,9 @@ static void check_line(struct file *f, unsigned no, const char *l)
 		c = c_comment(l);
 	} else if (f->kind == K_HASH || f->kind == K_BARE) {
 		c = hash_comment(l);
+	} else if (f->kind == K_ROFF &&
+		   strncmp(l, ROFF_MARK, strlen(ROFF_MARK)) == 0) {
+		c = l + strlen(ROFF_MARK);
 	} else if (f->kind == K_MD) {
 		if (strncmp(l, "```", 3) == 0) {
 			f->fence = !f->fence;
@@ -455,6 +473,9 @@ static int check(const char *path)
 		check_line(&f, ++no, l);
 	}
 	if ((f.kind == K_C || f.kind == K_HASH) && no < HEAD_LINES + f.shift) {
+		bad(&f, no, "the file is shorter than the header");
+	}
+	if (f.kind == K_ROFF && no < ROFF_HEAD) {
 		bad(&f, no, "the file is shorter than the header");
 	}
 	free(text);

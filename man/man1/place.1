@@ -1,0 +1,48 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" place.1 -- Manual page of place
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PLACE 1
+.SH NAME
+place \- put parts together into an assembly
+.SH SYNOPSIS
+.B place
+.I assembly.txt
+.SH DESCRIPTION
+.I Place
+reads an assembly file and writes the parts it names, renamed and
+placed, as one fold file on the standard output.
+Each line places one part:
+.PP
+.RS
+.I name file.fold
+[
+.B rot
+.I axis deg
+] ... [
+.B at
+.I x y z
+] [
+.B colour
+.I colour
+]
+.RE
+.PP
+Rotations are about the world axes through the origin, in order;
+then the part is moved by
+.RI ( x ,
+.IR y ,
+.IR z ).
+Numbers are expressions as in
+.IR sm (5).
+A line
+.B include
+.I file
+reads parameters, and
+.B colours
+.I file
+reads a table of colours, one per line
+.RI ( "name r g b roughness" ,
+each from 0 to 1), to which a part's colour refers by name.
+File names are relative to the assembly file; # starts a comment.
+.SH SEE ALSO
+interfere(1), fold(5), sm(5)

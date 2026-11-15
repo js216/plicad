@@ -1,0 +1,111 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" part.5 -- Manual page of the solid part source and stream
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PART 5
+.SH NAME
+part \- solid part source and stream
+.SH DESCRIPTION
+A part source has one statement per line for the programs of a pipe,
+.IR extrude (1),
+.IR bool (1)
+and
+.IR fillet (1);
+# begins a comment, and
+.I "name = expr"
+defines a name as in
+.IR sm (5).
+.I U
+and
+.I v
+are the two axes other than
+.IR a ,
+in alphabetical order.
+.TP
+.BI profile " name " along " a u v r"
+.RI [ "u v r" " ...]"
+.br
+.BI corner " u v r"
+.RI [ "u v r" " ...]"
+.br
+A closed outline in the plane across the world axis
+.IR a ,
+its corners in order, each rounded by an arc of radius
+.I r
+(sharp for 0); corner lines continue it.
+.TP
+.BI circle " name " along " a u v d"
+A circle of diameter
+.IR d .
+.TP
+.BI extrude " name " from " w0 " to " w1 p"
+.RB [ draft
+.IR deg ]
+.RB [ pattern
+.I ax n p
+.RI [ "ax n p" ]]
+.br
+The solid of profile
+.I p
+from
+.I w0
+to
+.I w1
+along its axis.
+With a draft (0 to 89 degrees) each side leans inward;
+with a pattern,
+.I n
+copies are made,
+.I p
+apart along the signed axis, as one solid.
+Faces are named
+.IB name .start ,
+.IB name .end
+and
+.IB name . p . k
+for side
+.I k
+of the profile.
+.TP
+.BI union " name a b"
+.RI [ c " ...]"
+.br
+.BI cut " name a b"
+.RI [ c " ...]"
+.br
+.BI common " name a b"
+.br
+Replace the named solids by the solid
+.I name
+(their union,
+.I a
+less the others, or their common part).
+.TP
+.BI round " r " convex
+.br
+.BI round " r pattern pattern"
+.br
+.BI sharp " pattern pattern"
+.br
+Give a radius to the outward edges, or to the edges between two faces
+whose names match the patterns (* for any run of characters).
+Of the rules matching an edge, the last applies; sharp is radius 0.
+.PP
+Each program writes a stream for the next:
+.PP
+.RS
+.nf
+PliCad 1
+source PATH
+brep NAME ... end
+@N TEXT
+.fi
+.RE
+.PP
+The stream holds the solids so far, and each source line not yet used,
+with its line number
+.IR n .
+.I "Name = expr"
+lines are kept for every program.
+Lines still unused at the end of the pipe are refused.
+.SH SEE ALSO
+extrude(1), bool(1), fillet(1), mould(1), tostep(1), measure(1)

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# smallhole.sm -- A hole so small that the lines of its wall crowd its rim
+# Copyright (c) 2026 Jakob Kastelic
+
+# Meshed at a chord of 0.2007 mm and 4.4786 degrees, the lines of the
+# wall of the hole stand nearer than the merge of the points of its rim,
+# and once lost a crossing: the mesh was open (fuzzer finding 0032).
+T = 3
+R = 7.331
+sheet T R 0.2808
+plate base -46.2591 -46.2688 111.5939 79.4344 origin -60.8795 0 0 axes +y -x
+hole 0.351 -76.3323 20.3375 along z at -1.5 depth 5.9432

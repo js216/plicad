@@ -40,10 +40,12 @@
 // place from the top left, and all move together toward the middle of
 // the room above what stands at its foot.  The views stand .4 in apart,
 // and .25 in off the notes and what the template keeps or takes.  Each
-// page says in a comment what share of the free room its views cover.  Lines that start with
-// a blank belong to the view above them: they are records for smdim,
-// and are not read here.  A note with a box needs a flag record under a
-// view, which shows where it applies.
+// page says in a comment what share of the free room its views cover.
+// Lines that start with a blank belong to the view above them: they are
+// records for smdim, and are not read here.  A note with a box needs a
+// flag record under a view, which shows where it applies.  The drawing
+// file is ASCII, with tabs; a line that starts with # is a comment, and
+// a carriage return may stand before each newline.
 //
 // A template is PostScript that draws the border, the title block and
 // the revision table of one paper, in inches from its lower left

@@ -1,0 +1,34 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" scene.5 -- Manual page of the scene file
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SCENE 5
+.SH NAME
+scene \- meshes and pictures to show
+.SH DESCRIPTION
+A scene file for
+.IR view (1)
+has one item per line; # begins a comment, and file names are relative
+to the scene file.
+.PP
+.RS
+.nf
+mesh NAME FILE.obj [colour R G B] [move X Y Z] [turn X Y Z DEG]...
+image NAME FILE.ppm X0 Y0 Z0 X1 Y1 Z1 X2 Y2 Z2
+view iso|front|back|left|right|top|bottom
+background R G B
+.fi
+.RE
+.PP
+The parts of an OBJ file with several objects are named
+.IB name / part .
+A colour (values 0 to 1) replaces that of the file.
+Moves, and turns about the axis X Y Z through the origin, are applied
+in order.
+A picture (PPM P6, or PAM P7 of RGB or RGB_ALPHA) fills the
+parallelogram of its corners X0 (lower left), X1 (lower right) and X2
+(upper left).
+Pictures are blended over the meshes by their opacity, farthest first;
+transparent pixels cannot be picked.
+The background is grey unless given.
+.SH SEE ALSO
+view(1), tomesh(1)

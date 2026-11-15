@@ -1,0 +1,7 @@
+part smallhole
+volume 59527.5914
+area 41389.7062
+bbox -140.3139 -46.2591 -3.0000 -14.6107 111.5939 0.0000
+faces 7 plane 6 cylinder 1
+hole -76.3323 20.3375 -1.5000 d 0.3510 axis 0 0 1
+flat 157.8530 125.7032 area 19842.530 holes 1 bends 0

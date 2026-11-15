@@ -1,0 +1,53 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" tomesh.1 -- Manual page of tomesh
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH TOMESH 1
+.SH NAME
+tomesh \- write the triangles of parts as an OBJ mesh
+.SH SYNOPSIS
+.B tomesh
+[
+.B \-c
+.I chord
+] [
+.B \-a
+.I deg
+] [
+.B \-n
+]
+.IR part.fold | stream | \-
+.SH DESCRIPTION
+.I Tomesh
+writes each part of a fold file, or each solid of a stream,
+as an object of a Wavefront OBJ file on the standard output:
+.PP
+.RS
+.nf
+o NAME
+# colour R G B
+v X Y Z
+vn X Y Z
+f A B C
+.fi
+.RE
+.PP
+The colour is that of a placed part, from 0 to 1.
+Vertices are in world mm, numbered from 1 through the file;
+triangles are counterclockwise seen from outside.
+Each mesh is closed (faces share the points of their edges).
+.TP
+.BI \-c " chord"
+Keep every triangle within
+.I chord
+mm of its face (default 0.02).
+.TP
+.BI \-a " deg"
+Let no triangle turn more than
+.I deg
+degrees (default 10).
+.TP
+.B \-n
+Write vertex normals, with faces as
+.IB a // n .
+.SH SEE ALSO
+fold(5), part(5), view(1)

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# endon.sm -- A part with a cut edge seen nearly end on from the top
+# Copyright (c) 2026 Jakob Kastelic
+
+# From the fuzzer (0031): the edge of 8 mm of the three-cornered cut
+# runs along the view but for 1 micrometre, and smview wrote that
+# micrometre as a line, which rounding made shorter than SLIVER.
+sheet 2.286 2.0317 0.4242
+plate base -6.1703 48.0297 22.4849 125.7529 origin 5.6714 0 78.4825 axes +y +z
+flange f0 base -y -90 17.6735 span 1.4803 18.3995
+flange f2 base +x 60.2026 24.4008 span 46.651 135.4512
+cut 12.3582 129.3614 2.804 136.7858 along x at 4.5284 depth 4.2076
+outline along x at 4.5284 depth 4.1063
+point 7.8429 178.8323
+point 7.3138 182.2485
+point 7.3128 174.2948
+outline along z at 123.3375 depth 2.9617
+point -12.2258 7.2245
+point -7.6194 7.2245 arc -9.9226 7.2245 cw

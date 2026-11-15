@@ -45,6 +45,8 @@ the [classic rules](https://doi.org/10.1002/j.1538-7305.1978.tb02135.x):
 | smview    | Projects a part into the lines of one drawing view             |
 | smdim     | Adds dimensions and callouts to a view                         |
 | smsheet   | Lays views on sheets as PostScript, with title block           |
+| tomesh    | Writes the triangles of parts as an OBJ mesh                   |
+| view      | Shows meshes and pictures in a window; a click names the part  |
 
 ### Usage
 

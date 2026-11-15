@@ -176,8 +176,7 @@ void stream_free(struct stream *st)
 	memset(st, 0, sizeof(*st));
 }
 
-// Evaluates a line NAME = EXPR, or include FILE; returns 0 if it is
-// neither.
+// Evaluates a line NAME = EXPR; returns 0 if it is none.
 static int define_line(struct stream *st, const char *text)
 {
 	const char *eq = strchr(text, '=');
