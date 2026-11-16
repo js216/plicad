@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# twotex.draw -- The drawing of twotex.part: one mark a texture a view
+# Copyright (c) 2026 Jakob Kastelic
+
+units mm
+template plain_c.ps
+scale 1
+field Title TEXTURED BLOCK
+material ABS.
+finish SEE TEXTURES.
+view top
+view front

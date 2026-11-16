@@ -1,0 +1,42 @@
+p1/[knob]/cap
+[p1]/knob/cap
+[p2]/plate
+[p2]/plate
+p1/plate 1224 shown solid at 50.000 25.000 -21.000
+p1/knob/base 1224 hidden solid at 50.000 25.000 -1.000
+p1/knob/cap 1224 hidden solid at 50.000 25.000 9.000
+p2/plate 1224 shown solid at 50.000 25.000 8.000
+p2/knob/base 1224 shown solid at 50.000 25.000 28.000
+p2/knob/cap 1224 shown solid at 50.000 25.000 38.000
+p1/plate 1224 shown solid at 50.000 25.000 -21.000
+p1/knob/base 1224 shown solid at 50.000 25.000 -1.000
+p1/knob/cap 1224 shown solid at 50.000 25.000 9.000
+p2/plate 1224 hidden solid at 50.000 25.000 8.000
+p2/knob/base 1224 hidden solid at 50.000 25.000 28.000
+p2/knob/cap 1224 hidden solid at 50.000 25.000 38.000
+p1/plate 1224 shown solid at 50.000 25.000 -21.000
+p1/knob/base 1224 shown solid at 50.000 25.000 -1.000
+p1/knob/cap 1224 shown solid at 50.000 25.000 9.000
+p2/plate 1224 shown solid at 50.000 25.000 8.000
+p2/knob/base 1224 shown solid at 50.000 25.000 28.000
+p2/knob/cap 1224 shown solid at 50.000 25.000 38.000
+p1/plate 1224 shown solid at 50.000 25.000 -21.000
+p1/knob/base 1224 shown solid at 50.000 25.000 -1.000
+p1/knob/cap 1224 shown solid at 50.000 25.000 9.000
+p2/plate 1224 shown see at 50.000 25.000 8.000
+p2/knob/base 1224 shown see at 50.000 25.000 28.000
+p2/knob/cap 1224 shown see at 50.000 25.000 38.000
+p1/plate 1224 shown solid at 50.000 25.000 -21.000
+p1/knob/base 1224 shown solid at 50.000 25.000 -1.000
+p1/knob/cap 1224 shown solid at 50.000 25.000 9.000
+p2/plate 1224 shown solid at 50.000 25.000 58.000
+p2/knob/base 1224 shown solid at 50.000 25.000 78.000
+p2/knob/cap 1224 shown solid at 50.000 25.000 88.000
+p2/plate
+p1/plate 1224 shown solid at 50.000 25.000 -21.000
+p1/knob/base 1224 hidden solid at 50.000 25.000 -1.000
+p1/knob/cap 1224 hidden solid at 50.000 25.000 9.000
+p2/plate 1224 shown solid at 50.000 25.000 8.000
+p2/knob/base 1224 shown solid at 50.000 25.000 28.000
+p2/knob/cap 1224 shown solid at 50.000 25.000 38.000
+view: bad command level

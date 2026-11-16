@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# draftwave.part -- Rounds along ellipses, where drafted faces meet a wave
+# Copyright (c) 2026 Jakob Kastelic
+
+# A box 60 by 60 across y, its corners round, of 12 at the back, whose
+# faces lean in by a draft of 3 degrees toward its front, so that at the
+# front the corners keep a radius of 10.4, room for the round below;
+# with a wave across the front: an extrusion along x of an outline in y
+# and z whose front runs at y = 0,
+# and between z = 15 and 45 steps out to y = -12 in an S of two arcs
+# each way, of 2 where it turns in and of 8 where it turns out.  The
+# box is what both have in common.  The edge where the faces of the
+# box meet the wave turns outward all round, and one round of 5.08
+# follows it: along the lines of the planes, round the tori of the
+# corners, and where the drafted sides meet the cylinders of the arcs
+# at a slant, along ellipses, as pipes, of 7.08 and of 2.92 about their
+# axes.
+profile blk along y 0 0 12 60 0 12 60 60 12 0 60 12
+extrude box from 30 to -14 blk draft 3
+profile wv along x 40 -1 0 40 61 0 0 61 0 0 45 2 -12 45 8 -12 15 8 \
+    0 15 2 0 -1 0
+extrude wave from -1 to 61 wv
+common part box wave
+round 5.08 box.side wave

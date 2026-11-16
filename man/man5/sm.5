@@ -7,38 +7,33 @@ sm \- sheet metal part source
 .SH DESCRIPTION
 A part source for
 .IR smfold (1)
-has one statement per line; # begins a comment.
-An argument is an expression without spaces, or one in parentheses:
-numbers, names, + \- * /, the functions
-floor tan sin cos sqrt max hypot atan2 (angles in degrees),
-and the units in, mm and deg.
-Lengths are in mm.
+is written in the language of
+.IR plicad (7),
+which gives its comments, definitions, includes and numbers.
 Flat coordinates are x and y; the sheet occupies z in [\-t, 0], and its
-top face, z = 0, is the reference face.
+near face, z = 0, is the reference face.
 Statements are applied in order.
-.TP
-.BI include " file"
-Read
-.I "name = expr"
-lines from
-.IR file ,
-relative to this file.
-.TP
-.I "name = expr"
-A local definition.
+Each statement that makes a feature gives it a NAME, new in the part:
+the plate, a flange, a cut, a hole, an outline or a trim.
+Each edge and hole of the blank carries the name of the feature that
+made it, as the drawings select by it
+.RI ( draw (5)).
 .TP
 .BI sheet " t r k"
 Thickness, inside bend radius, k-factor.
 .TP
-.BI plate " name x0 y0 x1 y1 " origin " ox oy oz " axes " u v"
+.BI plate " name x0 y0 x1 y1 " at " ox oy oz " axes " u v"
 The root slab.
 Flat x and y run along the 3D axes
 .I u
 and
 .I v
-(+x, \-z, ...); the top face faces
+(+x, \-z, ...); the near face faces
 .IR u " \(mu " v ,
-and flat (0, 0) is at the origin.
+and flat (0, 0) is at
+.RI ( ox ,
+.IR oy ,
+.IR oz ).
 .TP
 .BI flange " name parent dir angle leg"
 .RB [ at
@@ -54,17 +49,17 @@ in flat direction
 .I dir
 (+x \-x +y \-y), or on the line where that coordinate is
 .IR c .
-A positive angle, in degrees, folds toward the top face.
+A positive angle, in degrees, folds toward the near face.
 .I Span
 is the extent along the edge (default that of the parent);
 .I zone
 that of the bend (default the overlap of span and parent).
 .TP
-.BI cut " u0 v0 u1 v1 " along " a"
-.RB [ at
-.I w
-.B depth
-.IR l ]
+.BI cut " name u0 v0 u1 v1 " along " a"
+.RB [ from
+.I w0
+.B to
+.IR w1 ]
 .br
 A rectangle cut through every slab so far that lies across the 3D axis
 .I a
@@ -72,16 +67,18 @@ A rectangle cut through every slab so far that lies across the 3D axis
 and
 .I v
 are the other two axes, in alphabetical order),
-or only to depth
-.I l
-about
-.IR w .
+or only through those between
+.I w0
+and
+.I w1
+along
+.IR a .
 .TP
-.BI hole " d u v " along " a"
-.RB [ at
-.I w
-.B depth
-.IR l ]
+.BI hole " name d u v " along " a"
+.RB [ from
+.I w0
+.B to
+.IR w1 ]
 .RB [ csink
 .I dc angle
 .BR near | far ]
@@ -94,7 +91,9 @@ about
 .B within
 .IR r ]
 .br
-A hole, as for a cut.
+A hole of diameter
+.IR d ,
+as for a cut.
 A pattern repeats it
 .I n
 times,
@@ -104,13 +103,56 @@ apart along the signed axis
 a hex pattern fills the circle of radius
 .I r
 with a hexagonal grid.
-A countersink is made at the top face (near) or the other (far).
+A countersink of diameter
+.I dc
+and included angle
+.I angle
+opens the hole at the near face or the far one.
 .TP
-.BI outline " along a"
-.RB [ at
-.I w
-.B depth
+.BI insert " name type " near | far
+.RB [ length
 .IR l ]
+.RB [ as
+.IR body ]
+.I u v
+.B along
+.I a
+.RB [ from
+.I w0
+.B to
+.IR w1 ]
+.RB [ pattern
+.I ax n p
+.RI [ "ax n p" ]]
+.br
+Self-clinching hardware of the type, a row of the table inserts next
+to the source or else of the library
+.RI ( plicad-lib (7)),
+in its mounting hole, which the statement cuts as a hole statement
+cuts one, with the pattern as for a hole, and names
+.IR name .
+The hole goes through the sheet, or for a blind type into it from the
+face the insert stands on, as deep as the type says.
+Its body, a cylinder of the size of the type, or with
+.B length
+of that height, stands on the near face or the far one over the hole;
+the body of a flush or a blind type fills the hole too.
+A sheet thinner than the type allows is refused, and so is a hole whose
+center lies nearer an edge or a bend line of the blank than the type
+allows.
+The inserts are named
+.IR body ,
+or else
+.IR name ,
+and those of a pattern NAME, NAME-2 and on; their bodies are the parts
+PART/NAME of the stream, while the drawings name the hole
+.IR name .
+.TP
+.BI outline " name " along " a"
+.RB [ from
+.I w0
+.B to
+.IR w1 ]
 .br
 .BI point " u v"
 .RB [ arc
@@ -122,16 +164,16 @@ each joined to the next by a line or an arc about
 .RI ( cu ,
 .IR cv ).
 .TP
-.BI trim " along a"
-.RB [ at
-.I w
-.B depth
-.IR l ]
+.BI trim " name " along " a"
+.RB [ from
+.I w0
+.B to
+.IR w1 ]
 .br
 An open curve of points from the outline of a slab face to another
 point of it; the smaller piece is cut off.
 .TP
-.BI round " name r"
+.BI round " r name"
 .RB [ at
 .IR "x y z" ]
 .br
@@ -140,5 +182,77 @@ Round the two free corners of flange
 or the corner of slab
 .I name
 at the point (a round if convex, a fillet if concave).
+The arcs carry the name of the slab.
+.TP
+.BI coat " material"
+.BR near | far
+.RB [ edges ]
+.I region
+.br
+A material on one side of the sheet, put on the flat blank before it
+is formed: the near face or the far one, and with
+.B edges
+also the cut edges and the holes of the blank in the region.
+.I Material
+names a material of the assembly
+.RI ( assembly (5));
+where no coat lies the part keeps the material of its assembly line.
+The region is one of
+.RS
+.TP
+.B all
+the whole blank;
+.TP
+.BI flat " x0 y0 x1 y1"
+.RI [ "x2 y2" ] ...
+.br
+a rectangle of two corners, or a polygon of three or more, in the flat
+coordinates of the blank, as the plate takes them; such a region may
+reach across bends;
+.TP
+.IB "u0 v0 u1 v1 " along " a"
+.RB [ from
+.I w0
+.B to
+.IR w1 ]
+.br
+a rectangle across the 3D axis
+.IR a ,
+as for a cut, on every slab square to
+.I a
+that it meets, each up to the edges of that slab: so a band on a wall
+also marks a flange beside the wall that the rectangle reaches, unless
+.B from
+and
+.B to
+hold it to the wall alone.
+.RE
+.IP
+Coats come in order, a later one over an earlier one where they
+overlap.
+A coat has no thickness: it changes neither the solid nor its mass.
+A coat of a finish with a texture
+.RI ( plicad (7))
+shows on a drawing as a region with its border and its mark, and its
+callout goes into the notes
+.RI ( draw (5)).
+.TP
+.BI material " ..."
+.br
+.BI materials " file"
+Materials for the coats, as
+.IR plicad (7)
+says, which go into the stream of the part, for its drawing.
+.SH EXAMPLE
+.RS
+.nf
+sheet 2 2 0.44
+plate base 0 0 100 50 at 0 0 0 axes +x +y
+flange wall base +y 90 30
+round 5 wall
+hole center 6 50 25 along z
+hole pins 4 20 20 along y pattern x 3 30
+.fi
+.RE
 .SH SEE ALSO
-smfold(1), fold(5)
+plicad(7), smfold(1), assembly(5), stream(5)

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# textured.part -- A drafted block, its sides textured to VDI 3400 REF 30
+# Copyright (c) 2026 Jakob Kastelic
+
+# The sides lean 5 degrees, more than the 3 that the texture needs.
+materials materials
+profile p along z 0 0 0 40 0 0 40 20 0 0 20 0
+extrude blk from 0 to 10 p draft 5
+finish vdi30 blk.side

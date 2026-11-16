@@ -69,6 +69,8 @@ void box_add(struct box *b, struct vec p);
 // Corner k of b, for k from 0 to 7: bit 0 picks hi.x, bit 1 hi.y and
 // bit 2 hi.z.
 struct vec box_corner(struct box b, unsigned k);
+// The box of box b moved by m.
+struct box box_moved(struct box b, struct rigid m);
 void box_pad(struct box *b, double d);
 // Is p in b, edges included?
 int box_has(struct box b, struct vec p);

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# boot.part -- A moulded boot over either end of a chassis
+# boot.part -- A molded boot over either end of a chassis
 # Copyright (c) 2026 Jakob Kastelic
 
 # The frame: x across, z up, y back, the front face of the panel at
@@ -14,10 +14,10 @@
 # counterbored for the heads, go through the side walls and through the
 # top and bottom bands.
 #
-# The boot is made for a mould that opens along y and parts at PART_Y,
+# The boot is made for a mold that opens along y and parts at PART_Y,
 # PART_GAP behind the counterbores of the screws, so that every hole
 # lies on faces without a draft.  The holes lie across the way the
-# mould opens: side pins make them, or a drill.  Ahead of that plane
+# mold opens: side pins make them, or a drill.  Ahead of that plane
 # the outside has no draft.  Behind it the outside leans in by
 # BOOT_DRAFT_OUT, for a light texture, and the cavity opens by
 # BOOT_DRAFT_FIT, so that the outside shows a crease all round on the
@@ -85,8 +85,8 @@ PART_Y = SCREW_Y + HEAD / 2 + PART_GAP
 # square edges of the front plate; the top ones clear the outer bends of
 # the top cover.
 profile back along y XB Z0 0 X1 Z0 BOOT_R X1 Z1 BOOT_R X0 Z1 BOOT_R
-corner X0 Z0 BOOT_R XA Z0 0
-corner XA 0 RV 0 0 0 0 H SOFT_R W H SOFT_R W 0 0 XB 0 RV
+corner X0 Z0 BOOT_R XA Z0 0 side s5
+corner XA 0 RV 0 0 0 0 H SOFT_R W H SOFT_R W 0 0 XB 0 RV side s11
 profile lip along y XB Z0 0 X1 Z0 BOOT_R X1 Z1 BOOT_R X0 Z1 BOOT_R
 corner X0 Z0 BOOT_R XA Z0 0
 corner XA LIP OPEN_R LIP LIP OPEN_R LIP H-LIP OPEN_R W-LIP H-LIP OPEN_R
@@ -98,7 +98,7 @@ corner XA LZ0 0 LX0 LZ0 RL LX0 LZ1 RL LX1 LZ1 RL LX1 LZ0 RL XB LZ0 0
 extrude sleeve from 0 to PART_Y back
 
 # Behind the parting plane the outside leans in by BOOT_DRAFT_OUT, for a
-# textured mould face, and the cavity opens by BOOT_DRAFT_FIT, so that
+# textured mold face, and the cavity opens by BOOT_DRAFT_FIT, so that
 # the fit on the chassis stays close.  The chain from the outer bottom
 # round the corners of the gap to the top of each band is smooth, so it
 # takes one draft, that of the outside: rb has the outline of the
@@ -122,7 +122,7 @@ profile cavd along y -EF -EF 0 XG+EF -EF 0 XG+EF ZC-EF 0 W-XG-EF ZC-EF 0
 corner W-XG-EF -EF 0 W+EF -EF 0 W+EF H+EF SOFT_R+EF -EF H+EF SOFT_R+EF
 extrude rb from PART_Y to YR outd draft BOOT_DRAFT_OUT
 extrude cav1 from YT to PART_Y cavd draft BOOT_DRAFT_FIT
-cut rear rb cav1
+subtract rear rb cav1
 extrude recess from -LEXAN_T to 0 lipx
 
 # The waves.  Seen from the side, pv, the front runs at the height of
@@ -152,10 +152,10 @@ union bumped sleeve rear recess front
 # counterbore for the head.
 ZS0 = H/2-SCREW_DZ
 ZS1 = H/2+SCREW_DZ
-circle side0 along x SCREW_Y ZS0 SLEEVE
-circle side1 along x SCREW_Y ZS1 SLEEVE
-circle head0 along x SCREW_Y ZS0 HEAD
-circle head1 along x SCREW_Y ZS1 HEAD
+circle side0 SLEEVE SCREW_Y ZS0 along x
+circle side1 SLEEVE SCREW_Y ZS1 along x
+circle head0 HEAD SCREW_Y ZS0 along x
+circle head1 HEAD SCREW_Y ZS1 along x
 extrude hl0 from X0 to 0 side0
 extrude hl1 from X0 to 0 side1
 extrude hr0 from W to X1 side0
@@ -164,14 +164,14 @@ extrude cl0 from X0 to X0+HEAD_D head0
 extrude cl1 from X0 to X0+HEAD_D head1
 extrude cr0 from X1-HEAD_D to X1 head0
 extrude cr1 from X1-HEAD_D to X1 head1
-circle top0 along z BAND_X SCREW_Y SLEEVE
-circle top1 along z W-BAND_X SCREW_Y SLEEVE
-circle tophead0 along z BAND_X SCREW_Y HEAD
-circle tophead1 along z W-BAND_X SCREW_Y HEAD
-circle bot0 along z BAND_XB SCREW_Y SLEEVE
-circle bot1 along z W-BAND_XB SCREW_Y SLEEVE
-circle bothead0 along z BAND_XB SCREW_Y HEAD
-circle bothead1 along z W-BAND_XB SCREW_Y HEAD
+circle top0 SLEEVE BAND_X SCREW_Y along z
+circle top1 SLEEVE W-BAND_X SCREW_Y along z
+circle tophead0 HEAD BAND_X SCREW_Y along z
+circle tophead1 HEAD W-BAND_X SCREW_Y along z
+circle bot0 SLEEVE BAND_XB SCREW_Y along z
+circle bot1 SLEEVE W-BAND_XB SCREW_Y along z
+circle bothead0 HEAD BAND_XB SCREW_Y along z
+circle bothead1 HEAD W-BAND_XB SCREW_Y along z
 extrude ht0 from H to Z1 top0
 extrude ht1 from H to Z1 top1
 extrude ct0 from Z1-HEAD_D to Z1 tophead0
@@ -180,7 +180,8 @@ extrude hb0 from Z0 to 0 bot0
 extrude hb1 from Z0 to 0 bot1
 extrude cb0 from Z0 to Z0+HEAD_D bothead0
 extrude cb1 from Z0 to Z0+HEAD_D bothead1
-cut holed bumped hl0 hl1 hr0 hr1 cl0 cl1 cr0 cr1 ht0 ht1 ct0 ct1 hb0 hb1 cb0 cb1
+subtract holed bumped hl0 hl1 hr0 hr1 cl0 cl1 cr0 cr1 ht0 ht1 ct0 ct1 \
+	hb0 hb1 cb0 cb1
 
 # The cores.  Each is an extrusion from YS, just behind the parting
 # plane, toward the front, which shrinks by BOOT_DRAFT_CORE on the way,
@@ -317,7 +318,7 @@ extrude gbr from YS to 0 pgr draft BOOT_DRAFT_CORE pattern x 3 PB
 # which take RIM_R, end on the step at YS and cross no crease.  Ahead of
 # YS those edges stay sharp.  The outlines hold at YT: those of the
 # cores at YS moved out by DM, each side along its normal, with the
-# step.  So a corner of two chords lies RQM from the centre of the
+# step.  So a corner of two chords lies RQM from the center of the
 # outer round along their middle, and a chord meets a straight side
 # DM T11 from where it met it before.
 DM = E0-E1
@@ -377,7 +378,7 @@ extrude mgt from YT to YS pgtm draft BOOT_DRAFT_CORE pattern x 9 PT
 extrude mgbl from YT to YS pgbm draft BOOT_DRAFT_CORE pattern x 3 PB
 extrude mgbr from YT to YS pgrm draft BOOT_DRAFT_CORE pattern x 3 PB
 union mouths mbl mtl mbr mtr msl msr mgt mgbl mgbr
-cut boot holed core gt gbl gbr mouths
+subtract boot holed core gt gbl gbr mouths
 
 # The rounds.  Every edge that turns outward takes SOFT_R, but: the
 # outer edge of the front, where the waves meet the outer faces, EDGE_R,
@@ -403,30 +404,46 @@ RECESS_R = 0.3
 EDGE_R = 5.08
 RIM_R = 0.3
 FLOOR_R = 1.2
+faces mall mbl mtl mbr mtr msl msr mgt mgbl mgbr
+faces mends mbl.end mtl.end mbr.end mtr.end msl.end msr.end mgt.end \
+	mgbl.end mgbr.end
+faces kall kbl ktl kbr ktr ksl ksr
+faces gall gt gbl gbr
+faces clends cl0.end cl1.end
+faces hlall hl0 hl1
+faces crstarts cr0.start cr1.start
+faces hrall hr0 hr1
+faces ctstarts ct0.start ct1.start
+faces htall ht0 ht1
+faces cbends cb0.end cb1.end
+faces hball hb0 hb1
 round SOFT_R convex
-round EDGE_R sleeve.back.* wv.*
-round EDGE_R sleeve.back.* wh.*
-round SOFT_R sleeve.back.9 wh.*
-round SOFT_R sleeve.back.19 wh.*
-round RECESS_R tall.end *
-round RIM_R rb.end *
-round RIM_R m* cav1.*
-round RIM_R m* rb.*
-sharp m*.end *
-sharp k* cav1.*
-sharp g* cav1.*
-sharp g* rb.outd.*
-sharp k* sleeve.back.*
-sharp g* sleeve.back.*
-sharp sleeve.back.* rb.*
-sharp sleeve.back.* cav1.*
-sharp sleeve.end *
-sharp tall.end recess.lipx.*
-sharp recess.end *
-sharp sleeve.back.9 recess.lipx.*
-sharp sleeve.back.19 recess.lipx.*
-sharp cl*.end hl*
-sharp cr*.start hr*
-sharp ct*.start ht*
-sharp cb*.end hb*
-round FLOOR_R recess.end g*
+round EDGE_R sleeve.side wv
+round EDGE_R sleeve.side wh
+round SOFT_R sleeve.s5 wh
+round SOFT_R sleeve.s11 wh
+round RECESS_R tall.end any
+round RIM_R rb.end any
+round RIM_R mall cav1
+round RIM_R mall rb
+sharp mends any
+sharp kall cav1
+sharp gall cav1
+sharp gall rb.side
+sharp kall sleeve.side
+sharp gall sleeve.side
+sharp sleeve.side rb
+sharp sleeve.side cav1
+sharp sleeve.end any
+sharp tall.end recess.side
+sharp recess.end any
+sharp sleeve.s5 recess.side
+sharp sleeve.s11 recess.side
+sharp clends hlall
+sharp crstarts hrall
+sharp ctstarts htall
+sharp cbends hball
+round FLOOR_R recess.end gall
+
+# The faces that side pins make (mold): the screw holes and the cavity.
+faces pins cav1 hl0 hl1 hr0 hr1 cl0 cl1 cr0 cr1 ht0 ht1 ct0 ct1 hb0 hb1 cb0 cb1

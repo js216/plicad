@@ -7,9 +7,12 @@
 // index, A/T, A/T/N or A//N, counting from 1 through the file, or back
 // from the last one if negative.  A face of more corners than three
 // turns into a fan of triangles.  Each o NAME or g NAME starts a part,
-// and the comment # colour R G B (tomesh(1)) gives its colour.  Other
-// statements (vt, usemtl, mtllib, s, l and the like) and comments go
-// unread, so the files of other programs read as well.
+// and the comment # color R G B (tomesh(1)) gives its color.  A usemtl
+// line starts a group of the faces of the part, and a # color R G B
+// after it gives the color of the group, as tomesh writes the coats of a
+// part, and a # texture GRADE after it that the group is a texture of
+// that grade of VDI 3400 (tomesh(1)).  Other statements (vt, mtllib, s, l and the like) and comments
+// go unread, so the files of other programs read as well.
 
 #ifndef OBJ_H
 #define OBJ_H
@@ -29,7 +32,7 @@ struct fault {
 	char msg[FAULT_LEN];
 };
 
-// A part of an OBJ file: its name, its colour if it has one, and its
+// A part of an OBJ file: its name, its color if it has one, and its
 // triangles, nine coordinates each in pos and the normals at their
 // corners in nrm, the normal of the triangle where the file has none.
 struct obj_part {
@@ -38,6 +41,10 @@ struct obj_part {
 	float rgb[3];
 	float *pos, *nrm;
 	size_t nt, cap;
+	float *col; // The color of each triangle, or NULL for that of the
+		// part; a color below 0 is that of the part.
+	float *grade; // The grade of the texture of each triangle, below 0
+		// for none, or NULL for none at all.
 };
 
 struct obj_file {

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# size.budget -- The budgets of the sizes of the programs of PliCad
+# Copyright (c) 2026 Jakob Kastelic
+
+# lines N bytes M -- PROGRAM: the lines of the source of a program, and
+# the bytes of it as built, stripped, as the sizes group of test/run.sh
+# found them the first time; lib is the library of the programs, its
+# lines alone.  Either may grow by 2 percent: more fails it.
+margin lines 1.02 bytes 1.02

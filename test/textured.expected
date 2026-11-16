@@ -1,0 +1,6 @@
+part blk
+volume 7485.2737
+area 2667.5300
+center 20.0000 10.0000 4.8865
+bbox 0.0000 0.0000 0.0000 40.0000 20.0000 10.0000
+faces 6 plane 6 cylinder 0 cone 0 sphere 0 torus 0

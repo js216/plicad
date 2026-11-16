@@ -12,6 +12,6 @@ profile p along y 0 0 2 30 0 3 30 20 0 20 20 2 20 8 2 0 8 1
 extrude a from 0 to 10 p
 extrude b from 10 to 30 p draft 1
 union s a b
-circle c along x 10 14 6
+circle c 6 10 14 along x
 extrude h from 15 to 31 c
-cut u s h
+subtract u s h

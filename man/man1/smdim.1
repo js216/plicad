@@ -9,6 +9,9 @@ smdim \- dimension a drawing view
 [
 .B \-s
 .I scale
+] [
+.B \-u
+.IR unit [, unit ]
 ]
 .SH DESCRIPTION
 .I Smdim
@@ -17,14 +20,43 @@ reads a view from
 on the standard input and writes it in inches on the paper at
 .I scale
 (default 1), with the datum (the lower left corner of the view) at the
-origin, and with its dimensions and callouts.
-Fill, line and arc records are kept; the view record is given the
-scale; thick and radius records are passed through in mm.
+origin, and with its dimensions and callouts, whose sizes are in the
+units of
+.B \-u
+.RB ( in
+or
+.BR mm ,
+.B in
+by default), the second after each in brackets.
+Fill, line, arc and poly records are kept, without their features; a
+region
+.B fill cut
+I of a section, the faces of part I that the plane cuts, becomes
+.BI "fill hatch" " angle gap" :
+its section lines, thin, at the angle of the part, 45 degrees for part
+0, 135 for part 1, then 30, 120, 60 and 150 and round again, and
+.I gap
+inches apart (.08 unless a record
+.B hatching
+says); the view record is given the scale; thick and radius records
+are passed through in mm.
+A record may have any number of fields.
+The sides of each coat become lines of kind p (phantom), and a coat that
+is a rectangle along the axes gets a hatch, unless a record
+.B unhatched
+names its material, but a coat of a face of a solid, whose sides are its edges, gets neither; a coat of a material of a
+texture record gets its mark, a text in its middle, but the coats of
+faces of one texture one mark in the view, at the free place nearest
+the middle of the largest of them that has room, none if none has;
+each texture record goes on, as
+.BI texture " mark callout" ,
+for the notes of
+.IR smsheet (1).
 These records are added:
 .PP
 .RS
 .nf
-line c v X0 Y0 X1 Y1     centre mark
+line c v X0 Y0 X1 Y1     center mark
 thin X0 Y0 X1 Y1
 text X Y ANGLE ALIGN HEIGHT STRING...
 arrow X Y DX DY
@@ -34,7 +66,7 @@ hatch X0 Y0 X1 Y1
 clear X0 Y0 X1 Y1        background of a text on a hatch
 crowd D
 far N
-dim ord|hole|radius|lin|pitch|bend ...
+dim ord|hole|insert|radius|lin|pitch|bend ...
 .fi
 .RE
 .PP
@@ -53,11 +85,26 @@ is the greatest distance of an ordinate text from its place;
 is the number of long leaders.
 Dim records repeat the text of each dimension, for tests.
 .PP
-Dimensions are ordinates from the datum in inches, to three decimals,
-without the leading zero: to the far end, to each hole, to each edge of
-a cut-out and each centre line, and to other edges not close to these.
+Dimensions are ordinates from the datum, in inches to three decimals
+without the leading zero or in mm to two: to the far end, to each hole,
+to each edge of a cut-out, each side of a coat and each center line,
+and to other edges not close to these; a poly record has none.
 Equal holes share one callout with their count and pitch, and arcs of
-one radius share one.
+one radius share one, but arcs that make a whole circle none.
+A hole callout gives the diameter, as %%c.089, and the depth of a blind
+hole, as X .230 DEEP, or THRU if it has a countersink; for a thread,
+the designation and THRU or its depth, as
+.BR "4-40 UNC-2B X .230 DEEP" ,
+and not the drill; a countersink adds a line, as
+.BR "%%v%%c.110 X 82%%d" ,
+with FARSIDE if it is at the far side.
+The count ends the last line, after a comma but on a plain hole.
+The holes of inserts get no callout of their size: the inserts of one
+type on one side share one, by the record
+.BI inserts " format"
+.RI ( draw (5)),
+whose %n is the count, %t the type and %s the side, NEAR or FAR, in
+capitals; with none, INSTALL %n %t, %s SIDE.
 Bend lines of the flat view are marked UP or DOWN, with the angle.
 No text overlaps another, and no leader crosses a text or a leader.
 .PP
@@ -65,11 +112,14 @@ These records after the view change the result:
 .PP
 .RS
 .nf
-drop x|y|d|r STRING      omit that dimension
+drop FEATURE [x|y|d|r]   omit the dimensions of a feature
 lin x|y A B [PLUS MINUS] linear dimension, with tolerances
 leader X Y STRING...     note with a dot at X Y, inches from the datum
 flag X Y N [STRING...]   box of note N, with text after it
 hatch X0 Y0 X1 Y1        hatching across the material there
+inserts FORMAT           the callout of a group of inserts
+hatching GAP             the gap between section lines, inches
+unhatched MATERIAL...    the coats of these get no hatch
 .fi
 .RE
 .PP
@@ -79,7 +129,21 @@ messages about the records that follow give line
 .I n
 of
 .IR name .
+.PP
+The ends of a
+.B lin
+stand at an ordinate, or at any visible edge of the view square to its
+axis, of the outline, a cut-out, a bend or a coat, or at a hole.
+.PP
+.B drop
+leaves out all the dimensions of the feature of the part that the
+view records name
+.RI ( sm (5)),
+or only its ordinates on one axis, its hole callouts or its radii.
+The lengths of the records are in inches, as
+.IR smsheet (1)
+works them out from the drawing file.
 .SH EXAMPLES
-smview top part.fold | smdim \-s .5 >top.dim
+smview top part.st | smdim \-s .5 \-u mm,in >top.dim
 .SH SEE ALSO
 smview(1), smsheet(1), smdraw(1), draw(5)

@@ -15,16 +15,16 @@ Leg = 15
 Gap = 0.4*T
 StepR = 1.11*T
 Dn = tr + Leg + StepR
-plate panel tr tr W-tr H-tr origin 0 0 0 axes +x +z
+plate panel tr tr W-tr H-tr at 0 0 0 axes +x +z
 flange left panel -x -90 40 span 0 H zone tr H-tr
 flange right panel +x -90 40 span 0 H zone tr H-tr
 flange top panel +y -90 Leg span tr+Gap W-tr-Gap
 flange bottom panel -y -90 Leg span tr+Gap W-tr-Gap
-cut -1 H-tr Dn H+1 along x at 0 depth 2*T
-cut -1 -1 Dn tr along x at 0 depth 2*T
-cut -1 H-tr Dn H+1 along x at W depth 2*T
-cut -1 -1 Dn tr along x at W depth 2*T
-round left StepR at 0 Dn H
-round left StepR at 0 Dn 0
-round right StepR at W Dn H
-round right StepR at W Dn 0
+cut cut1 -1 H-tr Dn H+1 along x from (0-(2*T)/2) to (0+(2*T)/2)
+cut cut2 -1 -1 Dn tr along x from (0-(2*T)/2) to (0+(2*T)/2)
+cut cut3 -1 H-tr Dn H+1 along x from (W-(2*T)/2) to (W+(2*T)/2)
+cut cut4 -1 -1 Dn tr along x from (W-(2*T)/2) to (W+(2*T)/2)
+round StepR left at 0 Dn H
+round StepR left at 0 Dn 0
+round StepR right at W Dn H
+round StepR right at W Dn 0

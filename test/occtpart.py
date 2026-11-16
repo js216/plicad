@@ -9,7 +9,8 @@
 # the volume and area of measure to 1e-6 of each, and the symmetric
 # difference with the reference solid is under 1e-6 of the volume.  With
 # -n the answer has no reference solid.  Where MEASURE holds several
-# solids, OCCT must read as many, with their volumes and areas in sum.
+# solids, OCCT must read as many, with their volumes and areas in sum;
+# an empty solid, of no faces, has none in the STEP file.
 
 import json
 import sys
@@ -23,7 +24,7 @@ with open(args[-1]) as f:
         w = line.split()
         if w and w[0] in ("volume", "area"):
             want[w[0]] += float(w[1])
-        elif w and w[0] == "part":
+        elif w and w[0] == "faces" and int(w[1]) > 0:
             want["part"] += 1
 
 
@@ -31,6 +32,8 @@ def fail(msg):
     sys.exit("%s: %s" % (ans.get("path"), msg))
 
 
+if want["part"] == 0 and ans.get("solids") == 0:
+    sys.exit(0)
 if ans.get("solids") != want["part"] or not ans.get("valid") or \
         not ans.get("closed"):
     fail("not the valid closed solids of measure: %s" % json.dumps(ans))

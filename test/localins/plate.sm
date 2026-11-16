@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# plate.sm -- A plate with inserts of a table of its own and of the library
+# Copyright (c) 2026 Jakob Kastelic
+
+# Two types of the table next to it, a nut and a stud in a blind hole,
+# and inch types of the library: a nut named apart from its hole, a
+# flush nut, a flush-head stud, standoffs through and blind, a
+# stainless nut, a concealed-head stud in a blind hole and a nut of the
+# longest shank.
+sheet 2.5 1 0.44
+plate p 0 0 120 60 at 0 0 0 axes +x +y
+insert a nut-local near 10 10 along z
+insert b chc-local near 30 10 along z
+insert c s-632-1 far as nut_c 50 10 along z
+insert d f-632-2 near 70 10 along z
+insert e fhs-632-4 far 90 10 along z
+insert f so-440-8 near 110 10 along z
+insert g bso-440-10 near 10 40 along z
+insert h cls-440-1 far 30 40 along z
+insert i chc-632-4 near 50 40 along z
+insert j s-632-3 far 70 40 along z

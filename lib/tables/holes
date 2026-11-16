@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# holes -- Clearance holes and countersinks, by screw size
+# Copyright (c) 2026 Jakob Kastelic
+
+# SIZE CLOSE MEDIUM FREE CSINK ANGLE
+# The diameters of the clearance holes of a screw, close, medium and
+# free fit, and of the countersink of its flat head, with the included
+# angle, in the units of plicad(7).  Metric sizes after ISO 273 and ISO
+# 15065; unified sizes by the usual number drills.
+M2 2.2 2.4 2.6 4.4 90
+M2.5 2.7 2.9 3.1 5.5 90
+M3 3.2 3.4 3.6 6.3 90
+M4 4.3 4.5 4.8 9.4 90
+M5 5.3 5.5 5.8 10.4 90
+M6 6.4 6.6 7 12.6 90
+M8 8.4 9 10 17.3 90
+2-56 0.096in 0.1015in 0.1065in 0.183in 82
+4-40 0.116in 0.120in 0.1285in 0.235in 82
+6-32 0.144in 0.1470in 0.1495in 0.290in 82
+8-32 0.1695in 0.1730in 0.177in 0.344in 82
+10-32 0.196in 0.199in 0.201in 0.397in 82

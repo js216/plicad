@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# panel.txt -- A subassembly of a plate and the knob of test/knob.txt
+# Copyright (c) 2026 Jakob Kastelic
+
+materials materials
+part plate ../build/plate.st move 0 0 -20 material red
+part knob knob.txt path move 0 0 40

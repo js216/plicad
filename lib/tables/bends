@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bends -- Inside radii and K-factors of bends, by material and sheet
+# Copyright (c) 2026 Jakob Kastelic
+
+# MATERIAL T R K
+# The sheet thickness T, the least inside radius R of a bend of 90
+# degrees, and the K-factor of the neutral line, for the sheet statement
+# of sm(5), in the units of plicad(7).  Shop practice for air bending;
+# the shop that bends the part has the last word.
+aluminum 0.5 0.5 0.44
+aluminum 0.8 0.8 0.44
+aluminum 1 1 0.44
+aluminum 1.5 1.5 0.44
+aluminum 2 2 0.44
+aluminum 2.5 2.5 0.44
+aluminum 3 3 0.44
+steel 0.5 0.5 0.44
+steel 0.8 0.8 0.44
+steel 1 1 0.44
+steel 1.5 1.5 0.44
+steel 2 2 0.44
+steel 2.5 2.5 0.44
+steel 3 3 0.44
+stainless 0.5 0.8 0.45
+stainless 0.8 1.2 0.45
+stainless 1 1.5 0.45
+stainless 1.5 2.3 0.45
+stainless 2 3 0.45

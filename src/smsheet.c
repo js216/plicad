@@ -4,6 +4,7 @@
 
 // Usage: smsheet part.draw [views] > part.ps
 //        smsheet -r part.draw
+//        smsheet -v part.draw
 //
 // Reads the drawing file and the views of smdim, from a file or the
 // standard input: one for each view record of the drawing file and in
@@ -14,14 +15,22 @@
 // place at a scale under 1.  If there is none, smsheet dies and says
 // how large the views are at the smallest scale against the room of
 // the template.  Writes one page for each sheet, in inches: the
-// template, the views, and on sheet 1 the notes.  The lettering is the
+// template, the views, and on sheet 1 the notes, with one for each
+// texture record of the views (texture_note).  The lettering is the
 // font named osifont, which Ghostscript finds with -sFONTPATH=DIR.
 // With -r it prints the width and the height of the room for the views
-// in the template, in inches, and reads no views.
+// in the template, in inches, and reads no views.  With -v it prints
+// what smdraw needs: the units, the scale, and each view with its
+// records for smdim, their lengths in inches.
 //
-// The drawing file has one record per line; the text of a record runs
-// to the end of its line:
-//   template FILE          (the paper, next to the drawing file; needed)
+// The drawing file is in the language of plicad(7): comments, a
+// backslash that runs a line on into the next, and NAME = EXPR.  It has
+// one record per line; the text of a record runs to the end of its
+// line:
+//   units in|mm [in|mm]    (the units of the sizes, the second one in
+//                           brackets; needed)
+//   template FILE          (the paper, next to the drawing file or in
+//                           the templates of the library; needed)
 //   scale S                (the one scale of the views, for smdraw)
 //   field NAME TEXT        (a text of the template, which lists NAME)
 //   material TEXT          (note 1, with a box round its number; %%t
@@ -30,13 +39,20 @@
 //   finish TEXT            (note 2, with a box)
 //   boxed TEXT             (a further note with a box)
 //   note TEXT              (a note without one)
-//   + TEXT                 (more of the field or the note above)
 //   revision REV DATE BY TEXT
-//   view NAME [hidden] [scale S] [sheet N] [at X Y] [title TEXT]
+//   inserts FORMAT         (the callout of a group of inserts, for smdim)
+//   hatching GAP           (the gap between the section lines on the
+//                           paper, in mm unless it says in, for smdim)
+//   unmarked MATERIAL      (the texture of the surfaces no mark names,
+//                           for smview)
+//   unhatched MATERIAL...  (the materials whose coats get no hatch, for
+//                           smdim)
+//   view NAME [hidden] [scale S] [sheet N] [at X Y] [cut D]
+//        [title TEXT]
 // The front, back, left, right, top and bottom views of a sheet stand
 // together by third-angle projection, their datums in line; a view
-// with at X Y has its datum there, in inches from the lower left corner
-// of the sheet; the others stand apart.  Each goes to the first free
+// with at X Y has its datum there, in mm (or with in, inches) from the
+// lower left corner of the sheet; the others stand apart.  Each goes to the first free
 // place from the top left, and all move together toward the middle of
 // the room above what stands at its foot.  The views stand .4 in apart,
 // and .25 in off the notes and what the template keeps or takes.  Each
@@ -44,8 +60,8 @@
 // Lines that start with a blank belong to the view above them: they are
 // records for smdim, and are not read here.  A note with a box needs a
 // flag record under a view, which shows where it applies.  The drawing
-// file is ASCII, with tabs; a line that starts with # is a comment, and
-// a carriage return may stand before each newline.
+// file is ASCII, with tabs, and a carriage return may stand before each
+// newline.
 //
 // A template is PostScript that draws the border, the title block and
 // the revision table of one paper, in inches from its lower left
@@ -62,7 +78,8 @@
 //   %%PliCadFields: NAME...         (the fields it reads)
 // Before the template on each page, smsheet defines as strings each
 // field of the drawing file; each listed field the file leaves out, as
-// an empty string, but Filename, as the name of the drawing file;
+// an empty string, but Filename, as the name of the drawing file, its
+// directory left out;
 // Paper, as "W x H"; Scale, Sheet and Sheets; MaterialNote and
 // FinishNote, the numbers of those notes or empty; and Revisions, an
 // array of [REV DATE BY TEXT] arrays, empty on the sheets but 1.  The
@@ -79,6 +96,7 @@
 //   field Title BRACKET (L), 2X
 //   view top
 
+#include "expr.h"
 #include "font.h"
 #include "geom.h"
 #include "util.h"
@@ -113,8 +131,13 @@ enum {
 	GRID = 4, // The columns of the grid of views; it has fewer rows.
 	NUMS = 5, // The most numbers of a record of a view.
 	QUARTERS = 4, // The steps of the move toward the middle.
-	DECIMAL = 10 // The base of the number of a note.
+	OW_ROW = 12, // The widths of OW on a line of the prolog.
+	DECIMAL = 10, // The base of the number of a note.
+	NUM_TEXT = 64, // Room for the text of a number.
+	POLY_ROW = 6 // The points of a poly on a line of the PostScript.
 };
+
+enum { U_NONE, U_IN, U_MM }; // The units of the dimensions.
 
 struct rect {
 	double x0, y0, x1, y1;
@@ -151,6 +174,7 @@ enum {
 	O_TEXT,
 	O_HATCH,
 	O_CLEAR,
+	O_POLY,
 	O_COUNT
 };
 
@@ -165,16 +189,18 @@ static const struct {
 	{ "arrow", "ARROW", 4 },  { "dot", "DOT", 2 },
 	{ "flag", "FLG", 2 },	  { "text", "TX", 4 },
 	{ "hatch", "HATCH", 4 },  { "clear", "", 4 },
+	{ "poly", "", 0 },
 };
 
-// The passes over the records of a view, from the grey of the material
+// The passes over the records of a view, from the gray of the material
 // up to the text, and the line of each.
 enum {
 	P_FILL,
 	P_HATCH,
 	P_SEAM,
 	P_HIDDEN,
-	P_CENTRE,
+	P_CENTER,
+	P_PHANTOM,
 	P_VISIBLE,
 	P_THIN,
 	P_MARK,
@@ -187,18 +213,24 @@ static const char *const pens[P_COUNT] = {
 	"0.006 setlinewidth [] 0 setdash",
 	"0.01 setlinewidth [0.06 0.04] 0 setdash",
 	"0.006 setlinewidth [0.3 0.04 0.04 0.04] 0 setdash",
+	"0.006 setlinewidth [0.3 0.04 0.04 0.04 0.04 0.04] 0 setdash",
 	"0.02 setlinewidth [] 0 setdash",
 	"0.006 setlinewidth",
 	"",
 };
 
 // A record of a view: what it is, the pass that draws it, its numbers,
-// and for a text its alignment and its string.
+// and for a text its alignment and its string; for a poly its n points,
+// x and y in turn in pt; for a fill, whether it is hatched, at the angle
+// x[0] with the gap x[1].
 struct rec {
 	int op, pass;
 	double x[NUMS];
 	char align;
 	const char *s;
+	double *pt;
+	size_t n;
+	int hatched;
 };
 
 // A view at one scale: its records, its box, and the farthest that an
@@ -213,9 +245,22 @@ struct variant {
 // A view: what the drawing file says of it, the same view at each
 // scale on offer, and the one in use, which the fields from scale on
 // are a copy of.
+// A record for smdim under a view: its line and its text, its lengths
+// worked out in inches.
+struct rule {
+	unsigned line;
+	char *text;
+};
+
 struct view {
 	const char *name; // In the drawing file.
 	unsigned line; // Of its view record.
+	int hidden; // Whether it shows the hidden lines.
+	int section; // Whether it is a section, by the plane at cut,
+	double cut; // in mm along the axis toward the eye.
+	double own_scale; // The scale it gives, or 0.
+	struct rule *rule;
+	size_t nrule, caprule;
 	const char *title;
 	int sheet, fixed;
 	int own; // Whether the drawing file gives its scale.
@@ -253,7 +298,6 @@ struct drawing {
 	double thick, radius;
 	struct field *field;
 	size_t nfield, capfield;
-	int last_field; // Whether the last record but + was a field.
 	struct note *note;
 	size_t nnote, capnote;
 	struct revision *revision;
@@ -262,6 +306,17 @@ struct drawing {
 	size_t nview, capview;
 	int sheets;
 	size_t material, finish; // The numbers of their notes, or 0.
+	char *inserts; // The format of the callouts of inserts, or NULL.
+	double hatching; // The gap between section lines, in inches, or 0.
+	char *unmarked; // The texture of the surfaces not marked, or NULL.
+	char *unhatched; // The materials of coats without a hatch, or NULL.
+	char *other; // The note of the texture not marked, or NULL.
+	struct names nm; // The names the drawing file defines.
+	char where[WHERE_LEN];
+	int units[2]; // The units, primary and secondary: U_IN, U_MM, U_NONE.
+	double fixed_scale; // That of a scale record, or 0.
+	struct src_line *ls; // The lines of the drawing file.
+	size_t nls;
 };
 
 // A text under reading, word by word.
@@ -269,6 +324,7 @@ struct cursor {
 	const char *what; // The name of the input, for messages.
 	unsigned line;
 	char *at;
+	struct names *nm; // The names of the drawing file, for numbers.
 };
 
 // Cuts the next word off the text of c and returns it, or NULL at the
@@ -284,6 +340,12 @@ static char *next_word(struct cursor *c)
 	return *w ? w : NULL;
 }
 
+// Whether a word is left in c.
+static int next_word_at(const struct cursor *c)
+{
+	return c->at[strspn(c->at, " \t")] != 0;
+}
+
 static char *word(struct cursor *c)
 {
 	char *w = next_word(c);
@@ -294,16 +356,16 @@ static char *word(struct cursor *c)
 	return w;
 }
 
+// The value of the next word of c, an expression (plicad(7)).
 static double num(struct cursor *c)
 {
-	const char *w = word(c);
-	char *end = NULL;
-	double x = strtod(w, &end);
+	return eval(c->nm, word(c));
+}
 
-	if (end == w || *end || !num_ok(x)) {
-		die("%s:%u: %s is not a number", c->what, c->line, w);
-	}
-	return x;
+// The next word of c as a length, in inches; mm unless it says in.
+static double length_in(struct cursor *c)
+{
+	return num(c) / INCH;
 }
 
 // Takes the rest of the text of c, without the blanks before it.
@@ -335,8 +397,8 @@ struct style {
 	double h;
 };
 
-// Prints the text s: its pieces, with a name for each %% sign.
-static void text(struct style st, const char *s)
+// Prints the pieces of text s, with a name for each %% sign, in [ ].
+static void text_pieces(const char *s)
 {
 	static const char signs[] = "cvdp";
 	static const char *const names[] = { "/DIA", "/CSK", "/DEG", "/PM" };
@@ -360,7 +422,14 @@ static void text(struct style st, const char *s)
 		ps_string(s, n);
 		s += n;
 	}
-	printf("] %.4f %.4f %.0f %.3f %d TX\n", st.x, st.y, st.angle, st.h,
+	printf("]");
+}
+
+// Prints the text s.
+static void text(struct style st, const char *s)
+{
+	text_pieces(s);
+	printf(" %.4f %.4f %.0f %.3f %d TX\n", st.x, st.y, st.angle, st.h,
 	       (st.align != 'l') + (st.align == 'r'));
 }
 
@@ -412,24 +481,6 @@ static void read_boxed(struct drawing *d, struct cursor *c)
 static void read_note(struct drawing *d, struct cursor *c)
 {
 	add_note(d, "", rest(c), 0);
-}
-
-static void read_more(struct drawing *d, struct cursor *c)
-{
-	char *old = NULL;
-
-	if (d->last_field) {
-		old = d->field[d->nfield - 1].text;
-		d->field[d->nfield - 1].text = join(old, 1, rest(c));
-		free(old);
-		return;
-	}
-	if (!d->nnote) {
-		die("%s:%u: a + before the first note", c->what, c->line);
-	}
-	old = d->note[d->nnote - 1].text;
-	d->note[d->nnote - 1].text = join(old, 1, rest(c));
-	free(old);
 }
 
 static void read_revision(struct drawing *d, struct cursor *c)
@@ -542,15 +593,15 @@ static int lists(const struct paper *t, const char *name)
 	return 0;
 }
 
-// Reads the template the record names, next to the drawing file, and
-// its comments.
+// Reads the template the record names, next to the drawing file or in
+// the templates of the library, and its comments.
 static void read_template(struct drawing *d, struct cursor *c)
 {
 	struct sibling sb = { d->path, rest(c) };
 	struct paper *t = &d->paper;
 	double x[4] = { 0 };
 	const char *from = NULL;
-	char *path = sibling_path(sb);
+	char *path = lib_path(sb, "templates");
 
 	free(t->text);
 	t->text = read_file(path);
@@ -595,9 +646,33 @@ static void read_template(struct drawing *d, struct cursor *c)
 // The scale record is for smdraw, which makes the views at that scale.
 static void read_scale(struct drawing *d, struct cursor *c)
 {
-	(void)d;
-	if (!(num(c) > 0)) {
+	d->fixed_scale = num(c);
+	if (!(d->fixed_scale > 0)) {
 		die("%s:%u: a scale is above 0", c->what, c->line);
+	}
+}
+
+// The unit of the word w: U_IN or U_MM.
+static int unit_of(const struct cursor *c, const char *w)
+{
+	if (strcmp(w, "in") != 0 && strcmp(w, "mm") != 0) {
+		die("%s:%u: units in|mm [in|mm]", c->what, c->line);
+	}
+	return w[0] == 'i' ? U_IN : U_MM;
+}
+
+// Reads units in|mm [in|mm]: the unit of the dimensions, and of the
+// second number in brackets after each.
+static void read_units(struct drawing *d, struct cursor *c)
+{
+	const char *w = NULL;
+
+	d->units[0] = unit_of(c, word(c));
+	w = next_word(c);
+	d->units[1] = w ? unit_of(c, w) : U_NONE;
+	if (d->units[1] == d->units[0] || next_word(c)) {
+		die("%s:%u: units in|mm [in|mm], two units apart", c->what,
+		    c->line);
 	}
 }
 
@@ -644,20 +719,29 @@ static void read_field(struct drawing *d, struct cursor *c)
 static void read_option(struct view *v, struct cursor *c, const char *o)
 {
 	if (strcmp(o, "scale") == 0) {
-		v->own = num(c) > 0;
+		v->own_scale = num(c);
+		v->own = v->own_scale > 0;
+		if (!v->own) {
+			die("%s:%u: a scale is above 0", c->what, c->line);
+		}
 	} else if (strcmp(o, "sheet") == 0) {
 		v->sheet = (int)lround(num(c));
 	} else if (strcmp(o, "at") == 0) {
 		v->fixed = 1;
-		v->x = num(c);
-		v->y = num(c);
+		v->x = length_in(c);
+		v->y = length_in(c);
+	} else if (strcmp(o, "hidden") == 0) {
+		v->hidden = 1;
+	} else if (strcmp(o, "cut") == 0) {
+		v->section = 1;
+		v->cut = length_in(c) * INCH;
 	} else if (strcmp(o, "title") == 0) {
 		v->title = rest(c);
 		if (!*v->title) {
 			die("%s:%u: view %s: title without its text", c->what,
 			    c->line, v->name);
 		}
-	} else if (strcmp(o, "hidden") != 0) {
+	} else {
 		die("%s:%u: unknown view option %s", c->what, c->line, o);
 	}
 }
@@ -700,6 +784,40 @@ static void read_view(struct drawing *d, struct cursor *c)
 	PUSH(d->view, d->nview, d->capview, v);
 }
 
+// Reads a record inserts FORMAT: the text of the callout of each group of
+// inserts of one type and one side, for smdim.
+static void read_inserts(struct drawing *d, struct cursor *c)
+{
+	free(d->inserts);
+	d->inserts = xstrdup(rest(c));
+}
+
+// Reads a record hatching GAP: the gap between the section lines, on the
+// paper, for smdim.
+static void read_hatching(struct drawing *d, struct cursor *c)
+{
+	d->hatching = length_in(c);
+	if (!(d->hatching > 0)) {
+		die("%s:%u: the gap of hatching is above 0", c->what, c->line);
+	}
+}
+
+// Reads a record unmarked MATERIAL: the texture of the surfaces that no
+// mark names, for smview.
+static void read_unmarked(struct drawing *d, struct cursor *c)
+{
+	free(d->unmarked);
+	d->unmarked = xstrdup(word(c));
+}
+
+// Reads a record unhatched MATERIAL...: the materials whose coats get no
+// hatch, for smdim.
+static void read_unhatched(struct drawing *d, struct cursor *c)
+{
+	free(d->unhatched);
+	d->unhatched = xstrdup(rest(c));
+}
+
 // Reads the record of the drawing file that starts with the word k.
 static void read_record(struct drawing *d, struct cursor *c, const char *k)
 {
@@ -710,8 +828,10 @@ static void read_record(struct drawing *d, struct cursor *c, const char *k)
 		{ "view", read_view },	       { "template", read_template },
 		{ "scale", read_scale },       { "material", read_material },
 		{ "finish", read_finish },     { "boxed", read_boxed },
-		{ "note", read_note },	       { "+", read_more },
+		{ "note", read_note },	       { "units", read_units },
 		{ "revision", read_revision }, { "field", read_field },
+		{ "inserts", read_inserts },   { "hatching", read_hatching },
+		{ "unmarked", read_unmarked }, { "unhatched", read_unhatched },
 	};
 	size_t i = 0;
 
@@ -726,9 +846,6 @@ static void read_record(struct drawing *d, struct cursor *c, const char *k)
 		die("%s:%u: the record %s is empty", c->what, c->line, k);
 	}
 	kinds[i].read(d, c);
-	if (strcmp(k, "+") != 0) {
-		d->last_field = strcmp(k, "field") == 0;
-	}
 }
 
 // Reads the drawing file, whose text stays in memory.
@@ -769,18 +886,161 @@ static void check_ascii(const char *path)
 	}
 }
 
+// Appends the text of a number in inches to b, of room cap.
+static void put_inches(char **b, size_t *n, size_t *cap, double x)
+{
+	char num_text[REAL];
+
+	xsnprintf(num_text, " %s%.6f", signbit(x) ? "-" : "", fabs(x));
+	for (const char *t = num_text; *t; t++) {
+		PUSH(*b, *n, *cap, *t);
+	}
+}
+
+// Appends the word w, after a blank, to b.
+static void put_word(char **b, size_t *n, size_t *cap, const char *w)
+{
+	if (*n) {
+		PUSH(*b, *n, *cap, ' ');
+	}
+	for (const char *t = w; *t; t++) {
+		PUSH(*b, *n, *cap, *t);
+	}
+}
+
+// Reads a record for smdim under view v from c, and keeps it with its
+// lengths in inches, as smdim takes them:
+//   drop FEATURE [x|y|d|r]
+//   lin x|y A B [PLUS MINUS]
+//   leader X Y TEXT
+//   flag X Y N [TEXT]
+//   hatch X0 Y0 X1 Y1
+// What a rule of the word k takes: a word after k, the lengths, the
+// last two of them optional, and a text at its end.
+struct rule_form {
+	int word;
+	size_t lens;
+	int num; // A note number after the lengths.
+	int text;
+};
+
+static struct rule_form rule_form(const struct cursor *c, const char *k)
+{
+	static const struct {
+		const char *k;
+		struct rule_form f;
+	} forms[] = {
+		{ "drop", { 1, 0, 0, 1 } },   { "lin", { 1, 4, 0, 0 } },
+		{ "leader", { 0, 2, 0, 1 } }, { "flag", { 0, 2, 1, 1 } },
+		{ "hatch", { 0, 4, 0, 0 } },
+	};
+
+	for (size_t i = 0; i < sizeof(forms) / sizeof(forms[0]); i++) {
+		if (strcmp(k, forms[i].k) == 0) {
+			return forms[i].f;
+		}
+	}
+	die("%s:%u: expected drop, lin, leader, flag or hatch", c->what,
+	    c->line);
+}
+
+// Puts the end of a rule of form f at c into the text t of n characters
+// and room cap: its note number, and its text.
+static void rule_end(struct cursor *c, struct rule_form f, char **t, size_t *n,
+		     size_t *cap)
+{
+	if (f.num) {
+		char num_text[NUM_TEXT];
+
+		xsnprintf(num_text, "%ld", lround(num(c)));
+		put_word(t, n, cap, num_text);
+	}
+	if (f.text && c->at[strspn(c->at, " \t")]) {
+		put_word(t, n, cap, rest(c));
+	}
+	if (c->at[strspn(c->at, " \t")]) {
+		die("%s:%u: too much on the line", c->what, c->line);
+	}
+}
+
+static void read_rule(struct view *v, struct cursor *c)
+{
+	const char *k = word(c);
+	struct rule r = { c->line, NULL };
+	size_t n = 0;
+	size_t cap = 0;
+	struct rule_form f = rule_form(c, k);
+	size_t lens = f.lens;
+
+	put_word(&r.text, &n, &cap, k);
+	if (f.word) {
+		put_word(&r.text, &n, &cap, word(c));
+	}
+	for (size_t i = 0; i < lens && (i < 2 || next_word_at(c)); i++) {
+		put_inches(&r.text, &n, &cap, length_in(c));
+	}
+	rule_end(c, f, &r.text, &n, &cap);
+	PUSH(r.text, n, cap, 0);
+	PUSH(v->rule, v->nrule, v->caprule, r);
+}
+
+// Defines the name of a line NAME = EXPR, or reads the parameters of a
+// line include FILE; returns 0 for any other line.
+static int define_line(struct drawing *d, const char *l)
+{
+	const char *eq = strchr(l, '=');
+	size_t a = strspn(l, " \t");
+	size_t e = a;
+	char name[NAME];
+
+	if (strncmp(l + a, "include ", strlen("include ")) == 0) {
+		struct sibling sb = { d->path, l + a + strlen("include ") };
+		char *path = NULL;
+
+		sb.name += strspn(sb.name, " \t");
+		path = sibling_path(sb);
+		read_params(&d->nm, path);
+		free(path);
+		return 1;
+	}
+	while (l[e] == '_' || isalnum((unsigned char)l[e])) {
+		e++;
+	}
+	if (a || !eq || e == a || e - a >= sizeof(name) ||
+	    eq != l + e + strspn(l + e, " \t")) {
+		return 0;
+	}
+	memcpy(name, l + a, e - a);
+	name[e - a] = 0;
+	define(&d->nm, name, eval(&d->nm, eq + 1), 0);
+	return 1;
+}
+
+// Reads the drawing file (plicad(7)): its records, and under each view
+// the records for smdim, which begin with a blank.
 static void read_drawing(struct drawing *d, char *file)
 {
-	struct cursor c = { d->path, 0, NULL };
-	char *more = file;
-	char *l = NULL;
+	struct cursor c = { d->path, 0, NULL, &d->nm };
 
-	while ((l = next_line(&more)) != NULL) {
+	d->nls = source_lines(file, &d->ls);
+	d->nm.where = d->where;
+	for (size_t i = 0; i < d->nls; i++) {
+		char *l = d->ls[i].text;
 		const char *k = NULL;
 
-		c.line++;
+		c.line = d->ls[i].no;
 		c.at = l;
-		if (*l == ' ' || *l == '\t' || *l == '#') {
+		xsnprintf(d->where, "%s:%u", d->path, c.line);
+		if (define_line(d, l)) {
+			continue;
+		}
+		if (*l == ' ' || *l == '\t') {
+			if (!d->nview) {
+				die("%s:%u: a record for a view before the "
+				    "first view",
+				    d->path, c.line);
+			}
+			read_rule(&d->view[d->nview - 1], &c);
 			continue;
 		}
 		k = next_word(&c);
@@ -795,6 +1055,11 @@ static void read_drawing(struct drawing *d, char *file)
 		die("%s: no template record; name the template of the paper",
 		    d->path);
 	}
+	if (!d->units[0]) {
+		die("%s: no units record; a drawing says its units: units "
+		    "in|mm [in|mm]",
+		    d->path);
+	}
 }
 
 // The pass that draws a line or an arc, by the letters of its kind and
@@ -807,23 +1072,54 @@ static int curve_pass(const char *kv)
 	if (kv[0] == 's') {
 		return P_SEAM;
 	}
-	return kv[0] == 'c' ? P_CENTRE : P_VISIBLE;
+	if (kv[0] == 'p') {
+		return P_PHANTOM;
+	}
+	return kv[0] == 'c' ? P_CENTER : P_VISIBLE;
 }
 
-// The length of the line or arc of record r.
+// The length of the line, arc or poly of record r.
 static double rec_length(const struct rec *r)
 {
+	double l = 0;
+
 	if (r->op == O_ARC) {
 		return r->x[2] * fabs(r->x[4] - r->x[3]) * DEG;
 	}
-	return hypot(r->x[2] - r->x[0], r->x[3] - r->x[1]);
+	if (r->op != O_POLY) {
+		return hypot(r->x[2] - r->x[0], r->x[3] - r->x[1]);
+	}
+	for (size_t i = 1; i < r->n; i++) {
+		l += hypot(r->pt[2 * i] - r->pt[(2 * i) - 2],
+			   r->pt[(2 * i) + 1] - r->pt[(2 * i) - 1]);
+	}
+	return l;
+}
+
+// Reads the points of poly record r from c: N, and N points.
+static void read_points(struct rec *r, struct cursor *c)
+{
+	double n = num(c);
+	size_t cap = 0;
+	size_t k = 0;
+
+	while (next_word_at(c)) {
+		double x = num(c);
+
+		PUSH(r->pt, k, cap, x);
+	}
+	r->n = k / 2;
+	if (k % 2 || r->n < 2 || fabs(n - (double)r->n) > 0) {
+		die("%s:%u: a poly has N of 2 or more, and N points", c->what,
+		    c->line);
+	}
 }
 
 // Reads a record of a view to draw: the word k, and the rest in c.
 // Returns 0 for a word that names none.
 static int read_rec(struct view *v, struct cursor *c, const char *k)
 {
-	struct rec r = { 0, P_MARK, { 0 }, 'l', NULL };
+	struct rec r = { 0, P_MARK, { 0 }, 'l', NULL, NULL, 0, 0 };
 
 	while (r.op < O_COUNT && strcmp(k, ops[r.op].name) != 0) {
 		r.op++;
@@ -831,9 +1127,18 @@ static int read_rec(struct view *v, struct cursor *c, const char *k)
 	if (r.op == O_COUNT) {
 		return 0;
 	}
+	if (r.op == O_FILL && next_word_at(c)) {
+		if (strcmp(word(c), "hatch") != 0) {
+			die("%s:%u: expected fill [hatch ANGLE GAP]", c->what,
+			    c->line);
+		}
+		r.hatched = 1;
+		r.x[0] = num(c);
+		r.x[1] = num(c);
+	}
 	if (r.op <= O_Z) {
 		r.pass = P_FILL;
-	} else if (r.op <= O_ARC) {
+	} else if (r.op <= O_ARC || r.op == O_POLY) {
 		char kv[2] = { 0, 0 };
 
 		kv[0] = word(c)[0];
@@ -852,13 +1157,54 @@ static int read_rec(struct view *v, struct cursor *c, const char *k)
 		}
 		r.x[i] = num(c);
 	}
+	if (r.op == O_POLY) {
+		read_points(&r, c);
+	}
 	r.s = rest(c);
-	if ((r.op == O_LINE || r.op == O_ARC || r.op == O_THIN) &&
+	if ((r.op == O_LINE || r.op == O_ARC || r.op == O_THIN ||
+	     r.op == O_POLY) &&
 	    !(rec_length(&r) > 0)) {
 		die("%s:%u: a %s of no length", c->what, c->line, k);
 	}
 	PUSH(v->rec, v->nrec, v->caprec, r);
 	return 1;
+}
+
+// Adds the note of a texture record of smdim, MARK CALLOUT, unless the
+// drawing has it: TEXTURE: CALLOUT ON SURFACES MARKED "MARK"; for the
+// mark -, the texture of the surfaces not marked, the text of the note
+// that comes after all the others goes to d->other.
+static void texture_note(struct drawing *d, struct cursor *c)
+{
+	const char *mark = word(c);
+	char *a = join("TEXTURE: ", 0, rest(c));
+	char *b = join(a, 1, "ON SURFACES MARKED \"");
+	char *t = join(b, 0, mark);
+	char *s = join(t, 0, "\"");
+
+	if (strcmp(mark, "-") == 0) {
+		free(s);
+		s = NULL;
+		if (!d->other) {
+			d->other = join("TEXTURE: ALL OTHER SURFACES ", 0,
+					a + strlen("TEXTURE: "));
+		}
+	}
+
+	for (size_t i = 0; i < d->nnote && s; i++) {
+		if (strcmp(d->note[i].text, s) == 0) {
+			free(s);
+			s = NULL;
+		}
+	}
+	if (s) {
+		struct note nt = { s, 0 };
+
+		PUSH(d->note, d->nnote, d->capnote, nt);
+	}
+	free(a);
+	free(b);
+	free(t);
 }
 
 // Reads a record of a view that is not drawn: the word k, and the
@@ -877,6 +1223,8 @@ static void read_other(struct drawing *d, struct view *v, struct cursor *c,
 		d->radius = num(c);
 	} else if (strcmp(k, "crowd") == 0) {
 		v->crowd = num(c);
+	} else if (strcmp(k, "texture") == 0) {
+		texture_note(d, c);
 	} else if (strcmp(k, "dim") != 0 && strcmp(k, "far") != 0) {
 		die("%s:%u: unknown record %s", c->what, c->line, k);
 	}
@@ -907,7 +1255,8 @@ static void use_variant(struct view *v, size_t r)
 // all the views in order for each scale on offer.
 static void read_views(struct drawing *d, const char *path, char *input)
 {
-	struct cursor c = { path, 0, NULL };
+	struct names none = { NULL, 0, 0, 0, NULL, NULL, 0, 0, NULL, NULL, 0 };
+	struct cursor c = { path, 0, NULL, &none };
 	char *more = input;
 	struct view *v = NULL;
 	size_t n = 0;
@@ -1216,7 +1565,7 @@ static struct cell grid_cell(const struct view *v)
 static void scale_text(double s, char *buf, size_t n);
 
 // What a view takes on the paper, round its datum: its box, and the
-// room for its title and its scale under it, a line each, centred
+// room for its title and its scale under it, a line each, centered
 // under the box and as wide as their texts.
 static struct rect extent(const struct drawing *d, const struct view *v)
 {
@@ -1413,7 +1762,7 @@ static int shift(struct layout *l, struct rect by, int set)
 // room above what stands at its foot, the notes and the title block:
 // all the way if they stay free, or the largest part of it, in
 // quarters, that leaves them so.
-static void centre(struct layout *l)
+static void center(struct layout *l)
 {
 	struct rect all = l->v[l->n];
 	double foot = l->in.y0;
@@ -1471,7 +1820,7 @@ static struct layout try_sheet(const struct drawing *d, const struct paper *sz,
 		}
 	}
 	if (l.ok && l.nb) {
-		centre(&l);
+		center(&l);
 	}
 	return l;
 }
@@ -1689,11 +2038,50 @@ static void draw_hatch(const struct view *v, const struct rec *h)
 	}
 }
 
+// Draws the section lines of the fill f of view v in the region of the
+// path so far, but in the room of each clear record, which a text takes,
+// and ends the path.
+static void section_lines(const struct view *v, const struct rec *f)
+{
+	printf("gsave pathbbox eoclip newpath\n");
+	for (size_t i = 0; i < v->nrec; i++) {
+		const struct rec *c = &v->rec[i];
+
+		if (c->op == O_CLEAR) {
+			printf("%.4f %.4f %.4f %.4f CLEAR\n", c->x[0], c->x[1],
+			       c->x[2], c->x[3]);
+		}
+	}
+	printf("%.4f %.4f SECT grestore newpath\n", f->x[0], f->x[1]);
+}
+
+// Ends the region of material of fill f of view v: gray, or with its
+// section lines if it has them.
+static void end_fill(const struct view *v, const struct rec *f)
+{
+	if (f->hatched) {
+		section_lines(v, f);
+	} else {
+		printf("FILL\n");
+	}
+}
+
+// Draws poly record r: a line through its points.
+static void draw_poly(const struct rec *r)
+{
+	printf("newpath %.4f %.4f M", r->pt[0], r->pt[1]);
+	for (size_t i = 1; i < r->n; i++) {
+		printf("%s%.4f %.4f L", i % POLY_ROW ? " " : "\n", r->pt[2 * i],
+		       r->pt[(2 * i) + 1]);
+	}
+	printf(" stroke\n");
+}
+
 // Draws the records of view v that belong to pass p.  A hidden line
 // too short for two dashes of the usual length gets two of its own.
 static void draw_pass(const struct view *v, int p)
 {
-	int open = 0;
+	const struct rec *open = NULL;
 
 	printf("%s%s", pens[p], pens[p][0] ? "\n" : "");
 	for (size_t i = 0; i < v->nrec; i++) {
@@ -1713,29 +2101,35 @@ static void draw_pass(const struct view *v, int p)
 			continue;
 		}
 		if (r->op == O_FILL && open) {
-			printf("FILL\n");
+			end_fill(v, open);
 		}
 		if (r->op == O_FILL) {
-			open = 1;
+			open = r;
 		}
 		if (p == P_HIDDEN && rec_length(r) < DASH_SHORT) {
 			printf("[%.4f %.4f] 0 setdash ",
 			       rec_length(r) * DASH_PART,
 			       rec_length(r) * (1 - (2 * DASH_PART)));
 		}
-		for (size_t k = 0; k < ops[r->op].n; k++) {
-			printf("%.4f ", r->x[k]);
+		if (r->op == O_POLY) {
+			draw_poly(r);
+		} else {
+			for (size_t k = 0; k < ops[r->op].n; k++) {
+				printf("%.4f ", r->x[k]);
+			}
+			if (r->op == O_FLAG) {
+				ps_string(r->s, strlen(r->s));
+				printf(" ");
+			}
+			printf("%s\n", ops[r->op].ps);
 		}
-		if (r->op == O_FLAG) {
-			ps_string(r->s, strlen(r->s));
-			printf(" ");
-		}
-		printf("%s\n", ops[r->op].ps);
 		if (p == P_HIDDEN && rec_length(r) < DASH_SHORT) {
 			printf("%s\n", pens[p]);
 		}
 	}
-	printf("%s", open ? "FILL\n" : "");
+	if (open) {
+		end_fill(v, open);
+	}
 }
 
 // Writes the scale s with two decimals, or with three if it has them.
@@ -1783,7 +2177,8 @@ static void fields(const struct drawing *d, int sheet)
 {
 	const struct paper *t = d->size;
 	char buf[REAL] = "";
-	char *base = base_name(d->path);
+	const char *slash = strrchr(d->path, '/');
+	const char *base = slash ? slash + 1 : d->path;
 	const size_t notes[2] = { d->material, d->finish };
 	static const char *const flags[2] = { "MaterialNote", "FinishNote" };
 
@@ -1797,12 +2192,21 @@ static void fields(const struct drawing *d, int sheet)
 		ps_string(base, strlen(base));
 		printf(" def } ifelse\n");
 	}
-	free(base);
 	for (const char *at = t->fields; *at; at += strcspn(at, " ") + 1) {
 		printf("/%.*s where { pop } { /%.*s () def } ifelse\n",
 		       (int)strcspn(at, " "), at, (int)strcspn(at, " "), at);
 	}
 	printf("/Paper (%g x %g) def\n", t->w, t->h);
+	{
+		static const char *const words[] = { "", "INCHES",
+						     "MILLIMETERS" };
+
+		printf("/Units (%s", words[d->units[0]]);
+		if (d->units[1] != U_NONE) {
+			printf(" [%s]", words[d->units[1]]);
+		}
+		printf(") def\n");
+	}
 	scale_text(d->scale[sheet], buf, sizeof(buf));
 	printf("/Scale ");
 	ps_string(buf + strlen("SCALE "), strlen(buf + strlen("SCALE ")));
@@ -1829,6 +2233,55 @@ static void fields(const struct drawing *d, int sheet)
 	printf("] def\n");
 }
 
+// The width at height 1 of the sign that s starts with, as font.h has
+// it.
+static double sign_w(const char *s)
+{
+	double w = 0;
+
+	(void)glyph(s, &w);
+	return w;
+}
+
+// Whether a view of the drawing, as in use, has section lines.
+static int sections(const struct drawing *d)
+{
+	for (size_t i = 0; i < d->nview; i++) {
+		for (size_t k = 0; k < d->view[i].nrec; k++) {
+			if (d->view[i].rec[k].hatched) {
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+// Prints the procedure of the section lines: ANGLE GAP on the box X0
+// Y0 X1 Y1 of the region clipped, SECT draws thin lines at the angle,
+// GAP apart, through the box, each on a line of the origin rotated.
+static void section_prolog(void)
+{
+	printf("/SP { /py exch def /px exch def\n"
+	       "  px co mul py si mul add dup u0 lt { dup /u0 exch def } if\n"
+	       "  dup u1 gt { /u1 exch def } { pop } ifelse\n"
+	       "  py co mul px si mul sub dup w0 lt { dup /w0 exch def } if\n"
+	       "  dup w1 gt { /w1 exch def } { pop } ifelse } bind def\n"
+	       "/SECT { 16 dict begin /g exch def /a exch def /y1 exch def\n"
+	       "  /x1 exch def /y0 exch def /x0 exch def /co a cos def\n"
+	       "  /si a sin def /u0 1e9 def /u1 -1e9 def /w0 1e9 def\n"
+	       "  /w1 -1e9 def x0 y0 SP x1 y0 SP x1 y1 SP x0 y1 SP\n"
+	       "  a rotate 0.004 setlinewidth [] 0 setdash\n"
+	       "  w0 g div floor g mul g w1 g add\n"
+	       "  { dup u0 exch moveto u1 exch lineto stroke } for\n"
+	       "  end } bind def\n");
+}
+
+// The prolog of the PostScript: the lettering, and the procedures of the
+// drawing.  TX lays a text out by the widths of osifont, OW at height 1,
+// as smsheet lays it out: a font that Ghostscript takes in its place,
+// where it lacks osifont, is squeezed along the line to them if wider,
+// so that no text runs out of its room.  The procedure of section lines
+// comes only for a drawing that has them.
 static void prolog(const struct drawing *d)
 {
 	printf("%%!PS-Adobe-3.0\n%%%%Creator: smsheet\n%%%%Pages: %d\n"
@@ -1862,11 +2315,20 @@ static void prolog(const struct drawing *d)
 	       "  { dup /DIA eq { pop SYM } { /CSK eq { H 1.2 mul }\n"
 	       "    { (\\260) stringwidth pop } ifelse } ifelse }\n"
 	       "  { stringwidth pop } ifelse add } forall } bind def\n"
+	       "/OWID { 0 exch { dup type /nametype eq\n"
+	       "  { dup /DIA eq { pop 0.75 } { /CSK eq { %.6f }\n"
+	       "    { %.6f } ifelse } ifelse }\n"
+	       "  { 0 exch { 32 sub dup 0 ge 1 index OW length lt and\n"
+	       "    { OW exch get } { pop 0 } ifelse add } forall }\n"
+	       "  ifelse add } forall H mul } bind def\n"
 	       "/TX { gsave /al exch def /H exch def /rt exch def translate\n"
 	       "  rt rotate /Lettering findfont H 1.3518 mul scalefont setfont\n"
-	       "  dup WID al mul -2 div H -2 div moveto\n"
+	       "  dup OWID /W exch def dup WID dup W gt\n"
+	       "  { W exch div 1 scale } { pop } ifelse\n"
+	       "  W al mul -2 div H -2 div moveto\n"
 	       "  { dup type /nametype eq { cvx exec } { show } ifelse }\n"
 	       "  forall grestore } bind def\n"
+
 	       "/ARROW { gsave 2 copy exch atan 5 3 roll translate rotate\n"
 	       "  newpath 0 0 moveto -0.13 0.022 lineto -0.13 -0.022 lineto\n"
 	       "  closepath fill grestore pop pop } bind def\n"
@@ -1885,7 +2347,19 @@ static void prolog(const struct drawing *d)
 	       "  0.008 setlinewidth [] 0 setdash rectstroke NUM } bind def\n"
 	       "/NUM { 3 1 roll [ 4 -1 roll ] 3 1 roll 0 %.3f 1 TX }"
 	       " bind def\n",
-	       TEXT_H);
+	       sign_w("%%v"), sign_w("%%d"), TEXT_H);
+	printf("/OW [");
+	for (int c = ' '; c <= '~'; c++) {
+		const char one[2] = { (char)c, 0 };
+		double w = 0;
+
+		(void)glyph(one, &w);
+		printf("%s%.4f", (c - ' ') % OW_ROW ? " " : "\n", w);
+	}
+	printf(" ] def\n");
+	if (sections(d)) {
+		section_prolog();
+	}
 }
 
 // The share of the free sheet that the views of a sheet cover with
@@ -1942,15 +2416,76 @@ static void draw_sheet(struct drawing *d, int sheet)
 	printf("grestore showpage\n");
 }
 
+static const char *const unit_names[] = { "-", "in", "mm" };
+
+// Prints what smdraw needs of the drawing file: its units, its one scale
+// or -, its unmarked texture or -, and each view, with its line, its
+// name, -h or - for its hidden lines, its own scale or -, the depth of
+// its cut in mm or -, and the records for smdim under it, each after a
+// line #line N FILE.
+static void print_views(const struct drawing *d)
+{
+	printf("units %s %s\n", unit_names[d->units[0]],
+	       unit_names[d->units[1]]);
+	if (d->fixed_scale > 0) {
+		printf("scale %.9g\n", d->fixed_scale);
+	} else {
+		printf("scale -\n");
+	}
+	printf("unmarked %s\n", d->unmarked ? d->unmarked : "-");
+	for (size_t i = 0; i < d->nview; i++) {
+		const struct view *v = &d->view[i];
+
+		printf("view %u %s %s ", v->line, v->name,
+		       v->hidden ? "-h" : "-");
+		if (v->own) {
+			printf("%.9g", v->own_scale);
+		} else {
+			printf("-");
+		}
+		if (v->section) {
+			printf(" %.9g\n", v->cut);
+		} else {
+			printf(" -\n");
+		}
+		for (size_t k = 0; k < v->nrule; k++) {
+			printf("#line %u %s\n %s\n", v->rule[k].line, d->path,
+			       v->rule[k].text);
+		}
+		if (d->inserts) {
+			printf(" inserts %s\n", d->inserts);
+		}
+		if (d->hatching > 0) {
+			printf(" hatching %.6f\n", d->hatching);
+		}
+		if (d->unhatched) {
+			printf(" unhatched %s\n", d->unhatched);
+		}
+	}
+}
+
 static void free_drawing(struct drawing *d)
 {
+	free(d->inserts);
+	free(d->other);
+	free(d->unmarked);
+	free(d->unhatched);
 	for (size_t i = 0; i < d->nview; i++) {
 		for (size_t k = 0; k < d->view[i].nvar; k++) {
+			for (size_t j = 0; j < d->view[i].var[k].nrec; j++) {
+				free(d->view[i].var[k].rec[j].pt);
+			}
 			free(d->view[i].var[k].rec);
 		}
 		free(d->view[i].var);
+		for (size_t k = 0; k < d->view[i].nrule; k++) {
+			free(d->view[i].rule[k].text);
+		}
+		free(d->view[i].rule);
 	}
 	free(d->scale);
+	free_source_lines(d->ls, d->nls);
+	free_names(&d->nm);
 	for (size_t i = 0; i < d->nnote; i++) {
 		free(d->note[i].text);
 	}
@@ -1987,9 +2522,20 @@ int main(int argc, char **argv)
 		close_stdout();
 		return 0;
 	}
+	if (argc == 3 && strcmp(argv[1], "-v") == 0) {
+		d.path = argv[2];
+		check_ascii(argv[2]);
+		file = read_file(argv[2]);
+		read_drawing(&d, file);
+		print_views(&d);
+		free_drawing(&d);
+		free(file);
+		close_stdout();
+		return 0;
+	}
 	if ((argc != 2 && argc != 3) || argv[1][0] == '-') {
 		die("usage: smsheet part.draw [views] > part.ps\n"
-		    "       smsheet -r part.draw");
+		    "       smsheet -r|-v part.draw");
 	}
 	d.path = argv[1];
 	check_ascii(argv[1]);
@@ -1997,6 +2543,12 @@ int main(int argc, char **argv)
 	read_drawing(&d, file);
 	views = read_file(argc == 3 ? argv[2] : "-");
 	read_views(&d, argc == 3 ? argv[2] : "stdin", views);
+	if (d.other) {
+		struct note nt = { d.other, 0 };
+
+		PUSH(d.note, d.nnote, d.capnote, nt);
+		d.other = NULL;
+	}
 	d.scale = xcalloc((size_t)d.sheets + 1, sizeof(*d.scale));
 	check_flags(&d);
 	fill_notes(&d);

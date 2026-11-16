@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// integ.h -- Volume, area and centre of exact solids, by quadrature
+// integ.h -- Volume, area and center of exact solids, by quadrature
 // Copyright (c) 2026 Jakob Kastelic
 
 #ifndef INTEG_H
@@ -9,7 +9,7 @@
 #include "shape.h"
 
 // The volume and area of a solid, and the integral of p over its
-// volume: the centre times the volume.
+// volume: the center times the volume.
 struct solid_mass {
 	double volume, area;
 	struct vec moment;

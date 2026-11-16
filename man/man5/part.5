@@ -1,19 +1,21 @@
 .\" SPDX-License-Identifier: GPL-3.0-only
-.\" part.5 -- Manual page of the solid part source and stream
+.\" part.5 -- Manual page of the solid part source
 .\" Copyright (c) 2026 Jakob Kastelic
 .TH PART 5
 .SH NAME
-part \- solid part source and stream
+part \- solid part source
 .SH DESCRIPTION
-A part source has one statement per line for the programs of a pipe,
+A solid part source holds the statements of the programs of a pipe,
 .IR extrude (1),
 .IR bool (1)
 and
-.IR fillet (1);
-# begins a comment, and
-.I "name = expr"
-defines a name as in
-.IR sm (5).
+.IR fillet (1),
+in the language of
+.IR plicad (7).
+Each program takes its own statements, and passes the others on in
+the stream it writes
+.RI ( stream (5));
+the definitions and the sets of faces stay for every program.
 .I U
 and
 .I v
@@ -22,9 +24,13 @@ are the two axes other than
 in alphabetical order.
 .TP
 .BI profile " name " along " a u v r"
+.RB [ side
+.IR side ]
 .RI [ "u v r" " ...]"
 .br
 .BI corner " u v r"
+.RB [ side
+.IR side ]
 .RI [ "u v r" " ...]"
 .br
 A closed outline in the plane across the world axis
@@ -32,10 +38,15 @@ A closed outline in the plane across the world axis
 its corners in order, each rounded by an arc of radius
 .I r
 (sharp for 0); corner lines continue it.
+.B side
+after a corner names the side from it to the next corner.
 .TP
-.BI circle " name " along " a u v d"
+.BI circle " name d u v " along " a"
 A circle of diameter
-.IR d .
+.I d
+about
+.RI ( u ,
+.IR v ).
 .TP
 .BI extrude " name " from " w0 " to " w1 p"
 .RB [ draft
@@ -57,19 +68,18 @@ with a pattern,
 copies are made,
 .I p
 apart along the signed axis, as one solid.
-Faces are named
+Its faces are named
 .IB name .start ,
-.IB name .end
-and
-.IB name . p . k
-for side
-.I k
-of the profile.
+.IB name .end ,
+.IB name .side. side
+for a named side of the profile, and
+.IB name .side
+for the other sides and the arcs of the corners.
 .TP
 .BI union " name a b"
 .RI [ c " ...]"
 .br
-.BI cut " name a b"
+.BI subtract " name a b"
 .RI [ c " ...]"
 .br
 .BI common " name a b"
@@ -79,33 +89,95 @@ Replace the named solids by the solid
 (their union,
 .I a
 less the others, or their common part).
+The faces keep their names.
+.TP
+.BI faces " set ref"
+.RI [ ref " ...]"
+A set of faces, for the rules below and for the pins of
+.IR mold (1).
 .TP
 .BI round " r " convex
 .br
-.BI round " r pattern pattern"
+.BI round " r ref ref"
 .br
-.BI sharp " pattern pattern"
+.BI sharp " ref ref"
 .br
 Give a radius to the outward edges, or to the edges between two faces
-whose names match the patterns (* for any run of characters).
-Of the rules matching an edge, the last applies; sharp is radius 0.
+that the references name.
+Of the rules for an edge, the last applies; sharp is radius 0.
+A rule that names no edge is refused.
+The face of a round is named after the two faces it joins, with a +
+between them.
+.TP
+.BI finish " material ref"
+.RI [ ref " ...]"
+Give the faces that the references name the finish of the material,
+.IR plicad (7):
+a texture of the mold, with the least draft it needs, which
+.IR mold (1)
+checks, and a tint in
+.IR tomesh (1).
+Of the finishes of a face the last applies; a face with none keeps
+that of the body of the part, its base.
+.TP
+.BI thread " ref"
+.RB [ deep
+.IR d ]
+.I designation ...
+.br
+Give the holes of the faces that the reference names a thread, as
+.BR "thread taps 4-40 UNC-2B" :
+the solid has them at the tap drill, and drawings call out the
+designation, through or to the depth
+.I d
+from the mouth of the hole, or for a blind hole without one, to its
+depth
+.RI ( smview (1)).
+Of the threads of a face the last applies.
+.TP
+.BI material " ..."
+.br
+.BI materials " file"
+The materials of the finishes, as
+.IR plicad (7)
+says, for
+.IR mold (1),
+which runs before
+.IR place (1)
+gives the part its materials.
 .PP
-Each program writes a stream for the next:
+A reference
+.I ref
+names the faces that the source declares:
+.TP
+.B any
+every face;
+.TP
+.I set
+the faces of a set;
+.TP
+.I name
+every face of the solid that extrude made as
+.IR name ;
+.TP
+.IB name .start ", " name .end ", " name .side
+its ends, or all its sides;
+.TP
+.IB name . side
+the side of its profile named
+.IR side .
 .PP
+A face of a round matches what either face it joins matches.
+.SH EXAMPLE
 .RS
 .nf
-PliCad 1
-source PATH
-brep NAME ... end
-@N TEXT
+profile r along z 0 0 0 side front 20 0 0 20 10 0 0 10 0
+extrude blk from 0 to 5 r
+circle c 6 10 5 along z
+extrude boss from 5 to 8 c
+union u blk boss
+round 1 blk.front blk.end
 .fi
 .RE
-.PP
-The stream holds the solids so far, and each source line not yet used,
-with its line number
-.IR n .
-.I "Name = expr"
-lines are kept for every program.
-Lines still unused at the end of the pipe are refused.
 .SH SEE ALSO
-extrude(1), bool(1), fillet(1), mould(1), tostep(1), measure(1)
+plicad(7), extrude(1), bool(1), fillet(1), mold(1), stream(5)

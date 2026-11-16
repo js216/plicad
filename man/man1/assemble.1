@@ -1,0 +1,74 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" assemble.1 -- Manual page of assemble
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH ASSEMBLE 1
+.SH NAME
+assemble \- replay the assembly sequence and check each motion
+.SH SYNOPSIS
+.B assemble
+[
+.B \-v
+]
+.I assembly.txt
+.SH DESCRIPTION
+.I Assemble
+reads an assembly file
+.RI ( assembly (5))
+and puts its parts in, in the order of its lines: each along its
+insertion path from its start to its place, with the parts that travel
+with it.
+A subassembly goes together first, by its own lines, in its own frame,
+and then comes in as one unit along the path of its line.
+A part with no path is tried at its place.
+.PP
+Each motion is tried in samples, against the parts in before it in its
+unit.
+No sample moves a part farther than the step of its path, or turns it
+more than its angle: the
+.BI step " dist deg"
+of its file, or the same words after its
+.BR path .
+One bound holds besides, which the file does not set: no sample moves
+any point of a part farther than half the thinnest wall of the parts
+tried, the sheet of a folded part or the thinnest wall of a solid
+.RI ( interfere (1)),
+so no part can pass through another between two samples.
+.PP
+Touching is no clash, by the test of
+.IR interfere (1).
+A clash is said on the standard error, once for each pair of parts and
+motion:
+.PP
+.RS
+.nf
+FILE:LINE: insertion path of NAME, step K at S mm: PART clashes with OTHER
+.fi
+.RE
+.PP
+at S deg for a turn, and as insertion of NAME, at its place, for a part
+with no path.
+With
+.BI clearance " mm"
+in the file, a pair that passes nearer than that on the way, short of
+the place, where parts may touch, is said as
+.PP
+.RS
+.nf
+FILE:LINE: PART passes D mm from OTHER, under the clearance C
+.fi
+.RE
+.PP
+the distance within about 0.05 mm, the chord of the meshes it is
+measured on; without a clearance nothing is said of distances.
+.TP
+.B \-v
+Print a line for each motion,
+.BI path " name " steps " k " samples " n" .
+.SH EXAMPLES
+assemble chassis.txt
+.SH SEE ALSO
+assembly(5), place(1), interfere(1), view(1)
+.SH DIAGNOSTICS
+Exit status 1 for a clash, 0 else.
+A path whose file gives no step and whose line names none is refused,
+with its line.

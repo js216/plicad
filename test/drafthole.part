@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# drafthole.part -- Rounds along ellipses, where a hole meets drafted faces
+# Copyright (c) 2026 Jakob Kastelic
+
+# A block whose sides lean in by a draft of 3 degrees along z, with a
+# counterbored hole through it along x: the counterbore meets the
+# drafted side at x = 0, and the hole the one at x = 50, at a slant,
+# along ellipses, which rounds of 1 follow as pipes, each round its
+# rim in two halves that run on into each other.  The floor of the
+# counterbore and its edge stay sharp.
+profile blk along z 0 0 0 50 0 0 50 30 0 0 30 0
+extrude b from 0 to 40 blk draft 3
+circle h 8 15 20 along x
+circle cb 14 15 20 along x
+extrude hole from -1 to 51 h
+extrude bore from -1 to 6 cb
+subtract part b hole bore
+round 1 b.side hole
+round 1 b.side bore

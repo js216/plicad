@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# mixed.txt -- A folded plate and two solid parts in one assembly
+# Copyright (c) 2026 Jakob Kastelic
+
+# The pit of test/point.part goes through the plate of test/plate.sm,
+# once more far off, and once on the plate, touching it.
+materials materials
+part plate ../build/plate.st material red
+part through ../build/part_point.st move 10 10 -3 material steel
+part apart ../build/part_point.st move 200 0 0
+part on ../build/part_point.st move 60 20 0 material steel

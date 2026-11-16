@@ -6,10 +6,16 @@
 interfere \- find colliding parts
 .SH SYNOPSIS
 .B interfere
-.I assembly.fold
+[
+.B \-j
+.I n
+]
+.I assembly.st
 .SH DESCRIPTION
 .I Interfere
-prints a line for each pair of colliding parts:
+prints a line for each pair of colliding parts of the whole assembly,
+subassemblies too, each by its full name (as p1/knob/cap,
+.IR place (1)):
 .PP
 .RS
 .I "name name"
@@ -23,7 +29,43 @@ A sample collides if it lies inside the other part, 1 um or more from
 its faces; parts that only touch do not collide.
 .I N
 is the number of colliding samples, counted up to a limit.
+The pairs are counted by
+.I n
+processes, 4 by default, with the same output for any
+.IR n .
+.PP
+A pair with a solid part (from a stream, see
+.IR place (1))
+is checked on the exact solids of both instead.
+Pairs whose boxes stand apart are skipped.
+The faces and the edges of each solid are sampled on their exact
+surfaces and curves, each sample 1 um inside its own solid, and a
+sample that lies inside the other solid collides.
+Every sample lies on its face, not on the mesh past a curved edge, so
+solids that only touch do not collide on any surface, as a cone in a
+countersink of its angle.
+Samples lie at most
+.I h
+apart, the lesser of 0.5 mm and half the thinner of the two parts (the
+sheet of a folded part, or the thinnest wall of a solid between two
+faces turned away from each other), but only where a face of the other
+solid comes within 0.1 mm: elsewhere a piece of a face lies wholly
+inside the other solid or wholly outside it, and one sample tells which,
+and so does one for a flat piece that the faces near it, all flat,
+leave on one side.
+.PP
+So a collision is found wherever an edge of one solid runs inside the
+other for more than
+.IR h ,
+or where the part of a face of one inside the other holds a disk of
+diameter 1.2
+.IR h :
+in particular wherever one part goes into or through another, however
+thin either is.
 .SH SEE ALSO
 place(1)
 .SH BUGS
-An overlap thinner than the grid may be missed.
+Between two folded parts, an overlap thinner than the 1 mm grid may be
+missed.
+Between solids, a collision thinner than about 2 um may be missed, and
+the sampling grid stops at 0.1 mm for walls thinner than 0.2 mm.

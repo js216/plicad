@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# twotex.part -- A block of three textures, for the marks of drawings
+# Copyright (c) 2026 Jakob Kastelic
+
+# A block 40 by 20 by 10 with three bosses 3 across on its top.  All of
+# it is VDI 3400 Ref 30, which covers the most, but the top of the block
+# and of the bosses, Ref 18, and its front, Ref 24.
+materials materials
+profile p along z 0 0 0 side front 40 0 0 40 20 0 0 20 0
+extrude blk from 0 to 10 p
+circle b 3 10 10 along z
+extrude bosses from 10 to 12 b pattern +x 3 10
+union twotex blk bosses
+finish vdi30 any
+finish vdi18 blk.end bosses.end
+finish vdi24 blk.front

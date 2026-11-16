@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# inside.draw -- A drawing of profile.sm with a note longer than a line
+# Copyright (c) 2026 Jakob Kastelic
+
+units in
+template plain_b.ps
+field Title PLATE WITH A FLANGE
+material ALUMINUM SHEET, %%t THICK.
+finish NONE.
+note THE ROUND OPENINGS ARE HOLES; THE SQUARE ONES AND THE NOTCH ARE CUTS.
+note THE SIZE OF THE NOTCH IS GIVEN ACROSS ITS INSIDE, FROM EDGE TO EDGE.
+view front
+ lin x 2.756in 3.543in

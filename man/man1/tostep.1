@@ -6,22 +6,27 @@
 tostep \- write solids as STEP
 .SH SYNOPSIS
 .B tostep
-.I part.fold
-.br
-.B tostep
-.IR stream | \-
+.IR stream.st | \-
 .SH DESCRIPTION
 .I Tostep
-writes each part of a fold file, or each solid of a stream,
-as a manifold solid of one STEP file on the standard output,
-in world mm.
-A part with a colour is given an AP214 surface style in that colour.
+writes each part of a stream
+.RI ( stream (5)),
+a folded blank or an exact solid, as a manifold solid of one STEP file
+on the standard output, in world mm, a solid for each shell.
+A part with a material is given an AP214 surface style in its color.
 .PP
-From a stream it is the last program of a pipe.
-A solid is written for each shell.
+It may be the last program of a pipe.
 Source lines left unused by the pipe, and void shells, are refused.
-Faces are planes, cylinders, cones, spheres and tori;
-ellipses and arcs of circles on spheres are written as several edges
-on one curve.
+Faces are planes, cylinders, cones, spheres and tori, and pipes, the
+rounds along ellipses, which no STEP surface of its own is: each is
+written as a rational B-spline surface of degree 6 by 2 that is the
+pipe, exactly, over the face and some room round it.
+Ellipses, and arcs of circles on spheres and on pipes, are written as
+several edges on one curve.
+A nodal section of a torus
+.RI ( stream (5)),
+which no STEP curve is, is written as edges on cubic B-splines, which
+meet it and its tangents at their ends and keep within about 1e-10 mm
+of it; its faces stay exact.
 .SH SEE ALSO
-fold(5), part(5), smfold(1), tomesh(1)
+stream(5), part(5), smfold(1), tomesh(1)

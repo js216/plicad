@@ -2,8 +2,10 @@
 // interfere.c -- Print the pairs of placed parts whose material overlaps
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: interfere assembly.fold
+// Usage: interfere [-j N] assembly.st
 //
+// The pairs are counted in N processes, 4 by default; the output is the
+// same for any N.
 // It prints one line per colliding pair: "NAME NAME points N".  The
 // material of each part is sampled on a 1 mm grid in its flat faces at
 // three depths, and N counts the samples that collide, each once, up to
@@ -11,26 +13,62 @@
 // wholly in each other would take long to count.  A sample collides if
 // it lies inside the other part, 1 um or more from its faces.  Parts
 // that only touch do not collide.  The sampling can miss an overlap
-// thinner than the grid.
+// thinner than the grid.  A pair with a solid part (place(1)) is checked
+// on the exact solids of both instead, sampled on their faces and edges
+// (clash.h), and N counts those samples.
 
+#include "clash.h"
 #include "fold.h"
+#include "stream.h"
 #include "geom.h"
+#include "mesh.h"
+#include "shape.h"
 #include "util.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #define GRID 1.0
 #define MARGIN 1e-3
 
-enum { POINTS_MAX = 10000 }; // The most samples counted for a pair.
+enum {
+	POINTS_MAX = 10000, // The most samples counted for a pair.
+	WORKERS = 4, // The processes that count the pairs.
+	WORKERS_MAX = 64,
+	DECIMAL = 10,
+	LINE_LEN = 64 // Room for a line of a worker.
+};
+
+// A worker: its number w of nw, and the pipe it writes to.
+struct workers {
+	size_t w, nw;
+	int fd;
+};
 
 struct body {
 	struct part *p;
 	struct box *flat; // Flat box of each face, z unused.
 	struct box *world; // World box of each face.
 	struct box box; // World box of the part.
+	int solid; // Whether sh and cb hold the solid of the part.
+	struct shape sh; // Its exact solid in the world (clash.h).
+	struct clash_body cb;
 };
+
+// Makes the exact solid of b, if it has none yet.
+static void make_solid(struct body *b)
+{
+	if (b->solid) {
+		return;
+	}
+	part_shape(b->p, &b->sh);
+	clash_init(&b->cb, &b->sh, b->p->solid ? 0 : b->p->t);
+	b->solid = 1;
+}
 
 static void flat_boxes(struct body *b)
 {
@@ -315,23 +353,183 @@ static unsigned long overlap(const struct body *a, const struct body *b,
 	return n;
 }
 
-static void report_pairs(const struct body *bs, size_t n)
+// A pair of parts whose boxes meet, and its count.
+struct pair {
+	size_t i, j;
+	unsigned long k;
+};
+
+// The count of colliding samples of pair q, up to POINTS_MAX.
+static unsigned long pair_count(struct body *bs, const struct pair *q)
 {
+	struct body *a = &bs[q->i];
+	struct body *b = &bs[q->j];
+	unsigned long k = 0;
+
+	if (a->p->solid || b->p->solid) {
+		struct clash_pose x = { &a->cb, rig_id() };
+		struct clash_pose y = { &b->cb, rig_id() };
+
+		k = clash_count(x, y, POINTS_MAX);
+	} else {
+		k = overlap(b, a, overlap(a, b, 0));
+	}
+	return k < POINTS_MAX ? k : POINTS_MAX;
+}
+
+// Writes all n bytes of b to fd.
+static void write_all(int fd, const char *b, size_t n)
+{
+	while (n) {
+		ssize_t k = write(fd, b, n);
+
+		if (k <= 0) {
+			die("interfere: cannot write to the parent");
+		}
+		b += k;
+		n -= (size_t)k;
+	}
+}
+
+// Counts the pairs w, w + nw, w + 2 nw ... of qs into the pipe of wk, a
+// line "INDEX COUNT" for each that collides.
+static void count_some(struct body *bs, struct pair *qs, size_t nq,
+		       struct workers wk)
+{
+	for (size_t q = wk.w; q < nq; q += wk.nw) {
+		unsigned long k = pair_count(bs, &qs[q]);
+
+		if (k) {
+			char line[LINE_LEN];
+
+			xsnprintf(line, "%zu %lu\n", q, k);
+			write_all(wk.fd, line, strlen(line));
+		}
+	}
+	(void)close(wk.fd);
+}
+
+// Reads the lines "INDEX COUNT" of a worker from fd into qs.
+static void read_counts(int fd, struct pair *qs, size_t nq)
+{
+	char *buf = NULL;
+	size_t n = 0;
+	size_t cap = 0;
+	char chunk[LINE_LEN];
+	ssize_t k = 0;
+	char *s = NULL;
+
+	while ((k = read(fd, chunk, sizeof(chunk))) > 0) {
+		for (ssize_t i = 0; i < k; i++) {
+			PUSH(buf, n, cap, chunk[i]);
+		}
+	}
+	PUSH(buf, n, cap, 0);
+	(void)close(fd);
+	s = buf;
+	while (*s) {
+		char *end = NULL;
+		unsigned long q = strtoul(s, &end, DECIMAL);
+		unsigned long c = strtoul(end, &s, DECIMAL);
+
+		if (q < nq) {
+			qs[q].k = c;
+		}
+		s += strspn(s, "\n");
+	}
+	free(buf);
+}
+
+// Counts the pairs qs in nw processes, each pair in one, and waits for
+// them all.  The bodies are made before, and the processes share them.
+static void count_all(struct body *bs, struct pair *qs, size_t nq, size_t nw)
+{
+	pid_t *pid = xcalloc(nw + 1, sizeof(*pid));
+	int *fd = xcalloc(nw + 1, sizeof(*fd));
+	int failed = 0;
+
+	(void)fflush(stdout);
+	for (size_t w = 0; w < nw; w++) {
+		int p[2];
+
+		if (pipe(p) != 0) {
+			die("interfere: no pipe");
+		}
+		pid[w] = fork();
+		if (pid[w] < 0) {
+			die("interfere: cannot fork");
+		}
+		if (pid[w] == 0) {
+			struct workers wk = { w, nw, p[1] };
+
+			(void)close(p[0]);
+			count_some(bs, qs, nq, wk);
+			_exit(0);
+		}
+		(void)close(p[1]);
+		fd[w] = p[0];
+	}
+	for (size_t w = 0; w < nw; w++) {
+		int st = 0;
+
+		read_counts(fd[w], qs, nq);
+		if (waitpid(pid[w], &st, 0) < 0 || !WIFEXITED(st) ||
+		    WEXITSTATUS(st) != 0) {
+			failed = 1;
+		}
+	}
+	free(pid);
+	free(fd);
+	if (failed) {
+		die("interfere: a worker failed");
+	}
+}
+
+// The pairs of the n bodies bs whose boxes meet, into *out, with the
+// solids of those that need them made; returns their count.
+static size_t list_pairs(struct body *bs, size_t n, struct pair **out)
+{
+	struct pair *qs = NULL;
+	size_t nq = 0;
+	size_t cap = 0;
+
 	for (size_t i = 0; i < n; i++) {
 		for (size_t j = i + 1; j < n; j++) {
-			unsigned long k = 0;
+			struct pair q = { i, j, 0 };
 
 			if (!box_meet(bs[i].box, bs[j].box)) {
 				continue;
 			}
-			k = overlap(&bs[j], &bs[i], overlap(&bs[i], &bs[j], 0));
-			k = k < POINTS_MAX ? k : POINTS_MAX;
-			if (k) {
-				printf("%s %s points %lu\n", bs[i].p->name,
-				       bs[j].p->name, k);
+			if (bs[i].p->solid || bs[j].p->solid) {
+				make_solid(&bs[i]);
+				make_solid(&bs[j]);
 			}
+			PUSH(qs, nq, cap, q);
 		}
 	}
+	*out = qs;
+	return nq;
+}
+
+static void report_pairs(struct body *bs, size_t n, size_t nw)
+{
+	struct pair *qs = NULL;
+	size_t nq = list_pairs(bs, n, &qs);
+
+	if (nw > 1 && nq > 1) {
+		count_all(bs, qs, nq, nw < nq ? nw : nq);
+	} else {
+		for (size_t q = 0; q < nq; q++) {
+			qs[q].k = pair_count(bs, &qs[q]);
+		}
+	}
+	for (size_t q = 0; q < nq; q++) {
+		if (qs[q].k) {
+			printf("%s %s points %lu\n", bs[qs[q].i].p->name,
+			       bs[qs[q].j].p->name, qs[q].k);
+		}
+	}
+	free(qs);
 }
 
 int main(int argc, char **argv)
@@ -340,20 +538,41 @@ int main(int argc, char **argv)
 	struct body *bs = NULL;
 	size_t n = 0;
 
-	if (argc != 2) {
-		die("usage: interfere assembly.fold");
+	size_t nw = WORKERS;
+	int a = 1;
+
+	if (argc == 4 && strcmp(argv[1], "-j") == 0) {
+		char *end = NULL;
+		unsigned long v = strtoul(argv[2], &end, DECIMAL);
+
+		if (*end || end == argv[2] || v < 1 || v > WORKERS_MAX) {
+			die("interfere: -j takes 1 to %d", WORKERS_MAX);
+		}
+		nw = v;
+		a = 3;
 	}
-	n = read_fold(argv[1], &ps);
+	if (argc != a + 1) {
+		die("usage: interfere [-j N] assembly.st");
+	}
+	n = read_parts(argv[a], &ps);
 	bs = xcalloc(n + 1, sizeof(*bs));
 	for (size_t i = 0; i < n; i++) {
 		bs[i].p = &ps[i];
 		flat_boxes(&bs[i]);
 		world_boxes(&bs[i]);
+		if (ps[i].solid) {
+			make_solid(&bs[i]);
+			bs[i].box = bs[i].cb.box;
+		}
 	}
-	report_pairs(bs, n);
+	report_pairs(bs, n, nw);
 	for (size_t i = 0; i < n; i++) {
 		free(bs[i].flat);
 		free(bs[i].world);
+		if (bs[i].solid) {
+			clash_free(&bs[i].cb);
+			shape_free(&bs[i].sh);
+		}
 	}
 	free(bs);
 	free_parts(ps, n);

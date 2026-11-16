@@ -1,6 +1,6 @@
 part bnc
 volume 12333.6040
 area 7080.1688
-centre 1.5875 9.3981 -25.3842
+center 1.5875 9.3981 -25.3842
 bbox -55.5625 1.5748 -30.5943 58.7375 17.2466 -21.0693
 faces 78 plane 12 cylinder 36 cone 30 sphere 0 torus 0

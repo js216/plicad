@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# lids.txt -- Two lids come down onto a plate, one with a step of its own
+# Copyright (c) 2026 Jakob Kastelic
+
+# Each lid comes 30 mm down onto the one below and touches it; the file
+# samples the paths every 0.25 mm, the second lid every 2 mm, and the
+# plates of 2 mm hold that to 1 mm.
+step 0.25 1
+clearance 0.2
+part base ../build/plate.st
+part lid ../build/plate.st move 0 0 2 path move 0 0 -30
+part top ../build/plate.st move 0 0 4 path move 0 0 -30 step 2 5

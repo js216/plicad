@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# inserts -- Self-clinching hardware for sheet metal, by type
+# Copyright (c) 2026 Jakob Kastelic
+
+# NAME KIND HOLE SHEET EDGE THREAD BODY_D BODY_H [MATERIAL] [flush]
+#     [blind DEPTH]
+# One row for each type: its kind (nut, stud or standoff), the diameter
+# of its mounting hole, the least sheet thickness, the least distance
+# from the center of the hole to an edge or a bend line, its thread, and
+# the diameter and the height of its body, a plain cylinder that stands
+# on the sheet over the hole (for a stud, its post), with the material
+# of the library that the body takes, in the units of plicad(7).  A
+# flush type fills its hole too, and may have no body over the sheet
+# (BODY_H 0); a blind one sits in a hole DEPTH deep from the face it
+# stands on (insert.h).  The metric rows are usual sizes of such
+# hardware; the data of the maker of a part has the last word.
+nut-m2.5 nut 4.22 0.8 4.8 M2.5 6.35 1.5 steel
+nut-m3 nut 4.22 0.8 4.8 M3 6.35 1.5 steel
+nut-m4 nut 5.41 0.8 6.9 M4 7.87 2 steel
+nut-m5 nut 6.35 0.8 7.1 M5 8.89 2 steel
+nut-m6 nut 8.75 1.15 8.6 M6 11.05 4.08 steel
+stud-m3 stud 3 1 5.6 M3 3 10 steel
+stud-m4 stud 4 1 7.2 M4 4 10 steel
+stud-m5 stud 5 1 7.2 M5 5 12 steel
+standoff-m3 standoff 5.41 1 6.8 M3 5.4 6 steel
+standoff-m4 standoff 7.14 1.27 8 M4 7.1 8 steel
+# PEM self-clinching nuts S (steel) and CLS (stainless), shank codes 0
+# to 3 for the least sheet (3 for 440 and 632 only; the longest shank
+# that the sheet takes is the one to use): E across the head, T its
+# height above the sheet; from the PEM bulletin of types S, CLS
+# (cldata).
+s-440-0 nut 0.166in 0.030in 0.19in 4-40 0.250in 0.070in steel
+s-440-1 nut 0.166in 0.040in 0.19in 4-40 0.250in 0.070in steel
+s-440-2 nut 0.166in 0.056in 0.19in 4-40 0.250in 0.070in steel
+s-440-3 nut 0.166in 0.090in 0.19in 4-40 0.250in 0.070in steel
+s-632-0 nut 0.1875in 0.030in 0.22in 6-32 0.280in 0.070in steel
+s-632-1 nut 0.1875in 0.040in 0.22in 6-32 0.280in 0.070in steel
+s-632-2 nut 0.1875in 0.056in 0.22in 6-32 0.280in 0.070in steel
+s-632-3 nut 0.1875in 0.090in 0.22in 6-32 0.280in 0.070in steel
+s-832-0 nut 0.213in 0.030in 0.27in 8-32 0.310in 0.090in steel
+s-832-1 nut 0.213in 0.040in 0.27in 8-32 0.310in 0.090in steel
+s-832-2 nut 0.213in 0.056in 0.27in 8-32 0.310in 0.090in steel
+cls-440-0 nut 0.166in 0.030in 0.19in 4-40 0.250in 0.070in stainless
+cls-440-1 nut 0.166in 0.040in 0.19in 4-40 0.250in 0.070in stainless
+cls-440-2 nut 0.166in 0.056in 0.19in 4-40 0.250in 0.070in stainless
+cls-440-3 nut 0.166in 0.090in 0.19in 4-40 0.250in 0.070in stainless
+cls-632-0 nut 0.1875in 0.030in 0.22in 6-32 0.280in 0.070in stainless
+cls-632-1 nut 0.1875in 0.040in 0.22in 6-32 0.280in 0.070in stainless
+cls-632-2 nut 0.1875in 0.056in 0.22in 6-32 0.280in 0.070in stainless
+cls-632-3 nut 0.1875in 0.090in 0.22in 6-32 0.280in 0.070in stainless
+cls-832-0 nut 0.213in 0.030in 0.27in 8-32 0.310in 0.090in stainless
+cls-832-1 nut 0.213in 0.040in 0.27in 8-32 0.310in 0.090in stainless
+cls-832-2 nut 0.213in 0.056in 0.27in 8-32 0.310in 0.090in stainless
+# PEM flush nuts F, stainless, shank codes 1 and 2: flush with both
+# faces, H the head at the face they are pressed from; from the PEM
+# bulletin of type F (fdata).
+f-440-1 nut 0.172in 0.060in 0.23in 4-40 0.188in 0 stainless flush
+f-440-2 nut 0.172in 0.091in 0.23in 4-40 0.188in 0 stainless flush
+f-632-1 nut 0.213in 0.060in 0.27in 6-32 0.250in 0 stainless flush
+f-632-2 nut 0.213in 0.091in 0.27in 6-32 0.250in 0 stainless flush
+# PEM flush-head studs FHS, stainless: the head flush in the face they
+# are pressed from, the post of the thread L long on the other face
+# (length code in 16ths of an inch); from the PEM bulletin of types FH,
+# FHS (fhdata).
+fhs-440-4 stud 0.111in 0.040in 0.219in 4-40 0.112in 0.250in stainless flush
+fhs-440-6 stud 0.111in 0.040in 0.219in 4-40 0.112in 0.375in stainless flush
+fhs-440-8 stud 0.111in 0.040in 0.219in 4-40 0.112in 0.500in stainless flush
+fhs-632-4 stud 0.137in 0.040in 0.250in 6-32 0.138in 0.250in stainless flush
+fhs-632-6 stud 0.137in 0.040in 0.250in 6-32 0.138in 0.375in stainless flush
+fhs-632-8 stud 0.137in 0.040in 0.250in 6-32 0.138in 0.500in stainless flush
+# PEM standoffs SO, threaded through, and BSO, blind, steel: H across
+# the body, L its length (length code in 32nds of an inch); from the
+# PEM bulletin of types SO, BSO (sodata).
+so-440-4 standoff 0.166in 0.040in 0.23in 4-40 0.187in 0.125in steel
+so-440-6 standoff 0.166in 0.040in 0.23in 4-40 0.187in 0.188in steel
+so-440-8 standoff 0.166in 0.040in 0.23in 4-40 0.187in 0.250in steel
+so-440-12 standoff 0.166in 0.040in 0.23in 4-40 0.187in 0.375in steel
+so-440-16 standoff 0.166in 0.040in 0.23in 4-40 0.187in 0.500in steel
+bso-440-10 standoff 0.166in 0.040in 0.23in 4-40 0.187in 0.312in steel
+bso-440-12 standoff 0.166in 0.040in 0.23in 4-40 0.187in 0.375in steel
+bso-440-16 standoff 0.166in 0.040in 0.23in 4-40 0.187in 0.500in steel
+# PEM concealed-head studs CHA (aluminum) and CHC (stainless): the head
+# in a blind hole 0.043 in deep at the least, which leaves the other
+# face whole, the post of the thread L long (length code in 16ths of an
+# inch); from the PEM bulletin of types CHA, CHC (chdata), its inches
+# times 25.4 here, in mm, to fit the lines.
+cha-440-4 stud 4.3688 1.5748 3.9624 4-40 2.8448 6.35 aluminum blind 1.0922
+cha-440-6 stud 4.3688 1.5748 3.9624 4-40 2.8448 9.525 aluminum blind 1.0922
+cha-440-8 stud 4.3688 1.5748 3.9624 4-40 2.8448 12.7 aluminum blind 1.0922
+cha-440-10 stud 4.3688 1.5748 3.9624 4-40 2.8448 15.875 aluminum blind 1.0922
+cha-440-12 stud 4.3688 1.5748 3.9624 4-40 2.8448 19.05 aluminum blind 1.0922
+chc-440-4 stud 4.3688 1.5748 3.9624 4-40 2.8448 6.35 stainless blind 1.0922
+chc-440-6 stud 4.3688 1.5748 3.9624 4-40 2.8448 9.525 stainless blind 1.0922
+chc-440-8 stud 4.3688 1.5748 3.9624 4-40 2.8448 12.7 stainless blind 1.0922
+chc-440-10 stud 4.3688 1.5748 3.9624 4-40 2.8448 15.875 stainless blind 1.0922
+chc-440-12 stud 4.3688 1.5748 3.9624 4-40 2.8448 19.05 stainless blind 1.0922
+cha-632-4 stud 5.4102 1.5748 4.7752 6-32 3.5052 6.35 aluminum blind 1.0922
+cha-632-6 stud 5.4102 1.5748 4.7752 6-32 3.5052 9.525 aluminum blind 1.0922
+cha-632-8 stud 5.4102 1.5748 4.7752 6-32 3.5052 12.7 aluminum blind 1.0922
+cha-632-10 stud 5.4102 1.5748 4.7752 6-32 3.5052 15.875 aluminum blind 1.0922
+cha-632-12 stud 5.4102 1.5748 4.7752 6-32 3.5052 19.05 aluminum blind 1.0922
+cha-632-16 stud 5.4102 1.5748 4.7752 6-32 3.5052 25.4 aluminum blind 1.0922
+chc-632-4 stud 5.4102 1.5748 4.7752 6-32 3.5052 6.35 stainless blind 1.0922
+chc-632-6 stud 5.4102 1.5748 4.7752 6-32 3.5052 9.525 stainless blind 1.0922
+chc-632-8 stud 5.4102 1.5748 4.7752 6-32 3.5052 12.7 stainless blind 1.0922
+chc-632-10 stud 5.4102 1.5748 4.7752 6-32 3.5052 15.875 stainless blind 1.0922
+chc-632-12 stud 5.4102 1.5748 4.7752 6-32 3.5052 19.05 stainless blind 1.0922
+chc-632-16 stud 5.4102 1.5748 4.7752 6-32 3.5052 25.4 stainless blind 1.0922

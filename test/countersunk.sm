@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# countersunk.sm -- A plate with three countersinks of 82 degrees
+# Copyright (c) 2026 Jakob Kastelic
+
+sheet 3 1 0.44
+plate p -10 -10 50 10 at 0 0 0 axes +x +y
+hole h 4 0 0 along z csink 8 82 near pattern x 3 20

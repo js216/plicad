@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# 8353_strap.sm -- Leather strap of the carry handle Keystone 8353
+# Copyright (c) 2026 Jakob Kastelic
+
+# A reference solid, not a made part, crude as a block (no drawing):
+# the black leather strap, folded flat, 190.5 x 22 x 3 mm, on top of
+# the two end mounts (8353_mount.sm) from end to end.  The origin is the
+# middle, on the face that the handle mounts on.
+H = 9.5mm # The height of the handle over the face, its strap on top
+sx = 190.5mm/2
+sy = 11mm
+u0 = -sx
+v0 = -sy
+u1 = sx
+v1 = sy
+yt = H
+sheet 3mm 0.1mm 0.44
+plate k8353_strap u0 v0 u1 v1 at 0 0 yt axes +x +y
+round 1mm k8353_strap at u0 v0 yt
+round 1mm k8353_strap at u1 v0 yt
+round 1mm k8353_strap at u1 v1 yt
+round 1mm k8353_strap at u0 v1 yt

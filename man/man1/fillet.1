@@ -20,11 +20,33 @@ statements,
 .IR part (5).
 A round is the surface swept by a ball rolling along the edge
 in contact with both faces
-(a cylinder along a line, a torus along a circle).
-Larger radii are made first.
+(a cylinder along a line, a torus along a circle, a pipe along an
+ellipse, where a plane meets a cylinder at a slant, as a drafted face
+meets a round one or a hole;
+.IR stream (5)).
+A round whose tube would fold over itself, its radius past that of the
+curve of the center of its ball where it runs, is refused.
+Larger radii are made first, and of one radius the concave rounds
+before the convex ones, so that a convex round runs along a concave
+one of its radius as along a larger one.
 At a corner, rounds of one radius are continued along a smooth edge,
 ended on a face, joined in threes by a sphere,
-or mitred in pairs along an ellipse.
+or mitered in pairs along an ellipse.
+A round whose own face runs on smoothly into the face it ends on, as
+a round along a floor edge that goes round a larger round into a wall,
+ends on that face where its ball touches it; on a torus whose plane
+touches its inner circle, the end is a nodal section of the torus,
+.IR stream (5).
+Where the two far faces of a miter meet the plane of the miter in two
+lines, as across a crease, a piece of that plane closes the gap between
+the two rounds up to the edge of the far faces; a gap of less than
+1e-7 mm closes on the miter itself.
+Where the crease turns the other way from the rounds, as where a
+drafted face runs past a step, the far curves of touch reach the crease
+before the plane of the miter; the round whose far curve meets the
+miter first ends on it there, a sliver past the crease, and the other
+ends on the crease, along the miter and then along the curve where it
+meets the far face of the first, which closes the sliver.
 A round is named by the names of its two faces joined by +,
 a corner sphere by the names of its three.
 .TP
@@ -33,11 +55,22 @@ List the edges instead, one per line
 .RI ( "name name" " convex|concave|smooth" " angle length" ,
 the angle in degrees, 0 when smooth).
 .SH SEE ALSO
-part(5), extrude(1), bool(1), mould(1)
+part(5), extrude(1), bool(1), mold(1)
 .SH DIAGNOSTICS
 The following are refused:
-a rule that matches no edge;
+a rule that matches no edge, with the line of the rule after it that
+takes all its edges if there is one;
 any other kind of corner;
-a radius with no room for a neighbouring face or edge.
+a radius with no room for a neighboring face or edge;
+a radius larger than a round face it meets, as a corner of a drafted
+profile that narrows toward an end, with that face and its radius at
+the middle of the edge.
 A corner is named by its place and radius, a radius by the two faces
 of its edge.
+.SH BUGS
+A piece of a miter plane thinner than about 1e-6 mm, but not under
+1e-7 mm, is exact but finer than OCCT can tell, which then finds its
+edges crossing.
+A nodal section has no exact STEP curve;
+.IR tostep (1)
+writes it as cubic B-splines that keep within about 1e-10 mm of it.

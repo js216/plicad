@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# groove.part -- A groove in a floor, ending flush with a lip on it
+# Copyright (c) 2026 Jakob Kastelic
+
+# A floor, its top at z = 0, with a lip standing on it at its front, the
+# back face of the lip at y = 0, and a groove along y in the floor, its
+# walls drafted 1.5 degrees, ending flush with the back of the lip.  The
+# inner corners of the groove end get a round of 1.2; the groove edges
+# along the floor a round of 0.3, which runs on round the 1.2 rounds and
+# ends on the back of the lip, where those rounds run on smoothly into
+# it, along a nodal section of its torus.
+profile sp along y 0 -10 0 40 -10 0 40 0 0 0 0 0
+extrude slab from -5 to 30 sp
+profile lp along y 0 0 0 40 0 0 40 5 0 0 5 0
+extrude lip from -5 to 0 lp
+union body slab lip
+profile gp along y 15 -5 0 25 -5 0 25 1 0 15 1 0
+extrude groove from 35 to 0 gp draft 1.5
+subtract part body groove
+round 1.2 lip.end groove
+round 0.3 groove slab
+round 0.3 slab.end any

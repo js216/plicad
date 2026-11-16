@@ -14,17 +14,20 @@ enum {
 	VEC_WORDS = 3, // Numbers of a point or a direction.
 	FRAME_WORDS = 9, // o, n and x.
 	EDGE_HEAD = 6, // e V0 V1 T0 T1 KIND
-	SIZES_MAX = 2, // The most sizes of a surface.
-	RECORD_MAX = 32 // The most words of a record but a loop.
+	SIZES_MAX = 3, // The most sizes of a surface.
+	RECORD_MAX = 32, // The most words of a record but a loop.
+	FOOT_STEPS =
+		200 // The most halvings for the nearest point of an ellipse.
 };
 
-static const char *const curve_names[CV_KINDS] = { "line", "circle",
-						   "ellipse" };
-static const char *const surf_names[SF_KINDS] = { "plane", "cylinder", "cone",
-						  "sphere", "torus" };
+static const char *const curve_names[CV_KINDS] = { "line", "circle", "ellipse",
+						   "nodal" };
+static const char *const surf_names[SF_KINDS] = {
+	"plane", "cylinder", "cone", "sphere", "torus", "pipe"
+};
 // The sizes after the frame of each kind of curve and surface.
-static const size_t curve_sizes[CV_KINDS] = { 0, 1, 2 };
-static const size_t surf_sizes[SF_KINDS] = { 0, 1, 2, 1, 2 };
+static const size_t curve_sizes[CV_KINDS] = { 0, 1, 2, 2 };
+static const size_t surf_sizes[SF_KINDS] = { 0, 1, 2, 1, 2, 3 };
 
 struct vec frame_y(struct vec n, struct vec x)
 {
@@ -37,6 +40,12 @@ static struct vec dir_at(struct vec x, struct vec y, double u)
 	return add(mul(x, cos(u)), mul(y, sin(u)));
 }
 
+// The root of the nodal section c at t: sqrt(2 rt (2 r - rt - rt cos t)).
+static double nodal_root(const struct curve *c, double t)
+{
+	return sqrt(2 * c->b * ((2 * c->a) - c->b - (c->b * cos(t))));
+}
+
 struct vec curve_at(const struct curve *c, double t)
 {
 	struct vec y = frame_y(c->n, c->x);
@@ -46,6 +55,10 @@ struct vec curve_at(const struct curve *c, double t)
 		return add(c->o, mul(c->x, t));
 	case CV_CIRCLE:
 		return add(c->o, mul(dir_at(c->x, y, t), c->a));
+	case CV_NODAL:
+		return add(c->o, add(mul(c->x, c->a - c->b),
+				     add(mul(y, sin(t / 2) * nodal_root(c, t)),
+					 mul(c->n, c->b * sin(t)))));
 	default:
 		return add(c->o, add(mul(c->x, c->a * cos(t)),
 				     mul(y, c->b * sin(t))));
@@ -61,6 +74,13 @@ struct vec curve_tan(const struct curve *c, double t)
 		return c->x;
 	case CV_CIRCLE:
 		return mul(dir_at(y, mul(c->x, -1), t), c->a);
+	case CV_NODAL: {
+		double g = nodal_root(c, t);
+		double du = (cos(t / 2) * g / 2) +
+			    (sin(t / 2) * c->b * c->b * sin(t) / g);
+
+		return add(mul(y, du), mul(c->n, c->b * cos(t)));
+	}
 	default:
 		return add(mul(c->x, -c->a * sin(t)), mul(y, c->b * cos(t)));
 	}
@@ -78,9 +98,141 @@ double curve_param(const struct curve *c, struct vec p)
 		return px;
 	case CV_CIRCLE:
 		return atan2(py, px);
+	case CV_NODAL: {
+		// The angle about the tube, on the half of the sign of py.
+		double rho = hypot(px, py);
+		double t = atan2(dot(d, c->n), c->a - rho);
+
+		if (py >= 0 && t < 0) {
+			t += 2 * PI;
+		} else if (py < 0 && t > 0) {
+			t -= 2 * PI;
+		}
+		return t;
+	}
 	default:
 		return atan2(py / c->b, px / c->a);
 	}
+}
+
+// The root s of g(s) = (n0 / (s + r0))^2 + (z1 / (s + 1))^2 - 1 for the
+// nearest point of an ellipse (ellipse_near), g0 = g(0), by halvings:
+// g falls from above 0 at z1 - 1 to below 0 past hypot(n0, z1) - 1.
+static double near_root(double r0, double z0, double z1, double g0)
+{
+	double n0 = r0 * z0;
+	double s0 = z1 - 1;
+	double s1 = g0 < 0 ? 0 : hypot(n0, z1) - 1;
+	double s = 0;
+
+	for (int i = 0; i < FOOT_STEPS; i++) {
+		double g = 0;
+
+		s = (s0 + s1) / 2;
+		if (!(s > s0 && s < s1)) {
+			break;
+		}
+		g = ((n0 / (s + r0)) * (n0 / (s + r0))) +
+		    ((z1 / (s + 1)) * (z1 / (s + 1))) - 1;
+		if (g > 0) {
+			s0 = s;
+		} else if (g < 0) {
+			s1 = s;
+		} else {
+			break;
+		}
+	}
+	return s;
+}
+
+// The point (*x0, *x1) of the ellipse with half axes e0 >= e1 > 0 nearest
+// the point (y0, y1), both at least 0: where the normal of the ellipse
+// runs through it.  This is the method of D. Eberly, "Distance from a
+// point to an ellipse", which halves an interval of one root and so
+// keeps every bit; the nearest point for y1 = 0 inside the evolute lies
+// off the axis.
+static void ellipse_near(double e0, double e1, double y0, double y1, double *x0,
+			 double *x1)
+{
+	double r0 = (e0 / e1) * (e0 / e1);
+	double numer = e0 * y0;
+	double denom = (e0 * e0) - (e1 * e1);
+
+	if (y1 > 0 && y0 > 0) {
+		double z0 = y0 / e0;
+		double z1 = y1 / e1;
+		double sb = near_root(r0, z0, z1, (z0 * z0) + (z1 * z1) - 1);
+
+		*x0 = r0 * y0 / (sb + r0);
+		*x1 = y1 / (sb + 1);
+	} else if (y1 > 0) {
+		*x0 = 0;
+		*x1 = e1;
+	} else if (numer < denom) {
+		double xd = numer / denom;
+
+		*x0 = e0 * xd;
+		*x1 = e1 * sqrt(fmax(0, 1 - (xd * xd)));
+	} else {
+		*x0 = e0;
+		*x1 = 0;
+	}
+}
+
+double pipe_foot(const struct surf *s, struct vec p)
+{
+	struct vec d = sub(p, s->o);
+	struct vec y = frame_y(s->n, s->x);
+	double px = dot(d, s->x);
+	double py = dot(d, y);
+	int swap = s->r3 > s->r;
+	double e0 = swap ? s->r3 : s->r;
+	double e1 = swap ? s->r : s->r3;
+	double x0 = 0;
+	double x1 = 0;
+	double fx = 0;
+	double fy = 0;
+
+	ellipse_near(e0, e1, fabs(swap ? py : px), fabs(swap ? px : py), &x0,
+		     &x1);
+	fx = copysign(swap ? x1 : x0, px);
+	fy = copysign(swap ? x0 : x1, py);
+	return atan2(fy / s->r3, fx / s->r);
+}
+
+double curve_near(const struct curve *c, struct vec p)
+{
+	struct surf e;
+
+	if (c->kind != CV_ELLIPSE) {
+		return curve_param(c, p);
+	}
+	memset(&e, 0, sizeof(e));
+	e.kind = SF_PIPE;
+	e.o = c->o;
+	e.n = c->n;
+	e.x = c->x;
+	e.r = c->a;
+	e.r3 = c->b;
+	e.r2 = 1;
+	return pipe_foot(&e, p);
+}
+
+struct line3 pipe_ring(const struct surf *s, double u)
+{
+	struct vec y = frame_y(s->n, s->x);
+	struct line3 r;
+
+	r.o = add(s->o, add(mul(s->x, s->r * cos(u)), mul(y, s->r3 * sin(u))));
+	r.d = unit(add(mul(s->x, s->r3 * cos(u)), mul(y, s->r * sin(u))));
+	return r;
+}
+
+double pipe_bend(const struct surf *s)
+{
+	double lo = fmin(s->r, s->r3);
+
+	return lo * lo / fmax(s->r, s->r3);
 }
 
 struct vec surf_at(const struct surf *s, struct uv q)
@@ -99,6 +251,12 @@ struct vec surf_at(const struct surf *s, struct uv q)
 	case SF_SPHERE:
 		return add(s->o, add(mul(e, s->r * cos(q.v)),
 				     mul(s->n, s->r * sin(q.v))));
+	case SF_PIPE: {
+		struct line3 c = pipe_ring(s, q.u);
+
+		return add(c.o, add(mul(c.d, s->r2 * cos(q.v)),
+				    mul(s->n, s->r2 * sin(q.v))));
+	}
 	default:
 		return add(s->o, add(mul(e, s->r + (s->r2 * cos(q.v))),
 				     mul(s->n, s->r2 * sin(q.v))));
@@ -121,6 +279,13 @@ struct uv surf_param(const struct surf *s, struct vec p)
 		q.v = atan2(h, hypot(px, py));
 	} else if (s->kind == SF_TORUS) {
 		q.v = atan2(h, hypot(px, py) - s->r);
+	} else if (s->kind == SF_PIPE) {
+		double u = pipe_foot(s, p);
+		struct line3 c = pipe_ring(s, u);
+		struct vec dc = sub(p, c.o);
+
+		q.u = u;
+		q.v = atan2(dot(dc, s->n), dot(dc, c.d));
 	}
 	return q;
 }
@@ -140,6 +305,8 @@ struct vec surf_normal(const struct surf *s, struct vec p)
 		return unit(sub(e, mul(s->n, s->r2)));
 	case SF_SPHERE:
 		return unit(d);
+	case SF_PIPE:
+		return unit(sub(p, pipe_ring(s, pipe_foot(s, p)).o));
 	default:
 		return unit(sub(d, mul(e, s->r)));
 	}
@@ -160,6 +327,8 @@ double surf_dist(const struct surf *s, struct vec p)
 		return (rho - s->r - (s->r2 * h)) / sqrt(1 + (s->r2 * s->r2));
 	case SF_SPHERE:
 		return len(d) - s->r;
+	case SF_PIPE:
+		return len(sub(p, pipe_ring(s, pipe_foot(s, p)).o)) - s->r2;
 	default:
 		return hypot(rho - s->r, h) - s->r2;
 	}
@@ -178,6 +347,15 @@ double surf_dv(const struct surf *s, struct line3 t)
 	double dr = dot(d, e);
 	double q = s->kind == SF_TORUS ? rho - s->r : rho;
 
+	if (s->kind == SF_PIPE) {
+		// v = atan2(h, w) about the nearest point of the ellipse, whose
+		// normal w along the ring keeps the distance along it.
+		struct line3 c = pipe_ring(s, pipe_foot(s, p));
+
+		q = dot(sub(p, c.o), c.d);
+		h = dot(sub(p, c.o), s->n);
+		dr = dot(d, c.d);
+	}
 	switch (s->kind) {
 	case SF_PLANE:
 		return dot(d, frame_y(s->n, s->x));
@@ -196,7 +374,7 @@ double angle_near(double a, double ref)
 
 double curve_dist(const struct curve *c, struct vec p)
 {
-	return len(sub(p, curve_at(c, curve_param(c, p))));
+	return len(sub(p, curve_at(c, curve_near(c, p))));
 }
 
 double turn_from(double t, double from)
@@ -206,7 +384,7 @@ double turn_from(double t, double from)
 
 int curve_turns(const struct curve *c)
 {
-	return c->kind != CV_LINE;
+	return c->kind == CV_CIRCLE || c->kind == CV_ELLIPSE;
 }
 
 void shape_init(struct shape *sh, const char *name)
@@ -344,22 +522,30 @@ static void put_curve(FILE *out, const struct curve *c)
 	}
 }
 
+// The sizes of surface s in the order of its text form.
+static double *surf_size(struct surf *s, size_t i)
+{
+	if (i == 0) {
+		return &s->r;
+	}
+	return i == 1 && s->kind == SF_PIPE ? &s->r3 : &s->r2;
+}
+
 static void put_surf(FILE *out, const struct surf *s)
 {
-	const double sizes[SIZES_MAX] = { s->r, s->r2 };
+	struct surf c = *s;
 
 	(void)fprintf(out, " %s", surf_names[s->kind]);
 	put_vec(out, s->o);
 	put_vec(out, s->n);
 	put_vec(out, s->x);
 	for (size_t i = 0; i < surf_sizes[s->kind] && i < SIZES_MAX; i++) {
-		put_num(out, sizes[i]);
+		put_num(out, *surf_size(&c, i));
 	}
 }
 
 void shape_write(FILE *out, const struct shape *sh)
 {
-	(void)fprintf(out, "brep %s\n", sh->name);
 	for (size_t i = 0; i < sh->nv; i++) {
 		(void)fprintf(out, "v");
 		put_vec(out, sh->v[i]);
@@ -393,7 +579,6 @@ void shape_write(FILE *out, const struct shape *sh)
 			(void)fprintf(out, "\n");
 		}
 	}
-	(void)fprintf(out, "end\n");
 }
 
 // The words of a record from words w.
@@ -483,7 +668,9 @@ static void read_edge(struct shape *sh, const struct record *r)
 	i += VEC_WORDS;
 	e.c.a = curve_sizes[k] > 0 ? word_num(r, i) : 0;
 	e.c.b = curve_sizes[k] > 1 ? word_num(r, i + 1) : 0;
-	if (r->n != i + curve_sizes[k] || !(e.t1 > e.t0)) {
+	if (r->n != i + curve_sizes[k] || !(e.t1 > e.t0) ||
+	    (k == CV_NODAL && !(e.c.b > 0 && e.c.a > e.c.b && e.t0 >= -2 * PI &&
+				e.t1 <= 2 * PI))) {
 		die("%s: bad edge", r->where);
 	}
 	if (k != CV_LINE) {
@@ -495,7 +682,6 @@ static void read_edge(struct shape *sh, const struct record *r)
 static void read_face(struct shape *sh, const struct record *r)
 {
 	struct surf s;
-	double sizes[SIZES_MAX] = { 0, 0 };
 	int k = r->n > 3 ? kind_of(r->w[3], surf_names, SF_KINDS) : -1;
 	int sense = 0;
 
@@ -519,10 +705,11 @@ static void read_face(struct shape *sh, const struct record *r)
 		die("%s: bad face", r->where);
 	}
 	for (size_t i = 0; i < surf_sizes[k] && i < SIZES_MAX; i++) {
-		sizes[i] = word_num(r, 4 + FRAME_WORDS + i);
+		*surf_size(&s, i) = word_num(r, 4 + FRAME_WORDS + i);
 	}
-	s.r = sizes[0];
-	s.r2 = sizes[1];
+	if (k == SF_PIPE && !(s.r > 0 && s.r2 > 0 && s.r3 > 0)) {
+		die("%s: a pipe needs sizes above 0", r->where);
+	}
 	shape_face(sh, s, sense, r->w[1]);
 }
 
@@ -676,4 +863,55 @@ size_t shape_shells(const struct shape *sh, size_t *shell)
 	free(first);
 	free(up);
 	return n;
+}
+
+// A copy of the n items of size each at p, with room for one more.
+static void *copy_of(const void *p, size_t n, size_t size)
+{
+	void *q = xmalloc((n + 1) * size);
+
+	if (n) {
+		memcpy(q, p, n * size);
+	}
+	return q;
+}
+
+void shape_copy(struct shape *to, const struct shape *from)
+{
+	*to = *from;
+	to->name = xstrdup(from->name);
+	to->v = copy_of(from->v, from->nv, sizeof(*from->v));
+	to->e = copy_of(from->e, from->ne, sizeof(*from->e));
+	to->u = copy_of(from->u, from->nu, sizeof(*from->u));
+	to->l = copy_of(from->l, from->nl, sizeof(*from->l));
+	to->f = copy_of(from->f, from->nf, sizeof(*from->f));
+	to->capv = to->nv;
+	to->cape = to->ne;
+	to->capu = to->nu;
+	to->capl = to->nl;
+	to->capf = to->nf;
+	for (size_t i = 0; i < to->nf; i++) {
+		to->f[i].name = xstrdup(from->f[i].name);
+	}
+}
+
+void shape_move(struct shape *sh, struct rigid m)
+{
+	for (size_t i = 0; i < sh->nv; i++) {
+		sh->v[i] = rig_pt(m, sh->v[i]);
+	}
+	for (size_t i = 0; i < sh->ne; i++) {
+		struct curve *c = &sh->e[i].c;
+
+		c->o = rig_pt(m, c->o);
+		c->n = rig_dir(m, c->n);
+		c->x = rig_dir(m, c->x);
+	}
+	for (size_t i = 0; i < sh->nf; i++) {
+		struct surf *s = &sh->f[i].s;
+
+		s->o = rig_pt(m, s->o);
+		s->n = rig_dir(m, s->n);
+		s->x = rig_dir(m, s->x);
+	}
 }

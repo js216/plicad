@@ -6,8 +6,8 @@
 # moved and turned, as tomesh wrote them (test/cube.obj, test/point.obj);
 # the cube again as FreeCAD exports it (test/freecad.obj); and a picture
 # of two by two pixels on the floor in front of them.
-mesh cube cube.obj colour 0.8 0.1 0.1
-mesh point point.obj move 60 0 0 turn 0 0 1 30
+mesh cube cube.obj color 0.8 0.1 0.1
+mesh point point.obj move 60 0 0 turn z 30
 mesh fc freecad.obj move 0 70 0  # FreeCAD names no part.
-image pic ../build/view.ppm 0 -40 0 50 -40 0 0 -10 0
+image pic ../build/view.ppm on cube 0 -40 0 50 -40 0 0 -10 0
 view front

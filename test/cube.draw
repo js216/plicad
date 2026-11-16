@@ -2,6 +2,7 @@
 # cube.draw -- The drawing of the cubical cup of cube.sm
 # Copyright (c) 2026 Jakob Kastelic
 
+units in
 template plain_b.ps
 field Title CUP, CUBICAL
 field Number TBD
@@ -9,14 +10,14 @@ field Rev A
 field Drawn JK 11/13/26
 material 5052-H32 ALUMINUM ALLOY, %%t THICK.
 finish ALODINE CLEAR (ROHS COMPLIANT).
-boxed PART MARKING: VENDOR ID, MONTH/YEAR OF MANUFACTURE, PART NUMBER,
-+ AND CURRENT REVISION LEVEL USING METAL AND/OR RUBBER STAMP,
-+ APPROXIMATELY WHERE SHOWN.
+boxed PART MARKING: VENDOR ID, MONTH/YEAR OF MANUFACTURE, PART NUMBER, \
+    AND CURRENT REVISION LEVEL USING METAL AND/OR RUBBER STAMP, \
+    APPROXIMATELY WHERE SHOWN.
 note REMOVE ALL BURRS AND SHARP EDGES.
 note BEND RADII SHALL BE .03 MAX.
 revision A 11/13/26 JK INITIAL RELEASE
 view top
- flag .5 1.5 3
+ flag .5in 1.5in 3
 view front
 view right
 view flat title FLAT PATTERN

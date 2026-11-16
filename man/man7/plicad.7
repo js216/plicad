@@ -1,0 +1,154 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" plicad.7 -- Manual page of the language of PliCad
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PLICAD 7
+.SH NAME
+plicad \- the language of the sources of PliCad
+.SH DESCRIPTION
+Every source file of PliCad, a sheet metal part
+.RI ( sm (5)),
+a solid part
+.RI ( part (5)),
+an assembly
+.RI ( assembly (5)),
+a scene
+.RI ( scene (5)),
+a drawing
+.RI ( draw (5)),
+a table of materials and a file of parameters, is written in one
+language, which this page gives; each kind of file adds its own
+statements.
+.SS Lines
+A source file holds one statement on each line.
+A
+.B #
+begins a comment, which runs to the end of the line.
+A line that then ends in a backslash runs on into the next line: the
+backslash, the blanks before it and the blanks that begin the next
+line stand for one blank, and the statement takes the number of its
+first line in messages.
+Lines with nothing left are skipped.
+.SS Words and numbers
+The words of a statement stand apart by blanks.
+A number is an expression without blanks, or one in parentheses:
+numbers, names, the operators
+.BR "+ \- * /" ,
+parentheses and the functions
+.BR floor ,
+.BR ceil ,
+.BR abs ,
+.BR tan ,
+.BR sin ,
+.BR cos ,
+.BR sqrt ,
+.BR min ,
+.BR max ,
+.B hypot
+and
+.BR atan2 ,
+whose angles are in degrees.
+Any number may carry a unit:
+.B in
+for inches,
+.B mm
+for millimeters and
+.B deg
+for degrees.
+A length without a unit is in mm, and an angle in degrees; what PliCad
+writes, it writes in mm.
+Every value must be finite and within 1e6.
+.SS Names
+.TP
+.I "NAME = EXPR"
+defines NAME, a letter or an underscore and then letters, digits and
+underscores, as the value of EXPR, for the statements below it.
+.TP
+.BI include " FILE"
+reads the definitions of FILE, a file of parameters: its lines
+.I "NAME = EXPR"
+and its comments, and nothing else.
+FILE, as every file a source names, lies relative to the source.
+.SS Places
+The statements that place a part or move it share these words.
+.TP
+.BI move " DX DY DZ"
+moves by (DX, DY, DZ).
+.TP
+.BI turn " AXIS DEG"
+.RB [ about
+.IR "X Y Z" ]
+.br
+turns by DEG degrees about the line along the world axis AXIS,
+.BR x ,
+.B y
+or
+.BR z ,
+through the point (X, Y, Z), or through a point that the statement
+says if it names none.
+.PP
+Steps of moves and turns apply in the order they are written.
+The word
+.B at
+only gives a position, as in
+.BI at " X Y Z" .
+The two sides of a sheet are
+.B near
+and
+.BR far :
+the near side is the reference face, z = 0 in the flat.
+.SS Materials and finishes
+A material is the same statement in every source, and in a stream:
+.PP
+.RS
+.nf
+material NAME R G B ROUGHNESS DENSITY [draft DEG] [mark LETTER] \e
+    [vdi GRADE | callout TEXT]
+materials FILE
+.fi
+.RE
+.PP
+The color and the roughness run from 0 to 1, the density is in g/cm3.
+A material is the body of a part, or a finish on its faces: a coat of a
+sheet
+.RI ( sm (5)),
+or the finish of faces of a solid
+.RI ( part (5)).
+A finish may be the texture of a mold: a grade of VDI 3400, 0 to 45,
+which reads VDI 3400 REF GRADE, or a callout, the rest of the line, as
+.BR "callout MOLD-TECH MT-11010" .
+A texture has no color of its own: its faces show the color of the body,
+0.85 of it, and its R G B are unused; a coat shows its own.
+.B draft
+is the least draft that the finish needs, from 0 to 45 degrees,
+which
+.IR mold (1)
+checks, and
+.B mark
+the capital letter that marks the finish on a drawing; without one, the
+first from T on that no other finish of the drawing has.
+A
+.B materials
+statement reads a file of material statements, by default from the
+library,
+.IR plicad-lib (7).
+Two materials of one name must be the same.
+.SS Names of parts
+A name of a part, and of the features and faces of a part, is declared
+by the statement that makes it, and the tools select by these names
+alone.
+Inside an assembly the name of a part of a subassembly is the name of
+the subassembly, a slash, and its own name.
+.SH EXAMPLE
+.RS
+.nf
+# A plate and its flange, the flange as wide as a parameter.
+include sizes.params
+T = 1.5
+sheet T 1 0.44
+plate base 0 0 4in 50 at 0 0 0 axes +x +y
+flange lip base +y 90 (W / 2) \e
+    span 10 90
+.fi
+.RE
+.SH SEE ALSO
+param(1), sm(5), part(5), stream(5), assembly(5), scene(5), draw(5)

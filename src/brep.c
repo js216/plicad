@@ -42,7 +42,7 @@ static void end_loop(struct brep *b, size_t first)
 	PUSH(b->l, b->nl, b->capl, l);
 }
 
-// Where a face comes from: F_TOP .. F_HOLE, and the index of what.
+// Where a face comes from: F_NEAR .. F_HOLE, and the index of what.
 struct origin {
 	int from;
 	size_t idx;
@@ -61,14 +61,16 @@ static size_t start_face(struct brep *b, struct bface f, struct origin o)
 static struct bface face_of(int type, struct vec o, struct vec n, struct vec x,
 			    double r, int sense)
 {
-	struct bface f = { type, o, n, x, r, 0, sense, 0, 0, F_TOP, 0 };
+	struct bface f = { type, o, n, x, r, 0, sense, 0, 0, F_NEAR, 0 };
 
 	return f;
 }
 
 static struct bedge line_edge(size_t v0, size_t v1)
 {
-	struct bedge e = { v0, v1, C_LINE, { 0, 0, 0 }, { 0, 0, 0 }, 0, 0 };
+	struct bedge e = {
+		v0, v1, C_LINE, { 0, 0, 0 }, { 0, 0, 0 }, 0, 0, NONE
+	};
 
 	return e;
 }
@@ -236,9 +238,10 @@ struct ctx {
 	size_t *ve; // 2D vertex to vertical edge, NONE until needed.
 	size_t *et; // 2D edge to top edge.
 	size_t *eb; // 2D edge to bottom edge.
-	size_t *ht; // Hole to top circle.
-	size_t *hb; // Hole to bottom circle.
-	size_t *hm; // Hole to the circle where its countersink ends.
+	size_t *ht; // Hole to top circle, NONE for a blind one from below.
+	size_t *hb; // Hole to bottom circle, NONE for a blind one from above.
+	size_t *hm; // Hole to the circle where its countersink ends, or the
+		// floor of a blind one.
 };
 
 static void make_vertices(struct ctx *c)
@@ -287,6 +290,7 @@ static size_t hole_circle(struct ctx *c, const struct hole *h, double z,
 	e.v0 = add_vert(c->b, fmap(p, h->face, h->cx + r, h->cy, z));
 	e.v1 = e.v0;
 	e.c = fmap(p, h->face, h->cx, h->cy, z);
+	e.by = h->by;
 	return add_edge(c->b, e);
 }
 
@@ -301,6 +305,7 @@ static void make_edges(struct ctx *c)
 		struct bedge top = line_edge(c->tv[e->v0], c->tv[e->v1]);
 		struct bedge bot = line_edge(c->bv[e->v0], c->bv[e->v1]);
 
+		top.by = bot.by = e->by;
 		c->et[i] = add_edge(c->b, edge3(p, e, f, top, c->b, 0));
 		c->eb[i] = add_edge(c->b, edge3(p, e, f, bot, c->b, -p->t));
 	}
@@ -308,22 +313,39 @@ static void make_edges(struct ctx *c)
 		const struct hole *h = &p->holes[i];
 		double zm = h->side > 0 ? -h->h : -p->t + h->h;
 
+		if (h->blind > 0) {
+			double zf = h->bside > 0 ? -h->blind : -p->t + h->blind;
+			size_t open = hole_circle(
+				c, h, h->bside > 0 ? 0 : -p->t, h->r);
+
+			c->ht[i] = h->bside > 0 ? open : NONE;
+			c->hb[i] = h->bside > 0 ? NONE : open;
+			c->hm[i] = hole_circle(c, h, zf, h->r);
+			continue;
+		}
 		c->ht[i] = hole_circle(c, h, 0, h->side > 0 ? h->rc : h->r);
 		c->hb[i] = hole_circle(c, h, -p->t, h->side < 0 ? h->rc : h->r);
 		c->hm[i] = h->side ? hole_circle(c, h, zm, h->r) : NONE;
 	}
 }
 
-// The vertical edge at 2D vertex k, top to bottom.
-static size_t vertical(struct ctx *c, size_t k)
+// The vertical edge at 2D vertex k, top to bottom, of the feature by of
+// the side that asks for it, or of none if two sides of two features
+// meet there.
+static size_t vertical(struct ctx *c, size_t k, size_t by)
 {
 	if (c->ve[k] == NONE) {
-		c->ve[k] = add_edge(c->b, line_edge(c->tv[k], c->bv[k]));
+		struct bedge e = line_edge(c->tv[k], c->bv[k]);
+
+		e.by = by;
+		c->ve[k] = add_edge(c->b, e);
+	} else if (c->b->e[c->ve[k]].by != by) {
+		c->b->e[c->ve[k]].by = NONE;
 	}
 	return c->ve[k];
 }
 
-// Surface of the top (k = 0) or bottom (k = 1) of 2D face f.
+// Surface of the near (k = 0) or far (k = 1) face of 2D face f.
 static struct bface cap_surface(const struct part *p, size_t f, int k)
 {
 	const struct map *m = &p->maps[p->faces[f]];
@@ -357,7 +379,7 @@ static void cap_faces(struct ctx *c, size_t f)
 	size_t nl = face_loops(p, f, &hs, &st);
 
 	for (int k = 0; k < 2; k++) {
-		struct origin o = { k ? F_BOTTOM : F_TOP, f };
+		struct origin o = { k ? F_FAR : F_NEAR, f };
 		size_t fi = start_face(b, cap_surface(p, f, k), o);
 
 		for (size_t l = 0; l < nl; l++) {
@@ -378,7 +400,8 @@ static void cap_faces(struct ctx *c, size_t f)
 		for (size_t i = 0; i < p->nholes; i++) {
 			size_t first = b->nu;
 
-			if (p->holes[i].face != f) {
+			if (p->holes[i].face != f ||
+			    (k ? c->hb[i] : c->ht[i]) == NONE) {
 				continue;
 			}
 			use(b, k ? c->hb[i] : c->ht[i], k);
@@ -513,11 +536,12 @@ static void side_face(struct ctx *c, const struct side *s, const size_t *run,
 	for (size_t k = 0; k < n; k++) {
 		use(b, c->eb[s[run[k]].e], s[run[k]].fwd);
 	}
-	use(b, vertical(c, s[run[n - 1]].to), 0);
+	use(b, vertical(c, s[run[n - 1]].to, c->p->edges[s[run[n - 1]].e].by),
+	    0);
 	for (size_t k = n; k-- > 0;) {
 		use(b, c->et[s[run[k]].e], !s[run[k]].fwd);
 	}
-	use(b, vertical(c, s[run[0]].from), 1);
+	use(b, vertical(c, s[run[0]].from, c->p->edges[s[run[0]].e].by), 1);
 	end_loop(b, first);
 	b->f[fi].nloops = 1;
 }
@@ -563,7 +587,7 @@ static void side_faces(struct ctx *c)
 	free(done);
 }
 
-// A band of a hole between the circles up (toward the top face) and
+// A band of a hole between the circles up (toward the near face) and
 // down: a cylinder, or a cone of a countersink that widens up if wide is
 // 1 and down if it is -1.
 struct band {
@@ -604,18 +628,41 @@ static void hole_band(struct ctx *c, size_t i, struct band bd)
 	b->f[fi].nloops = 2;
 }
 
+// Adds the floor of blind hole i, a disk across the hole at its depth
+// that faces its open face.
+static void hole_floor(struct ctx *c, size_t i)
+{
+	const struct part *p = c->p;
+	const struct hole *h = &p->holes[i];
+	struct origin o = { F_HOLE, i };
+	double zf = h->bside > 0 ? -h->blind : -p->t + h->blind;
+	struct bface f = face_of(S_PLANE, fmap(p, h->face, h->cx, h->cy, zf),
+				 fnormal(p, h->face), fxdir(p, h->face), 0,
+				 h->bside);
+	size_t fi = start_face(c->b, f, o);
+	size_t first = c->b->nu;
+
+	use(c->b, c->hm[i], h->bside > 0);
+	end_loop(c->b, first);
+	c->b->f[fi].nloops = 1;
+}
+
 static void hole_faces(struct ctx *c)
 {
 	const struct part *p = c->p;
 
 	for (size_t i = 0; i < p->nholes; i++) {
 		const struct hole *h = &p->holes[i];
-
 		struct band top = { c->ht[i], c->hm[i], h->side > 0 };
 		struct band bot = { c->hm[i], c->hb[i], h->side < 0 ? -1 : 0 };
 		struct band all = { c->ht[i], c->hb[i], 0 };
+		struct band wall = { h->bside > 0 ? c->ht[i] : c->hm[i],
+				     h->bside > 0 ? c->hm[i] : c->hb[i], 0 };
 
-		if (h->side) {
+		if (h->blind > 0) {
+			hole_band(c, i, wall);
+			hole_floor(c, i);
+		} else if (h->side) {
 			hole_band(c, i, top);
 			hole_band(c, i, bot);
 		} else {
@@ -631,6 +678,9 @@ void brep_build(const struct part *p, struct brep *b)
 	size_t ne = p->nedges + 1;
 	size_t nh = p->nholes + 1;
 
+	if (p->solid) {
+		die("%s: a solid part has no folded blank", p->name);
+	}
 	memset(b, 0, sizeof(*b));
 	c.p = p;
 	c.b = b;

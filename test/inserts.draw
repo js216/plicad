@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# inserts.draw -- A drawing of test/inserts.sm, its inserts called out
+# Copyright (c) 2026 Jakob Kastelic
+
+units mm
+template plain_b.ps
+field Title INSERTS
+material ALUMINUM SHEET, %%t THICK.
+finish NONE.
+inserts %n X %t, INSTALL %s SIDE
+view top

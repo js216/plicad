@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# draftstep.part -- Rounds of a drafted block where a plate steps back
+# Copyright (c) 2026 Jakob Kastelic
+
+# A block 40 x 20 drafted 3 deg along y, and across it a plate whose
+# front, seen from the side, steps back sharply: at y = -20 from z = -15
+# to 5, then back to y = -10 above, with no arc at the steps.  The edge
+# where the drafted sides of the block meet the plate gets a round of 1.
+profile b along y -20 -10 0 20 -10 0 20 10 0 -20 10 0
+extrude box from 0 to -30 b draft 3
+profile w along x 5 -15 0 5 15 0 -10 15 0 -10 5 0 -20 5 0 -20 -15 0
+extrude plate from -25 to 25 w
+common part box plate
+round 1 box.side plate

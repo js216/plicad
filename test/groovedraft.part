@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# groovedraft.part -- A groove that ends against a wall in a drafted floor
+# Copyright (c) 2026 Jakob Kastelic
+
+# A block along y whose faces lean in by a draft of 1 degree toward
+# y = 0, so that its floor, the face on top, leans too; a groove cut
+# into the floor from the end at y = 30 to a wall at y = 5, its walls
+# drawn by 1.5 degrees the other way and its bottom corners round, as
+# cones.  The edges where the groove meets the floor take rounds of
+# 0.3: along its two walls, and across its end at the wall, where they
+# meet in pairs at the two corners of the floor.
+profile blk along y 0 0 0 40 0 0 40 10 0 0 10 0
+extrude b from 30 to 0 blk draft 1
+profile g along y 15 7 1 25 7 1 25 12 0 15 12 0
+extrude gr from 31 to 5 g draft 1.5
+subtract part b gr
+round 0.3 gr b

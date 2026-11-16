@@ -6,7 +6,9 @@
 # Usage: test/mancheck.sh BIN PROG...
 # Each program has man/man1/PROG.1, which groff renders without a
 # warning, and whose SYNOPSIS names the program and the same options as
-# its usage message.  Each page of man/man5 renders without a warning.
+# its usage message.  Each page of man/man1, man/man5 and man/man7
+# renders without a warning, but the pages of the prototypes of the
+# schematic programs, which keep their own build.
 # It prints the first fault, and exits with 1.
 
 S=$1
@@ -15,7 +17,11 @@ fail() {
 	echo "FAIL: $*"
 	exit 1
 }
-for f in man/man1/*.1 man/man5/*.5; do
+for f in man/man1/*.1 man/man5/*.5 man/man7/*.7; do
+	case $f in
+	man/man1/sch*.1 | man/man1/netdiff*.1 | man/man5/sch*.5 | \
+		man/man5/netlist*.5) continue ;;
+	esac
 	w=$(groff -man -Tutf8 -ww -z "$f" 2>&1)
 	test -z "$w" || fail "$f: $w"
 done

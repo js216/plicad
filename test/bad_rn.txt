@@ -2,4 +2,4 @@
 # bad_rn.txt -- A rotation axis with a sign, which place must reject
 # Copyright (c) 2026 Jakob Kastelic
 
-a ../build/plate.fold rot -z 90
+part a ../build/plate.st turn -z 90

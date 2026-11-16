@@ -6,29 +6,87 @@
 scene \- meshes and pictures to show
 .SH DESCRIPTION
 A scene file for
-.IR view (1)
-has one item per line; # begins a comment, and file names are relative
-to the scene file.
+.IR view (1),
+in the language of
+.IR plicad (7),
+has one item a line; file names are relative to the scene file.
 .PP
 .RS
 .nf
-mesh NAME FILE.obj [colour R G B] [move X Y Z] [turn X Y Z DEG]...
-image NAME FILE.ppm X0 Y0 Z0 X1 Y1 Z1 X2 Y2 Z2
+mesh NAME FILE.obj [color R G B] [STEP]... [TAIL]
+image NAME FILE on MESH X0 Y0 Z0 X1 Y1 Z1 X2 Y2 Z2
+unit NAME [STEP]... [TAIL]
+end
 view iso|front|back|left|right|top|bottom
 background R G B
 .fi
 .RE
 .PP
+where each
+.I STEP
+is a
+.BI move " DX DY DZ"
+or a
+.BI turn " x|y|z DEG"
+.RB [ about
+.IR "X Y Z" ].
 The parts of an OBJ file with several objects are named
 .IB name / part .
-A colour (values 0 to 1) replaces that of the file.
-Moves, and turns about the axis X Y Z through the origin, are applied
-in order.
+A color (values 0 to 1) replaces that of the file.
+The steps of a mesh place it, in order, a turn about the origin unless
+it names a point.
 A picture (PPM P6, or PAM P7 of RGB or RGB_ALPHA) fills the
 parallelogram of its corners X0 (lower left), X1 (lower right) and X2
-(upper left).
+(upper left), in the frame of the mesh MESH of a line above, and moves
+with it.
 Pictures are blended over the meshes by their opacity, farthest first;
 transparent pixels cannot be picked.
-The background is grey unless given.
+The background is gray unless given.
+.PP
+The optional
+.I TAIL
+of a mesh, as
+.B place \-s
+writes it from an assembly file
+.RI ( assembly (5)),
+is its insertion path or the mesh it travels with:
+.PP
+.RS
+.nf
+path STEP...
+with NAME
+.fi
+.RE
+.PP
+a turn of a path about the origin of the mesh at its place unless it
+names a point.
+The order of the mesh lines is the assembly sequence, which
+.IR view (1)
+plays with + and \-: a mesh goes in along its path from its start, the
+start being its place with the steps undone, the last one first; a mesh
+with
+.B with
+moves with the mesh it names, and one with neither stays at its place.
+.SS Units
+The lines between
+.B unit
+and its
+.B end
+are a unit, as
+.B place \-s
+writes a subassembly: they lie in the frame of the unit at its place,
+which its steps give as those of a mesh, and their names are under its
+name, so that a mesh
+.B cap
+in the unit
+.B knob
+in the unit
+.B front
+is front/knob/cap, and so are the names after
+.B with
+and
+.BR on .
+Units nest.
+The tail of a unit moves it as one, after the lines in it.
 .SH SEE ALSO
-view(1), tomesh(1)
+plicad(7), place(1), tomesh(1), view(1), assembly(5)

@@ -8,5 +8,5 @@
 T = 3
 R = 7.331
 sheet T R 0.2808
-plate base -46.2591 -46.2688 111.5939 79.4344 origin -60.8795 0 0 axes +y -x
-hole 0.351 -76.3323 20.3375 along z at -1.5 depth 5.9432
+plate base -46.2591 -46.2688 111.5939 79.4344 at -60.8795 0 0 axes +y -x
+hole hole1 0.351 -76.3323 20.3375 along z from -4.4716 to 1.4716

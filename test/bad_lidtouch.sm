@@ -11,7 +11,7 @@ t = 1
 r = 1
 tr = t + r
 sheet t r 0.44
-plate base tr tr S-tr S-tr origin 0 S 0 axes +x -y
+plate base tr tr S-tr S-tr at 0 S 0 axes +x -y
 flange left base -x -90 S-t-tr
 flange right base +x -90 S-2*tr
 flange lid right +x -90 S-tr

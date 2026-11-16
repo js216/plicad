@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_override.part -- A round rule whose edges a later rule all takes
+# Copyright (c) 2026 Jakob Kastelic
+
+profile p along z 0 0 0 10 0 0 10 10 0 0 10 0
+extrude b from 0 to 5 p
+round 1 b.start b.side
+sharp any any

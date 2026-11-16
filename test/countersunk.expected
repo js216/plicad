@@ -1,0 +1,9 @@
+part countersunk
+volume 3371.2550
+area 2890.2550
+bbox -10.0000 -10.0000 -3.0000 50.0000 10.0000 0.0000
+faces 12 plane 6 cylinder 3 cone 3
+hole 0.0000 0.0000 -1.5000 d 4.0000 axis 0 0 1
+hole 20.0000 0.0000 -1.5000 d 4.0000 axis 0 0 1
+hole 40.0000 0.0000 -1.5000 d 4.0000 axis 0 0 1
+flat 60.0000 20.0000 area 1162.301 holes 3 bends 0

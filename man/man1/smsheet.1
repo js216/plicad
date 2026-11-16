@@ -13,6 +13,9 @@ smsheet \- lay views on sheets as PostScript
 .br
 .B smsheet \-r
 .I part.draw
+.br
+.B smsheet \-v
+.I part.draw
 .SH DESCRIPTION
 .I Smsheet
 reads a drawing file,
@@ -37,11 +40,35 @@ regions; a view with
 is placed at the given point.
 .PP
 The lettering is osifont, to be found by Ghostscript with
-.BI \-sFONTPATH= dir .
+.BI \-sFONTPATH= dir ,
+as in the fonts of the library,
+.IR plicad-lib (7).
 .TP
 .B \-r
 Print the width and height of the room for views in the template,
 in inches; no views are read.
+.TP
+.B \-v
+Print what
+.IR smdraw (1)
+needs of the drawing file: a line
+.BI units " unit unit"
+(the second \- if none),
+.BI scale " s"
+or
+.BR "scale \-" ,
+.BI unmarked " material"
+or
+.BR "unmarked \-" ,
+and for each view a line
+.BI view " line name"
+.BR \-h | \-
+.IR scale | \-
+(its line in the file, whether it shows hidden lines, and its own
+scale), each of its records for
+.IR smdim (1)
+after it, its lengths in inches, after a line
+.BI #line " n file" .
 .SH SEE ALSO
 draw(5), smdim(1), smdraw(1), gs(1)
 .SH DIAGNOSTICS

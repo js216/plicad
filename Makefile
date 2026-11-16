@@ -1,13 +1,23 @@
-PROGS := smfold smflat tostep measure place interfere numdiff lint \
-	extrude bool fillet mould smview smdim smsheet tomesh view
+PROGS := smfold smflat tostep measure place interfere numdiff lint param \
+	family assemble extrude bool fillet mold smview smdim smsheet tomesh \
+	view
 LIB := util font geom expr fold brep bsolid contact shape stream integ isect \
-	split merge mesh obj scene explode
+	split merge mesh obj scene moves clash bvh coat insert asm sview
 
-LINTED := $(filter-out test/crlf.sm test/bad_%.fold,$(wildcard src/*.[ch] \
+# The prototypes of the schematic programs, which keep their own build,
+# are none of the programs here.
+PROTO := src/sch%.c src/sch%.h src/netdiff%.c src/netdiff%.h \
+	man/man1/sch%.1 man/man1/netdiff%.1 man/man5/sch%.5 \
+	man/man5/netlist%.5 test/sch% test/bad_sch% test/netdiff%
+SRCS := $(filter-out $(PROTO),$(wildcard src/*.c))
+HDRS := $(filter-out $(PROTO),$(wildcard src/*.h))
+
+LINTED := $(filter-out test/crlf.sm test/bad_%.st $(PROTO), \
+	$(wildcard src/*.[ch] \
 	test/*.sm test/*.part test/*.txt test/*.params test/*.py test/*.sh \
-	test/*.expected test/*.fold test/*.draw test/*.scene src/*.sh \
-	man/man1/*.1 man/man5/*.5)) \
-	test/colours \
+	test/*.expected test/*.st test/*.draw test/*.scene test/*.c src/*.sh \
+	man/man1/*.1 man/man5/*.5 man/man7/*.7)) \
+	lib/materials $(wildcard lib/tables/*) \
 	Makefile .clang-format .clang-tidy .gitignore README.md
 
 CC := gcc
@@ -34,14 +44,23 @@ TIDYWARN := $(filter-out -fanalyzer -Wlogical-op -Wduplicated-cond \
 	-Warith-conversion -Wstack-usage=65536 -Wimplicit-fallthrough=5 \
 	-Wshift-overflow=2 -Walloc-zero, $(WARN))
 
-CFLAGS := $(WARN) -Os -fno-common -ffunction-sections -fdata-sections \
-	-MMD -MP
+# The library of this tree, for the programs that look in it.
+DEFS := -DPLICAD_LIB='"$(CURDIR)/lib"'
+
+CFLAGS := $(WARN) $(DEFS) -O2 -fno-common -ffunction-sections \
+	-fdata-sections -MMD -MP
 LDFLAGS := -s -Wl,--as-needed -Wl,--gc-sections
 SAN := -fsanitize=address,undefined -fno-sanitize-recover=all -g -O1
 
 S := build/san
 
-all: $(addprefix build/,$(PROGS) smdraw)
+all: $(addprefix build/,$(PROGS) smdraw) edaprogs
+
+# The programs of schematics and boards keep their own build, eda.mk, in
+# build/eda; their viewers also go there sanitized, as the tests run
+# them.
+edaprogs:
+	@$(MAKE) --no-print-directory -f eda.mk eda san
 
 build/smdraw $(S)/smdraw: src/smdraw.sh
 	@mkdir -p $(dir $@)
@@ -56,13 +75,26 @@ $(addprefix build/,$(OBJS)): build/%.o: src/%.c
 build/%: build/%.o $(addprefix build/,$(addsuffix .o,$(LIB)))
 	$(CC) $(LDFLAGS) $^ -lm -o $@
 
+# The helper of the tests that resizes a window from outside.
+build/xresize: test/xresize.c
+	@mkdir -p build
+	$(CC) $(filter-out -fanalyzer,$(WARN)) $< -lX11 -o $@
+
+# The runner of the tests that holds each case to its budget.
+build/budget: test/budget.c
+	@mkdir -p build
+	$(CC) $(WARN) $< -o $@
+
 # view alone draws, by X11 and OpenGL.
 build/view: build/view.o $(addprefix build/,$(addsuffix .o,$(LIB)))
 	$(CC) $(LDFLAGS) $^ -lX11 -lGL -lm -o $@
 
+# The sanitized objects skip the analyzer, which the build above runs on
+# every file: with the sanitizers it would take far more memory.
 $(addprefix $(S)/,$(OBJS)): $(S)/%.o: src/%.c
 	@mkdir -p $(S)
-	$(CC) $(WARN) $(SAN) -fno-common -MMD -MP -c $< -o $@
+	$(CC) $(filter-out -fanalyzer,$(WARN)) $(DEFS) $(SAN) -fno-common \
+		-MMD -MP -c $< -o $@
 
 $(S)/%: $(S)/%.o $(addprefix $(S)/,$(addsuffix .o,$(LIB)))
 	$(CC) $(SAN) $^ -lm -o $@
@@ -86,24 +118,24 @@ lint: build/lint all
 	@echo "ok lint, libraries"
 
 format:
-	clang-format --dry-run -Werror src/*.c src/*.h
+	clang-format --dry-run -Werror $(SRCS) $(HDRS)
 
 cppcheck:
 	cppcheck --enable=warning,style,performance,portability,unusedFunction \
 		--inconclusive --std=c99 --force --quiet --error-exitcode=1 \
-		--check-level=exhaustive src
+		--check-level=exhaustive $(SRCS)
 
 tidy:
 	rm -rf build/tidy build/compile_commands.json
 	mkdir -p build/tidy
 	bear --output build/compile_commands.json -- \
 		$(MAKE) --no-print-directory tidy-objs
-	run-clang-tidy -quiet -p build $(wildcard src/*.c)
+	run-clang-tidy -quiet -p build $(SRCS)
 
-tidy-objs: $(patsubst src/%.c,build/tidy/%.o,$(wildcard src/*.c))
+tidy-objs: $(patsubst src/%.c,build/tidy/%.o,$(SRCS))
 
 build/tidy/%.o: src/%.c
-	clang $(TIDYWARN) -c $< -o $@
+	clang $(TIDYWARN) $(DEFS) -c $< -o $@
 
 sizes: all
 	@cd build && size $(PROGS) | awk 'NR > 1 { s += $$1 + $$2; \
@@ -112,7 +144,7 @@ sizes: all
 clean:
 	rm -rf build
 
-.PHONY: all check lint format cppcheck tidy tidy-objs sizes clean
+.PHONY: all edaprogs check lint format cppcheck tidy tidy-objs sizes clean
 .PRECIOUS: build/%.o $(S)/%.o
 
 -include $(wildcard build/*.d $(S)/*.d)

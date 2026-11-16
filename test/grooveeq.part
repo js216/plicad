@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# grooveeq.part -- The groove of test/groove.part, its rounds all of 0.3
+# Copyright (c) 2026 Jakob Kastelic
+
+# The floor, the lip and the groove of test/groove.part, with the rounds
+# of the inner corners of the groove end of 0.3 too: at the top of each
+# corner a convex round meets a concave one of its radius, and the
+# concave one goes first, so that the convex one runs round it as round
+# a greater one.
+profile sp along y 0 -10 0 40 -10 0 40 0 0 0 0 0
+extrude slab from -5 to 30 sp
+profile lp along y 0 0 0 40 0 0 40 5 0 0 5 0
+extrude lip from -5 to 0 lp
+union body slab lip
+profile gp along y 15 -5 0 25 -5 0 25 1 0 15 1 0
+extrude groove from 35 to 0 gp draft 1.5
+subtract part body groove
+round 0.3 lip.end groove
+round 0.3 groove slab
+round 0.3 slab.end any

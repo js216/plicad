@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# nested.txt -- Two panels of test/panel.txt, subassemblies in two levels
+# Copyright (c) 2026 Jakob Kastelic
+
+# The plate of p2 reaches 1 mm into the cap of the knob of p1, and
+# nothing else meets.
+part p1 panel.txt
+part p2 panel.txt move 0 0 29 path move 0 0 100

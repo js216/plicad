@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# include.part -- A plate whose sizes come from a parameter file
+# Copyright (c) 2026 Jakob Kastelic
+
+# The sizes are those of test/channel.params: W by H by T.
+include channel.params
+profile r along z 0 0 0 W 0 0 W H 0 0 H 0
+extrude plate from 0 to T r

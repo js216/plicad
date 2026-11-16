@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# order.txt -- The move applies after the rotations, wherever it is written
+# order.txt -- The steps of a place apply in their order
 # Copyright (c) 2026 Jakob Kastelic
 
-a ../build/plate.fold at 10 0 0 rot z 90
-b ../build/plate.fold rot z 90 at 10 0 0
+part a ../build/plate.st turn z 90 move 10 0 0
+part b ../build/plate.st move 10 0 0 turn z 90

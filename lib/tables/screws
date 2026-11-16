@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# screws -- The heads and threads of screws, by size and style
+# Copyright (c) 2026 Jakob Kastelic
+
+# SIZE STYLE HEAD_D HEAD_H THREAD_D PITCH [ANGLE]
+# One row for each size of a style, in the units of plicad(7): mm, or
+# inches with in.  HEAD_D and HEAD_H are the diameter and the height of
+# the head, at their largest; PITCH is the lead of one turn; ANGLE is the
+# included angle of a flat head.  Nominal sizes of the standards named;
+# a part keeps to the data of its maker.
+
+# Socket heads, ISO 4762.
+M2 socket 3.8 2 2 0.4
+M2.5 socket 4.5 2.5 2.5 0.45
+M3 socket 5.5 3 3 0.5
+M4 socket 7 4 4 0.7
+M5 socket 8.5 5 5 0.8
+M6 socket 10 6 6 1
+M8 socket 13 8 8 1.25
+
+# Button heads, ISO 7380.
+M3 button 5.7 1.65 3 0.5
+M4 button 7.6 2.2 4 0.7
+M5 button 9.5 2.75 5 0.8
+M6 button 10.5 3.3 6 1
+
+# Pan heads, ISO 7045.
+M2 pan 4 1.6 2 0.4
+M2.5 pan 5 1.75 2.5 0.45
+M3 pan 5.6 2.4 3 0.5
+M4 pan 8 3.1 4 0.7
+M5 pan 9.5 3.7 5 0.8
+M6 pan 12 4.6 6 1
+
+# Flat heads of 90 degrees, ISO 7046.
+M2 flat 3.8 1.2 2 0.4 90
+M2.5 flat 4.7 1.5 2.5 0.45 90
+M3 flat 5.5 1.65 3 0.5 90
+M4 flat 8.4 2.7 4 0.7 90
+M5 flat 9.3 2.7 5 0.8 90
+M6 flat 11.3 3.3 6 1 90
+
+# Unified machine screws, ASME B18.6.3: pan heads and flat heads of 82
+# degrees, the pitch one turn in threads per inch.
+2-56 pan 0.167in 0.062in 0.086in (1in/56)
+4-40 pan 0.219in 0.080in 0.112in (1in/40)
+6-32 pan 0.270in 0.097in 0.138in (1in/32)
+8-32 pan 0.322in 0.115in 0.164in (1in/32)
+10-32 pan 0.373in 0.133in 0.190in (1in/32)
+2-56 flat 0.172in 0.051in 0.086in (1in/56) 82
+4-40 flat 0.225in 0.067in 0.112in (1in/40) 82
+6-32 flat 0.279in 0.083in 0.138in (1in/32) 82
+8-32 flat 0.332in 0.100in 0.164in (1in/32) 82
+10-32 flat 0.385in 0.116in 0.190in (1in/32) 82
+
+# Socket heads, inch, ASME B18.3, its heads at their largest.  Standard
+# lengths run by 1/16 in from 1/8 to 1/4, by 1/8 to 1, by 1/4 to 3 1/2,
+# by 1/2 to 7 and by 1 to 10; PITCH is 25.4 mm over the threads an inch.
+2-56 socket 0.140in 0.086in 0.086in 25.4/56
+4-40 socket 0.183in 0.112in 0.112in 25.4/40
+5-40 socket 0.205in 0.125in 0.125in 25.4/40
+6-32 socket 0.226in 0.138in 0.138in 25.4/32
+8-32 socket 0.270in 0.164in 0.164in 25.4/32
+10-24 socket 0.312in 0.190in 0.190in 25.4/24
+10-32 socket 0.312in 0.190in 0.190in 25.4/32
+1/4-20 socket 0.375in 0.250in 0.250in 25.4/20
+
+# Low heads of sockets, inch, ASME B18.3, of the lengths of the socket
+# heads.
+4-40 lowhead 0.183in 0.059in 0.112in 25.4/40
+5-40 lowhead 0.205in 0.065in 0.125in 25.4/40
+6-32 lowhead 0.226in 0.072in 0.138in 25.4/32
+8-32 lowhead 0.270in 0.085in 0.164in 25.4/32
+10-24 lowhead 0.312in 0.098in 0.190in 25.4/24
+10-32 lowhead 0.312in 0.098in 0.190in 25.4/32
+1/4-20 lowhead 0.375in 0.127in 0.250in 25.4/20

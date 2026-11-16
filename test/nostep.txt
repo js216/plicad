@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# nostep.txt -- A path in a file that gives no step
+# Copyright (c) 2026 Jakob Kastelic
+
+part base ../build/plate.st
+part lid ../build/plate.st move 0 0 2 path move 0 0 -30

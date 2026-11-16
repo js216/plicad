@@ -1,36 +1,59 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// smview.c -- Project a folded part into the lines of one drawing view
+// smview.c -- Project a part into the lines of one drawing view
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: smview [-h] VIEW part.fold > part.view
+// Usage: smview [-h] [-c DEPTH] [-t CHORD] [-u MATERIAL] VIEW part.st
+//
+// Solid parts, one or the parts of an assembly in place, go to sview
+// (sview.h), which writes the same records and the poly records, its
+// curves within CHORD mm (CHORD_MM if no -t), and with -c a section of
+// them; so does one folded part with -c, or several parts.  Of the
+// textures of the faces, each with its own mark, the one of all the
+// faces that the others leave, if any, is unmarked: that of MATERIAL,
+// or else the one of the most area.
 //
 // VIEW is front, back, left, right, top, bottom or flat.  The front view
 // looks along +y with z up, the top view looks down -z with y up, and the
 // others follow by third-angle projection.  The flat view is the top view
-// of the unfolded blank, with a centre line along each bend.
+// of the unfolded blank, with a center line along each bend.
 //
 // The output has one record per line, in mm, x to the right and y up:
 //   view VIEW PART
 //   thick T
 //   box X0 Y0 X1 Y1
-//   fill                   (the start of a region of material,
-//   m X Y                   whose loops fill by the even-odd rule:
-//   l X Y                   move, line to,
-//   a CX CY R A0 A1         arc from angle A0 to A1, in degrees,
-//   z                       and close)
-//   line KIND VIS X0 Y0 X1 Y1
-//   arc KIND VIS CX CY R A0 A1     (counterclockwise, in degrees)
-//   hole X Y D [csink DC ANGLE near|far]
+//   fill [cut I]           (the start of a region of material, or with
+//   m X Y                   cut the faces of part I, from 0, that a
+//   l X Y                   section cuts, whose loops fill by the
+//   a CX CY R A0 A1         even-odd rule: move, line to, arc from
+//   z                       angle A0 to A1, in degrees, and close)
+//   line KIND VIS X0 Y0 X1 Y1 [by FEATURE]
+//   arc KIND VIS CX CY R A0 A1 [by FEATURE]   (counterclockwise, degrees)
+//   poly KIND VIS N X0 Y0 ... XN-1 YN-1       (a curve of a solid seen at
+//                                              an angle, as a line through
+//                                              its N points)
+//   hole X Y D [deep DEPTH] [csink DC ANGLE near|far]
+//        [insert TYPE near|far] [thread thru|DEPTH DESIGNATION...]
+//        [by FEATURE]
+//   texture MATERIAL MARK CALLOUT     (before the coats of a material
+//                                      with a texture; MARK is T unless
+//                                      the material has its own)
+//   coat MATERIAL near|far N X0 Y0 ... [face]
+//                          (a coat seen face on, a polygon; with face,
+//                           a face of a solid, its sides its edges)
 //   radius R               (the inside radius of the first bend)
 //   bend X0 Y0 X1 Y1 ANGLE (flat view: a bend line, and the angle of the
 //                           bend in degrees, above 0 toward the eye)
 // KIND is e for a sharp edge of the sheet, i for an edge of a cut-out
 // inside it, o for the rim of a hole and for an arc that is hidden in
 // part, b for an edge or the outline of a bend, s for the seam where a
-// bend leaves a flat face, and c for a centre line.  VIS is v for
+// bend leaves a flat face, and c for a center line.  VIS is v for
 // visible and h for hidden; the hidden lines are left out unless -h is
 // given.  A hole record stands for each hole
-// seen along its axis and not covered.
+// seen along its axis and not covered, and a coat record for each coat
+// on a slab whose side of the coat looks at the eye, cut to the box of
+// the slab, unless something covers its middle.  Of a solid, a hole
+// record gives the depth of a blind hole from its mouth, and the thread
+// of the part in it: to its depth, or thru.
 //
 // A line is hidden where material lies between it and the eye.  The
 // faces are planes, cylinders and cones, so the test is exact.  A circle
@@ -38,7 +61,9 @@
 // for: smview dies, and names the view and the place of the circle.
 
 #include "brep.h"
+#include "sview.h"
 #include "fold.h"
+#include "stream.h"
 #include "geom.h"
 #include "util.h"
 #include <math.h>
@@ -54,8 +79,10 @@
 #define ZERO 5e-7 // Numbers closer to 0 than this print as 0.
 #define SLIVER 1e-3 // No curve or piece of one is shorter, in mm,
 #define PRINTED 2e-6 // even after its ends are rounded to six places.
+#define CHORD_MM 0.01 // The chord of a poly record without -t, in mm.
 
-enum { K_EDGE, K_INNER, K_HOLE, K_BEND, K_SEAM, K_CENTRE };
+enum { K_EDGE, K_INNER, K_HOLE, K_BEND, K_SEAM, K_CENTER };
+enum { COAT_ROOM = 256 }; // The most corners of a coat cut to a slab.
 static const char kind_code[] = "eiobsc";
 
 // A view: x to the right and y up on the paper, z toward the eye.
@@ -78,6 +105,7 @@ static const struct view views[] = {
 // through da, at the depth za.  A segment with a bulge is a circle seen
 // edge on: its depth at distance s from c is za + bulge sqrt(r r - s s).
 struct curve {
+	size_t by; // The feature of the part it comes from, or NONE.
 	int arc, kind, bulge;
 	int part; // Whether a piece of it is hidden.
 	struct vec2 a, b, c;
@@ -182,8 +210,14 @@ static void add_curve(struct scene *sc, struct curve c)
 	PUSH(sc->c, sc->nc, sc->capc, c);
 }
 
+// What a line of the view is: its kind, and its feature or NONE.
+struct line_of {
+	int kind;
+	size_t by;
+};
+
 // Adds the projection of a 3D segment, unless it is seen end on.
-static void add_seg(struct scene *sc, struct seg3 s, int kind)
+static void add_seg(struct scene *sc, struct seg3 s, struct line_of of)
 {
 	struct vec a = to_view(&sc->vw, s.a);
 	struct vec b = to_view(&sc->vw, s.b);
@@ -193,7 +227,8 @@ static void add_seg(struct scene *sc, struct seg3 s, int kind)
 		return;
 	}
 	memset(&c, 0, sizeof(c));
-	c.kind = kind;
+	c.by = of.by;
+	c.kind = of.kind;
 	c.a = xy(a);
 	c.b = xy(b);
 	c.za = a.z;
@@ -211,6 +246,7 @@ static void add_arc(struct scene *sc, const struct bedge *e, int kind)
 	struct curve a;
 
 	memset(&a, 0, sizeof(a));
+	a.by = e->by;
 	a.arc = 1;
 	a.kind = kind;
 	a.c = xy(c);
@@ -239,6 +275,7 @@ static void add_edge_on(struct scene *sc, const struct bedge *e, int kind)
 		struct curve c;
 
 		memset(&c, 0, sizeof(c));
+		c.by = e->by;
 		c.kind = kind;
 		c.bulge = sin((lo + hi) / 2) > 0 ? 1 : -1;
 		c.a = xy(a);
@@ -277,7 +314,7 @@ static int edge_kind(const struct scene *sc, size_t i)
 	const struct bface *f = &sc->b.f[sc->ef[i][0]];
 	const struct bface *g = &sc->b.f[sc->ef[i][1]];
 
-	if (f->from == g->from && (f->from == F_TOP || f->from == F_BOTTOM)) {
+	if (f->from == g->from && (f->from == F_NEAR || f->from == F_FAR)) {
 		return f->type == S_PLANE && g->type == S_PLANE ? -1 : K_SEAM;
 	}
 	if (of_bend(sc, f) || of_bend(sc, g)) {
@@ -378,7 +415,7 @@ static void add_edges(struct scene *sc)
 			continue;
 		}
 		if (e->type == C_LINE) {
-			add_seg(sc, s, kind);
+			add_seg(sc, s, (struct line_of){ kind, e->by });
 		} else if (c > 1 - TINY) {
 			add_arc(sc, e, kind);
 		} else if (c < TINY) {
@@ -497,7 +534,7 @@ static void zone_outline(struct scene *sc, const struct zone *z,
 				  fmap(p, z->f, b.x, b.y, st.z) };
 
 		if (s[i + 1] - s[i] > NEAR && point_in_face(p, z->f, mid)) {
-			add_seg(sc, l, K_BEND);
+			add_seg(sc, l, (struct line_of){ K_BEND, NONE });
 		}
 	}
 	free(s);
@@ -656,7 +693,7 @@ static void add_wall(struct scene *sc, const struct wall *w, int fill)
 		if (turn > w->da + TINY && turn < (2 * PI) - TINY) {
 			continue;
 		}
-		add_seg(sc, s, K_EDGE);
+		add_seg(sc, s, (struct line_of){ K_EDGE, NONE });
 		d.lo = fmin(d.lo, sign * w->r0);
 		d.hi = fmax(d.hi, sign * w->r0);
 	}
@@ -701,6 +738,10 @@ static void add_walls(struct scene *sc, size_t f)
 		w.r0 = w.r1 = h->r;
 		w.z0 = h->side > 0 ? zm : 0;
 		w.z1 = h->side < 0 ? zm : -p->t;
+		if (h->blind > 0) {
+			w.z0 = h->bside > 0 ? 0 : -p->t + h->blind;
+			w.z1 = h->bside > 0 ? -h->blind : -p->t;
+		}
 		add_wall(sc, &w, 0);
 		if (h->side) {
 			w.z0 = h->side > 0 ? 0 : -p->t;
@@ -1012,6 +1053,11 @@ static int on_round_face(const struct scene *sc, const struct bface *f,
 		double hi = (h->side < 0) == cone ? zm : 0;
 
 		finv(p, h->face, x, &q);
+		if (h->blind > 0) {
+			lo = h->bside > 0 ? -h->blind : -p->t;
+			hi = h->bside > 0 ? 0 : -p->t + h->blind;
+			return q.z > lo && q.z < hi;
+		}
 		return h->side ? q.z > lo && q.z < hi : q.z > -p->t && q.z < 0;
 	}
 	if (f->from == F_SIDE) {
@@ -1208,6 +1254,15 @@ static void drop_doubles(struct scene *sc)
 	free(v);
 }
 
+// Ends a record with the feature by of the part, if any.
+static void print_by(const struct scene *sc, size_t by)
+{
+	if (by != NONE && by < sc->p->nfeats) {
+		printf(" by %s", sc->p->feats[by].s);
+	}
+	printf("\n");
+}
+
 // Prints the run of pieces first .. last of one curve as one record.
 static void print_run(const struct scene *sc, const struct piece *first,
 		      const struct piece *last, struct box *x)
@@ -1230,17 +1285,19 @@ static void print_run(const struct scene *sc, const struct piece *first,
 					      0));
 			}
 		}
-		printf("arc %c %c %.6f %.6f %.6f %.6f %.6f\n",
+		printf("arc %c %c %.6f %.6f %.6f %.6f %.6f",
 		       kind_code[c->part && c->kind < K_HOLE ? K_HOLE : c->kind],
 		       vis, zero(c->c.x), zero(c->c.y), c->r, zero(a0),
 		       zero(a0) + da);
+		print_by(sc, c->by);
 		return;
 	}
 	box_add(x, v3(first->p0.x, first->p0.y, 0));
 	box_add(x, v3(last->p1.x, last->p1.y, 0));
-	printf("line %c %c %.6f %.6f %.6f %.6f\n", kind_code[c->kind], vis,
+	printf("line %c %c %.6f %.6f %.6f %.6f", kind_code[c->kind], vis,
 	       zero(first->p0.x), zero(first->p0.y), zero(last->p1.x),
 	       zero(last->p1.y));
+	print_by(sc, c->by);
 }
 
 // Prints the pieces, each run of one curve and one visibility as one
@@ -1324,7 +1381,21 @@ struct seen {
 	struct vec at;
 	double d, dc, ang;
 	int near;
+	size_t by;
+	size_t hole; // Its hole in the part.
 };
+
+// Adds to a hole record the insert in hole h of part p, if any: insert
+// TYPE near|far.
+static void print_insert(const struct part *p, size_t h)
+{
+	for (size_t i = 0; i < p->nins; i++) {
+		if (p->ins[i].hole == h) {
+			printf(" insert %s %s", p->ins[i].type,
+			       p->ins[i].side > 0 ? "near" : "far");
+		}
+	}
+}
 
 // Prints a record for each hole seen along its axis and not covered,
 // one for each place: of two holes in line, the nearer one.
@@ -1340,12 +1411,16 @@ static void print_holes(const struct scene *sc)
 		struct seen s = { to_view(&sc->vw,
 					  fmap(p, h->face, h->cx, h->cy,
 					       c > 0 ? 0 : -p->t)),
-				  2 * h->r, 2 * h->rc,
+				  2 * h->r,
+				  2 * h->rc,
 				  2 * atan2(h->rc - h->r, h->h) / DEG,
-				  (c > 0) == (h->side > 0) };
+				  (c > 0) == (h->side > 0),
+				  h->by,
+				  i };
 		size_t k = 0;
 
-		if (fabs(c) < 1 - TINY || covered(sc, xy(s.at), s.at.z)) {
+		if (fabs(c) < 1 - TINY || covered(sc, xy(s.at), s.at.z) ||
+		    (h->blind > 0 && (c > 0) != (h->bside > 0))) {
 			continue;
 		}
 		while (k < n && dist2(xy(v[k].at), xy(s.at)) > SAME) {
@@ -1363,9 +1438,130 @@ static void print_holes(const struct scene *sc)
 			printf(" csink %.6f %.3f %s", v[k].dc, v[k].ang,
 			       v[k].near ? "near" : "far");
 		}
-		printf("\n");
+		print_insert(p, v[k].hole);
+		print_by(sc, v[k].by);
 	}
 	free(v);
+}
+
+// The side of a line x = at (axis 0) or y = at (axis 1) where sign
+// (x - at) is not below 0.
+struct half {
+	int axis;
+	double at, sign;
+};
+
+// Clips the polygon p of n corners to the half plane h, into q; returns
+// its corners.
+static size_t clip_poly(const struct vec2 *p, size_t n, struct half h,
+			struct vec2 *q)
+{
+	size_t m = 0;
+
+	for (size_t i = 0; i < n; i++) {
+		struct vec2 u = p[i];
+		struct vec2 w = p[(i + 1) % n];
+		double du = h.sign * ((h.axis ? u.y : u.x) - h.at);
+		double dw = h.sign * ((h.axis ? w.y : w.x) - h.at);
+
+		if (du >= 0 && m < COAT_ROOM) {
+			q[m++] = u;
+		}
+		if ((du < 0) != (dw < 0) && m < COAT_ROOM) {
+			double t = du / (du - dw);
+			struct vec2 x = { u.x + ((w.x - u.x) * t),
+					  u.y + ((w.y - u.y) * t) };
+
+			q[m++] = x;
+		}
+	}
+	return m;
+}
+
+// The box of the corners of face f of the blank, in the flat.
+static struct box face_flat_box(const struct part *p, size_t f)
+{
+	struct box b = box_empty();
+
+	for (size_t k = p->fe_start[f]; k < p->fe_start[f + 1]; k++) {
+		const struct edge *e = &p->edges[p->fe[k]];
+
+		box_add(&b, v3(p->verts[e->v0].x, p->verts[e->v0].y, 0));
+		box_add(&b, v3(p->verts[e->v1].x, p->verts[e->v1].y, 0));
+	}
+	return b;
+}
+
+// Prints coat c where it lies on slab face f, cut to the box of the
+// face, if that side of the face looks at the eye and nothing covers
+// the middle of the coat there.
+static void print_coat_on(const struct scene *sc, const struct coat *c,
+			  size_t f)
+{
+	const struct part *p = sc->p;
+	struct box b = face_flat_box(p, f);
+	struct vec2 buf[2][COAT_ROOM];
+	const double sides[4] = { b.lo.x, b.hi.x, b.lo.y, b.hi.y };
+	double z = c->side > 0 ? 0 : -p->t;
+	size_t n = c->n < COAT_ROOM ? c->n : COAT_ROOM;
+	struct vec m = v3(0, 0, 0);
+
+	memcpy(buf[0], c->pt, n * sizeof(*c->pt));
+	for (int k = 0; k < 4 && n >= 3; k++) {
+		struct half h = { k / 2, sides[k], k % 2 ? -1 : 1 };
+
+		n = clip_poly(buf[k % 2], n, h, buf[(k + 1) % 2]);
+	}
+	if (n < 3) {
+		return;
+	}
+	for (size_t i = 0; i < n; i++) {
+		m = add(m, to_view(&sc->vw,
+				   fmap(p, f, buf[0][i].x, buf[0][i].y, z)));
+	}
+	m = mul(m, 1.0 / (double)n);
+	if (covered(sc, xy(m), m.z)) {
+		return;
+	}
+	printf("coat %s %s %zu", c->material, c->side > 0 ? "near" : "far", n);
+	for (size_t i = 0; i < n; i++) {
+		struct vec q = to_view(&sc->vw,
+				       fmap(p, f, buf[0][i].x, buf[0][i].y, z));
+
+		printf(" %.6f %.6f", zero(q.x), zero(q.y));
+	}
+	printf("\n");
+}
+
+// Prints the coats that the eye sees face on: on each slab whose side of
+// the coat looks at it.
+static void print_coats(const struct scene *sc)
+{
+	const struct part *p = sc->p;
+
+	for (size_t i = 0; i < p->nmats; i++) {
+		const struct material *m = &p->mats[i];
+		int used = 0;
+
+		for (size_t k = 0; k < p->ncoats && !used; k++) {
+			used = strcmp(p->coats[k].material, m->name) == 0;
+		}
+		if (used && m->callout[0]) {
+			printf("texture %s %c %s\n", m->name,
+			       m->mark ? m->mark : 'T', m->callout);
+		}
+	}
+	for (size_t i = 0; i < p->ncoats; i++) {
+		const struct coat *c = &p->coats[i];
+
+		for (size_t f = 0; f < p->nfaces; f++) {
+			double n = dot(fnormal(p, f), sc->vw.z) * c->side;
+
+			if (!p->maps[p->faces[f]].bend && n > 1 - TINY) {
+				print_coat_on(sc, c, f);
+			}
+		}
+	}
 }
 
 // Prints the view of part p.
@@ -1392,6 +1588,7 @@ static void print_view(struct scene *sc)
 	drop_doubles(sc);
 	print_pieces(sc);
 	print_holes(sc);
+	print_coats(sc);
 	brep_free(&sc->b);
 	free(sc->c);
 	free(sc->s);
@@ -1401,7 +1598,7 @@ static void print_view(struct scene *sc)
 	free(sc->inner);
 }
 
-// Prints the centre line of bend face f of the flat part, across the
+// Prints the center line of bend face f of the flat part, across the
 // face along the bend.
 static void bend_line(const struct part *p, size_t f)
 {
@@ -1427,7 +1624,7 @@ static void bend_line(const struct part *p, size_t f)
 }
 
 // Prints the flat view of p: the top view of the blank, every face in
-// the plane z = 0, and the centre lines of the bends.
+// the plane z = 0, and the center lines of the bends.
 static void print_flat(const struct part *p, int show_hidden)
 {
 	struct part flat = *p;
@@ -1455,6 +1652,20 @@ static void print_flat(const struct part *p, int show_hidden)
 	free(flat.faces);
 }
 
+// Reads the number of option o, its argument w, above 0 unless any is
+// set.
+static double option_num(const char *o, const char *w, int any)
+{
+	char *end = NULL;
+	double x = strtod(w, &end);
+
+	if (*end || end == w || !num_ok(x) || (!any && !(x > 0))) {
+		die("smview: %s takes %s in mm: %s", o,
+		    any ? "a depth" : "a chord above 0", w);
+	}
+	return x;
+}
+
 int main(int argc, char **argv)
 {
 	struct part *ps = NULL;
@@ -1462,14 +1673,29 @@ int main(int argc, char **argv)
 	size_t n = 0;
 	size_t k = 0;
 	int a = 1;
+	int section = 0;
+	double cut = 0;
+	double chord = CHORD_MM;
+	const char *unmarked = NULL;
 
 	memset(&sc, 0, sizeof(sc));
-	if (argc > 1 && strcmp(argv[1], "-h") == 0) {
-		sc.show_hidden = 1;
-		a++;
+	for (; a < argc && argv[a][0] == '-' && argv[a][1]; a++) {
+		if (strcmp(argv[a], "-h") == 0) {
+			sc.show_hidden = 1;
+		} else if (strcmp(argv[a], "-c") == 0 && a + 1 < argc) {
+			cut = option_num("-c", argv[++a], 1);
+			section = 1;
+		} else if (strcmp(argv[a], "-t") == 0 && a + 1 < argc) {
+			chord = option_num("-t", argv[++a], 0);
+		} else if (strcmp(argv[a], "-u") == 0 && a + 1 < argc) {
+			unmarked = argv[++a];
+		} else {
+			break;
+		}
 	}
 	if (argc != a + 2 || argv[a][0] == '-') {
-		die("usage: smview [-h] VIEW part.fold > part.view");
+		die("usage: smview [-h] [-c DEPTH] [-t CHORD] [-u MATERIAL] VIEW "
+		    "part.st > part.view");
 	}
 	while (k < sizeof(views) / sizeof(*views) &&
 	       strcmp(argv[a], views[k].name) != 0) {
@@ -1481,9 +1707,31 @@ int main(int argc, char **argv)
 		    "and flat",
 		    argv[a]);
 	}
-	n = read_fold(argv[a + 1], &ps);
-	if (n != 1) {
-		die("%s: smview takes a file with one part", argv[a + 1]);
+	n = read_parts(argv[a + 1], &ps);
+	if (!n) {
+		die("%s: smview takes a file with a part", argv[a + 1]);
+	}
+	if (section || ps[0].solid || n != 1 + ps[0].nins) {
+		struct sview v;
+
+		if (k == sizeof(views) / sizeof(*views)) {
+			die("%s: the flat view is of one folded part, without "
+			    "-c",
+			    argv[a + 1]);
+		}
+		v.name = views[k].name;
+		v.x = views[k].x;
+		v.y = views[k].y;
+		v.z = views[k].z;
+		v.hidden = sc.show_hidden;
+		v.section = section;
+		v.cut = cut;
+		v.chord = chord;
+		v.unmarked = unmarked;
+		sview_print(ps, n, v);
+		free_parts(ps, n);
+		close_stdout();
+		return 0;
 	}
 	if (k == sizeof(views) / sizeof(*views)) {
 		print_flat(&ps[0], sc.show_hidden);

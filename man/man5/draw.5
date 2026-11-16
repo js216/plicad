@@ -9,11 +9,14 @@ A drawing file, for
 .IR smdraw (1)
 and
 .IR smsheet (1),
-is ASCII with one record per line; the text of a record runs to the
-end of the line, and # begins a comment line.
+is ASCII, in the language of
+.IR plicad (7),
+with one record a line; the text of a record runs to the end of the
+line, and a long one may run on over lines that end in a backslash.
 .PP
 .RS
 .nf
+units in|mm [in|mm]
 template FILE
 scale S
 field NAME TEXT
@@ -21,14 +24,30 @@ material TEXT
 finish TEXT
 boxed TEXT
 note TEXT
-+ TEXT
 revision REV DATE BY TEXT
-view NAME [hidden] [scale S] [sheet N] [at X Y] [title TEXT]
+inserts FORMAT
+hatching GAP
+unmarked MATERIAL
+unhatched MATERIAL...
+view NAME [hidden] [scale S] [sheet N] [at X Y] [cut D] [title TEXT]
 .fi
 .RE
 .PP
-The template, a file next to the drawing file, fixes the paper and is
+The units are required: the dimensions are written in the first, with
+the second, if given, after each in brackets (and the template may
+show them, as Units).
+The template, a file next to the drawing file or in the templates of
+the library
+.RI ( plicad-lib (7)),
+fixes the paper and is
 required.
+A view with
+.B cut
+is a section by the plane D along the axis toward the eye from the
+origin of the part, in mm unless D says in
+.RI ( smview (1)):
+the faces cut get section lines, of another angle for each part of an
+assembly.
 A scale record sets one scale for all views.
 A field sets a text listed by the template.
 The material is note 1 and the finish note 2, both with boxed numbers;
@@ -37,19 +56,57 @@ adds a further note with a boxed number, and
 .B note
 one without.
 In notes, %%t is the sheet thickness and %%r the inside bend radius.
-A + line continues the field or note above.
-Lines beginning with a blank belong to the view above
-(records for
+An inserts record sets the callout of each group of inserts of one type
+on one side, as
+.B "inserts %n X %t, INSTALL %s SIDE"
+.RI ( smdim (1)).
+An unhatched record names the materials whose coats get no hatch, as
+.B "unhatched blackjack"
+for a powder coat beside masked surfaces that are hatched; without one,
+each coat that is a rectangle gets one.
+A hatching record sets the gap between the section lines of the
+faces a section cuts, on the paper, in mm unless it says in
+.RB ( .08in
+without one).
+After the notes comes a note for each texture of the coats in the views,
+.B "TEXTURE: CALLOUT ON SURFACES MARKED"
+and the mark in quotes, as
+.BR "TEXTURE: VDI 3400 REF 30 ON SURFACES MARKED \(dqT\(dq" ;
+a mark stands once in a view on the faces of its texture
+.RI ( smdim (1)),
+and no two textures share one
+.RI ( smview (1)).
+Where every face has a texture and there are two or more, one marks
+none, the one that the record
+.B unmarked
+names, or else the one of the most area; its note comes last, as
+.BR "TEXTURE: ALL OTHER SURFACES SPI B-3" .
+Lines beginning with a blank belong to the view above, records for
 .IR smdim (1):
-.BR leader ,
-.BR flag ,
-.BR lin ,
-.BR drop ,
-.BR hatch ).
-Each boxed note needs a flag record under some view.
-A view with
+.PP
+.RS
+.nf
+drop FEATURE [x|y|d|r]
+lin x|y A B [PLUS MINUS]
+leader X Y TEXT
+flag X Y N [TEXT]
+hatch X0 Y0 X1 Y1
+.fi
+.RE
+.PP
+.B drop
+leaves out the dimensions of a feature of the part, a name of its
+source
+.RI ( sm (5)):
+all of them, or its ordinates on one axis, its hole callouts or its
+radii.
+Lengths are from the datum of the view, the lower left corner, at full
+size, in mm unless they say
+.BR in ;
+so is
 .B at
-has its datum there, in inches from the lower left corner of the sheet.
+of a view, from the lower left corner of the sheet.
+Each boxed note needs a flag record under some view.
 .PP
 A template is PostScript that draws the border, title block and
 revision table of one paper, in inches, with the regions given in
@@ -71,10 +128,14 @@ Notes are wrapped to the width of their region and set from its foot.
 The revision table has two heading rows and one row per revision,
 each ROW high, downward from TOP.
 Before the template, these strings are defined: each listed field
-(empty if not set; Filename is the drawing file), Paper, Scale, Sheet,
+(empty if not set; Filename is the name of the drawing file with its
+extension), Paper, Units, Scale, Sheet,
 Sheets, MaterialNote, FinishNote, and Revisions, an array of
 [REV DATE BY TEXT] (empty except on sheet 1).
 The procedures TX, LN and FLG may be used in the template.
+TX lays a text out by the widths of osifont, as the notes are wrapped;
+where Ghostscript draws it in another font, a wider one, it squeezes
+the text along its line to that width, so no text leaves its room.
 .SH EXAMPLES
 A C template with a title, and a drawing for it:
 .PP
@@ -85,6 +146,7 @@ A C template with a title, and a drawing for it:
 %%PliCadFields: Title
 [ Title ] 11 16 0 0.2 1 TX
 
+units in
 template title_c.ps
 field Title BRACKET (L), 2X
 view top

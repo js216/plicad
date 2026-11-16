@@ -5,6 +5,6 @@
 # The round of 6.5 takes all of the bottom, 6.5 wide, and with it the
 # two short edges at its ends, while the faces of those edges stay.
 
-profile p along z 0 0 0 6.5 0 0 6.5 24 0 0 24 0
+profile p along z 0 0 0 6.5 0 0 6.5 24 0 0 24 0 side s3
 extrude blk from 0 to 19.5 p
-round 6.5 blk.start blk.p.3
+round 6.5 blk.start blk.s3

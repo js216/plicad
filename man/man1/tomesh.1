@@ -15,26 +15,43 @@ tomesh \- write the triangles of parts as an OBJ mesh
 ] [
 .B \-n
 ]
-.IR part.fold | stream | \-
+.IR stream.st | \-
 .SH DESCRIPTION
 .I Tomesh
-writes each part of a fold file, or each solid of a stream,
+writes each part of a stream
+.RI ( stream (5))
 as an object of a Wavefront OBJ file on the standard output:
 .PP
 .RS
 .nf
 o NAME
-# colour R G B
+# color R G B
 v X Y Z
 vn X Y Z
 f A B C
 .fi
 .RE
 .PP
-The colour is that of a placed part, from 0 to 1.
+The color is that of the material of a placed part, from 0 to 1.
 Vertices are in world mm, numbered from 1 through the file;
 triangles are counterclockwise seen from outside.
 Each mesh is closed (faces share the points of their edges).
+The triangles of a part with coats
+.RI ( sm (5))
+are cut along the coats, and those of each material of a coat, or of
+the finish of faces of a solid
+.RI ( part (5)),
+come after the rest in a group of their own: a line
+.BI usemtl " material" ,
+the comment
+.BI "# color" " r g b"
+if the stream gives the material, that of the body, 0.85 of it, for a
+texture, and the faces.
+A texture comes after the usemtl line as the comment
+.BI "# texture " grade ,
+its grade of VDI 3400, or 30 for a texture of a callout alone, which
+.IR view (1)
+draws as a grain.
 .TP
 .BI \-c " chord"
 Keep every triangle within
@@ -50,4 +67,4 @@ degrees (default 10).
 Write vertex normals, with faces as
 .IB a // n .
 .SH SEE ALSO
-fold(5), part(5), view(1)
+stream(5), part(5), view(1)

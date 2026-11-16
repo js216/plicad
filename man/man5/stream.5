@@ -1,0 +1,171 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" stream.5 -- Manual page of the stream of parts
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH STREAM 5
+.SH NAME
+stream \- the parts that the programs write and read
+.SH DESCRIPTION
+A stream holds parts: the folded blank that
+.IR smfold (1)
+writes, the solids that a pipe of
+.IR extrude (1),
+.IR bool (1)
+and
+.IR fillet (1)
+passes on, or the parts of an assembly in place, as
+.IR place (1)
+writes them.
+Every program that reads parts reads a stream; its file name ends in
+.BR .st .
+A stream has one record on each line, in mm, and begins with the line
+.BR PliCad :
+.PP
+.RS
+.nf
+PliCad
+source PATH
+material NAME R G B ROUGHNESS DENSITY [FINISH]
+part NAME
+  place R00 R01 R02 R10 R11 R12 R20 R21 R22 TX TY TZ
+  base MATERIAL
+  coat MATERIAL near|far edges|- N X0 Y0 ... XN-1 YN-1
+  finish MATERIAL REF...
+  thread REF [deep D] DESIGNATION...
+  a folded blank, or an exact solid
+end
+@N TEXT
+.fi
+.RE
+.PP
+.B source
+names the source file of a pipe, whose lines that no program of the
+pipe has taken yet follow as
+.B @
+lines, each with its number in the source; the last program of a pipe
+refuses any that is left.
+A
+.B material
+gives the color and the roughness of a material, from 0 to 1, its
+density in g/cm3, and its finish, as
+.IR plicad (7)
+says.
+A part has its place in the world (the identity in a pipe), the
+material of its body, if any, and its coats: each a region of the flat
+blank, a polygon of N corners, on the near side or the far one, and
+with
+.B edges
+on the cut edges in it too, that takes the material; a later coat lies
+over an earlier one.
+A
+.B finish
+of a solid gives the faces that its references name
+.RI ( part (5))
+the material of a finish, the later over the earlier, and a
+.B thread
+the holes of the faces its reference names a thread
+.RI ( part (5)),
+its depth D in mm; the sets of faces of the source are written as their
+references, a thread for each.
+The material of the body must be one of the stream; that of a coat or
+a finish need not be, and then it has no color.
+A part with neither a blank nor a solid is an empty solid, as a
+.B common
+of two solids apart leaves.
+.SS A folded blank
+A blank is the flat part, cut into faces along the edges of its bend
+zones, with a map for each face from flat (x, y, z), z in [\-t, 0], to
+the part:
+.PP
+.RS
+.nf
+t T
+map I rigid R00 ... R22 TX TY TZ
+map I bend PARENT QX QY MX MY BA ANGLE R
+face I MAP
+vertex I X Y
+edge I V0 V1 LEFT RIGHT [arc CX CY] [by FEATURE]
+hole FACE CX CY R [csink RC H near|far] [blind D near|far] [by FEATURE]
+insert NAME TYPE near|far HOLE D H [fills] [material M]
+.fi
+.RE
+.PP
+Indices start at 0 for each kind of record, and \- stands for no face.
+A blind hole opens on the near face or the far one and goes D into the
+sheet; it has no countersink.
+An insert names the type of its hardware
+.RI ( sm (5)),
+the side its body stands on, its hole, and its body: a cylinder D
+across and H high on that side over the hole, and with
+.B fills
+the hole too, through the sheet or to the floor of a blind hole, as a
+flush or a blind type has it; H may be 0 then.
+Its material is one of the stream.
+The record holds all that a reader needs, which looks up no table.
+A program that reads the parts of a stream gives each insert its body,
+an exact solid, as a solid part PART/NAME after its part, at the place
+of the part and of its material, if it has one; so measure, interfere,
+tostep and tomesh take the bodies too.
+A stream written from those parts holds the bodies, not the inserts.
+A slab is mapped by a rotation and a translation; a bend zone, a
+rectangle across the full width BA wide that begins on the line
+through (QX, QY) perpendicular to the unit vector (MX, MY) into the
+zone, is wrapped round the bend axis of its parent slab.
+Arcs run counterclockwise from V0 to V1, and the face on the left of an
+edge sees its boundary counterclockwise.
+The feature of an edge or a hole is the name of the statement of the
+source that made it, which the drawings select by
+.RI ( draw (5)).
+.SS An exact solid
+A solid is given by its vertices, its edges on curves and its faces on
+surfaces, in the frame of the part:
+.PP
+.RS
+.nf
+v X Y Z
+e V0 V1 T0 T1 CURVE
+f NAME SENSE SURFACE
+l [+|\-]E ...
+.fi
+.RE
+.PP
+CURVE is
+.BI line " O X" ,
+.BI circle " O N X R" ,
+.BI ellipse " O N X A B"
+or
+.BI nodal " O N X R RT" ,
+and SURFACE
+.BI plane " O N X" ,
+.BI cylinder " O N X R" ,
+.BI cone " O N X R TAN" ,
+.BI sphere " O N X R" ,
+.BI torus " O N X R RT"
+or
+.BI pipe " O N X A B RT" ,
+O, N and X three numbers each.
+A pipe is the surface of a ball of radius RT whose center runs along
+the ellipse O N X A B; a point of it lies at RT from the point of the
+ellipse nearest it, so that a face of a pipe lies where the tube does
+not fold over itself.
+For A = B it is the torus O N X A RT.
+A nodal section is the curve where the torus O N X R RT meets the plane
+at R \- RT along X, which touches the inner circle of the torus: a
+figure of eight with its node at T = 0, the point of touch,
+.PP
+.RS
+.nf
+O + (R \- RT) X + u(T) Y + RT sin(T) N
+u(T) = sin(T/2) sqrt(2 RT (2 R \- RT \- RT cos(T)))
+.fi
+.RE
+.PP
+for T from \-2 pi to 2 pi, Y = N \(mu X; a round ends on such a curve
+where its face runs on smoothly into the face it ends on
+.RI ( fillet (1)).
+Each face is followed by its loops, counterclockwise about its outward
+normal, the natural normal of its surface times SENSE.
+The faces are named as
+.IR part (5)
+says.
+.SH SEE ALSO
+plicad(7), smfold(1), place(1), part(5), assembly(5)

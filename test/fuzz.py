@@ -37,7 +37,10 @@
 #         interfere.  Placed parts keep their volume and area, their
 #         boxes move with them, parts far apart do not collide, and two
 #         copies at one place do.
-#   mut   A damaged input file (.sm, .fold, .txt, .params, .draw, a
+#   assemble  An assembly of generated parts with insertion paths, and a
+#         step and at times a clearance, for assemble -v: it passes, or
+#         says a clash or a refusal, and never breaks.
+#   mut   A damaged input file (.sm, .st, .txt, .params, .draw, a
 #         source header or a measure output) for its programs.
 #   view  A generated part, for smview in every view, with and without
 #         -h.  Every record is well formed, no line or arc is shorter
@@ -56,8 +59,9 @@
 #         explains: a boxed note it left without a flag, a flag it gave
 #         a bad number, a view too large for the paper by the sizes the
 #         message gives, and the like.
-#   mutdraw A damaged drawing file (test/*.draw and those of an outside project,
-#         copied into WORK/drawings) for smdraw on a test fold: the
+#   mutdraw A damaged drawing file (test/*.draw, and the drawings of a
+#         project if WORK/outside names them, copied into WORK/drawings)
+#         for smdraw on a test fold: the
 #         drawing passes Ghostscript, or the refusal names its line, or
 #         is one of the refusals of the file as a whole.
 #   mesh  A generated part, sheet metal or solid, for tomesh at a random
@@ -66,11 +70,13 @@
 #         of a triangle that of one other, the other way round), with the
 #         volume of measure within the area times the chord and the area
 #         within one part in a hundred (objcheck.py).
-#   scene test/view.scene with a generated mesh and picture (PPM, or PAM
-#         with opacity), one of its files damaged (the scene, an OBJ file
-#         or the picture) in half the cases, for view -c, then for view -b
-#         with random commands, among them the explode, the drags, the
-#         keys h, o and s, and undo.  A refusal must come with a message.
+#   scene test/view.scene with a generated mesh, moved and turned, at
+#         times in one or two units, and a picture (PPM, or PAM with
+#         opacity), at times on the mesh too, one of its files damaged
+#         (the scene, an OBJ file or the picture) in half the cases, for
+#         view -c, then for view -b with random commands, among them the
+#         play of paths, the moves, the keys h, o, s, H, O and S, levels,
+#         the labels, and undo.  A refusal must come with a message.
 #   args  Random arguments for a random program.
 # A program must either succeed or exit with a message, and never
 # crash, hang or trip a sanitizer.
@@ -89,7 +95,7 @@
 # input gives an invalid solid).  A new
 # finding is logged with NEW in front of its verdict, and a repeated
 # one with DUP.  Each finding directory holds the input, the command,
-# stderr, and a minimised input in min/ with its command in README.
+# stderr, and a minimized input in min/ with its command in README.
 
 import hashlib
 import importlib.util
@@ -123,6 +129,7 @@ DISK_SHARE = 0.1
 PAUSE_LONG = 30 * 60      # seconds of a pause that findings.log hears of
 FREECADCMD = "/home/jk/prog/freecad/build/bin/FreeCADCmd"
 HERE = os.path.dirname(os.path.abspath(__file__))
+LIB = os.path.join(os.path.dirname(HERE), "lib")  # plicad-lib(7)
 SAN_ENV = {
     "ASAN_OPTIONS": "detect_leaks=1:abort_on_error=0:exitcode=99:"
                     "allocator_may_return_null=1:handle_abort=1:"
@@ -154,25 +161,32 @@ NUMBERS = ["0", "-0", "1", "-1", "2.5", "1e-308", "1e308", "-1e308",
            "100000", "100001", "4294967297", "1e-320", "t", "x*", "(1",
            "1)", "floor(-0.5)", "abs(-2)", "a b", "(1 2)", "1,2"]
 WORDS = ["include", "sheet", "plate", "flange", "cut", "hole", "round",
-         "origin", "axes", "at", "span", "zone", "radius", "along",
-         "depth", "pattern", "outline", "point", "trim", "arc", "ccw",
-         "cw", "+x", "-x", "+y", "-y", "+z", "-z", "x", "y", "z", "part",
-         "end", "map", "face", "vertex", "edge", "rigid", "bend",
-         "place", "rot", "t", "hole", "kind", "prism", "pmap", "ploop",
-         "player", "pround", "pxhole", "solid", "loop", "corner",
-         "layer", "xhole", "cbore", "rim", "floor", "far", "-", "#",
-         "=", "(", ")", "\x00", "\xff", "a.fold", "b.fold", "nope.fold",
-         "/", "..", "volume", "bbox", "flat", "holes", "bends", "d",
+         "axes", "at", "span", "zone", "along", "from", "to", "pattern",
+         "hex", "within", "csink", "outline", "point", "trim", "arc",
+         "ccw", "cw", "coat", "all", "flat", "edges", "+x", "-x", "+y",
+         "-y", "+z", "-z", "x", "y", "z", "PliCad", "source", "part",
+         "end", "map", "face", "vertex", "edge", "rigid", "bend", "by",
+         "place", "base", "material", "materials", "move", "turn",
+         "about", "path", "with", "image", "on", "mesh", "t", "v", "e",
+         "f", "l", "line", "circle", "plane", "cylinder", "cone",
+         "sphere", "torus", "profile", "corner", "side", "extrude",
+         "draft", "union", "subtract", "common", "faces", "any",
+         "convex", "sharp", "blk.start", "blk.end", "blk.side",
+         "blk.side.s0", "blk.s0", "units", "in", "mm", "drop", "lin",
+         "leader", "flag", "hatch", "near", "far", "-", "#", "\\", "=",
+         "(", ")", "\x00", "\xff", "a.st", "b.st", "nope.st", "/", "..",
+         "volume", "bbox", "holes", "bends", "d",
          "SPDX-License-Identifier:", "--", "//", "/*", "#!"]
 AXES = ["+x", "-x", "+y", "-y", "+z", "-z"]
 # The programs that print their findings on stdout.
 CHECKERS = ("numdiff", "hdrcheck", "lint")
 PIPES = {
-    "sm": "smfold gen.sm > gen.fold, then measure, tostep (gen.step) "
-          "and smflat -f dxf on gen.fold, then occtworker",
-    "asm": "place asm.txt > asm.fold, then measure, interfere and tostep "
-           "on asm.fold",
-    "mut": "the producer of mut.* (smfold or place) > mut.fold, then "
+    "sm": "smfold gen.sm > gen.st, then measure, tostep (gen.step) "
+          "and smflat -f dxf on gen.st, then occtworker",
+    "asm": "place asm.txt > asm.st, then measure, interfere and tostep "
+           "on asm.st",
+    "assemble": "assemble -v asm.txt, of generated parts with paths",
+    "mut": "the producer of mut.* (smfold or place) > mut.st, then "
            "measure, tostep (out.step), smflat and interfere on it, and "
            "occtworker for INVALID",
     "args": "the program with the lines of argv as its arguments",
@@ -180,14 +194,14 @@ PIPES = {
              "> gen.round, then measure and tostep (gen.step) on "
              "gen.round, then occtworker",
     "fillet": "as solid",
-    "view": "smfold gen.sm > gen.fold, then smview [-h] VIEW gen.fold for "
+    "view": "smfold gen.sm > gen.st, then smview [-h] VIEW gen.st for "
             "each view, and occtworker on gen.step and one view",
-    "dim": "smfold gen.sm > gen.fold, smview VIEW gen.fold > gen.view, "
-           "smdim -s SCALE < gen.view, and measure gen.fold",
-    "sheet": "smfold gen.sm > gen.fold, PLICAD=BIN smdraw gen.draw gen.fold "
+    "dim": "smfold gen.sm > gen.st, smview VIEW gen.st > gen.view, "
+           "smdim -s SCALE -u in < gen.view, and measure gen.st",
+    "sheet": "smfold gen.sm > gen.st, PLICAD_BIN=BIN smdraw gen.draw gen.st "
              "> out.ps, gs -sDEVICE=nullpage out.ps",
-    "mutdraw": "PLICAD=BIN smdraw mut.draw part.fold > out.ps, gs on out.ps",
-    "mesh": "smfold gen.sm > gen.fold (or extrude, bool and fillet of "
+    "mutdraw": "PLICAD_BIN=BIN smdraw mut.draw part.st > out.ps, gs on out.ps",
+    "mesh": "smfold gen.sm > gen.st (or extrude, bool and fillet of "
             "gen.part > gen.round), measure, then tomesh OPTS > gen.obj",
     "scene": "view -c scene.txt, then view -b scene.txt < cmds",
 }
@@ -304,7 +318,7 @@ def must(r, argv, gen):
 def solid_must(r, argv):
     # As must for a generated part of solids, with the message of a
     # failure in its signature, numbers and places taken out, so that
-    # the minimiser keeps the same failure.
+    # the minimizer keeps the same failure.
     if r.verdict == "FAIL":
         prog = os.path.basename(argv[0])
         msg = re.sub(r"^\S*:\d+: ", "", r.err.strip().splitlines()[0])
@@ -524,6 +538,7 @@ def outline_area(pts):
 class SmModel:
     def __init__(self):
         self.names = {}
+        self.feats = set()
         self.t = None
         self.bodies = []
         self.bends = []
@@ -535,21 +550,29 @@ class SmModel:
     def mark(self):
         return (len(self.bodies), len(self.bends), len(self.holes),
                 self.removed, dict(self.names), self.outline,
-                [len(b["kids"]) for b in self.bodies])
+                [len(b["kids"]) for b in self.bodies], set(self.feats))
 
     def rollback(self, mk):
-        nb, nbe, nh, rem, names, ol, kids = mk
+        nb, nbe, nh, rem, names, ol, kids, feats = mk
         del self.bodies[nb:]
         del self.bends[nbe:]
         del self.holes[nh:]
         self.removed = rem
         self.names = names
         self.outline = ol
+        self.feats = feats
         for b, k in zip(self.bodies, kids):
             del b["kids"][k:]
 
     def ev(self, w):
         return evaluate(w, self.names)
+
+    def new_name(self, words):
+        # The name of a new feature, the second word, which no plate,
+        # flange, cut, hole, outline or trim has yet.
+        if len(words) < 2 or words[1] in self.feats:
+            raise Reject("no new name")
+        self.feats.add(words[1])
 
     def feed_text(self, text):
         for line in text.split("\n"):
@@ -583,9 +606,14 @@ class SmModel:
         elif w in ("hole", "cut"):
             self.through(words)
         elif w == "outline":
+            self.new_name(words)
             self.outline = (words, [])
+        elif w == "trim":
+            raise Reject("the model has no trim")
         elif w == "round":
             self.round(words)
+        elif w == "coat":
+            pass  # A coat changes neither the solid nor the blank.
         else:
             raise Reject("unknown statement " + w)
 
@@ -638,6 +666,9 @@ class SmModel:
     def plate(self, words):
         if self.t is None or self.bodies:
             raise Reject("plate order")
+        if len(words) != 13 or words[6] != "at" or words[10] != "axes":
+            raise Reject("plate NAME X0 Y0 X1 Y1 at OX OY OZ axes U V")
+        self.new_name(words)
         x0, y0, x1, y1 = (self.ev(x) for x in words[2:6])
         o = tuple(self.ev(x) for x in words[7:10])
         u = axis_vec(*axis_word(words[11]))
@@ -657,8 +688,7 @@ class SmModel:
 
     def flange(self, words):
         name = words[1]
-        if any(b["name"] == name for b in self.bodies):
-            raise Reject("duplicate name")
+        self.new_name(words)
         pi = self.slab(words[2])
         p = self.bodies[pi]
         ax, sg = axis_word(words[3])
@@ -744,9 +774,9 @@ class SmModel:
         return rig_pt(rig_inv(b["m"]), tuple(p))
 
     def where(self, words, i):
-        # Parses "along A [at W depth L] [pattern ...]"; returns the axis,
-        # the depth range and the (du, dv) of the copies.
-        if i >= len(words) or words[i] != "along":
+        # Parses "along A [from W0 to W1] [pattern ...]"; returns the
+        # axis, the depth range and the (du, dv) of the copies.
+        if i + 1 >= len(words) or words[i] != "along":
             raise Reject("expected along")
         a = axis_word(words[i + 1])[0]
         au = 1 if a == 0 else 0
@@ -754,14 +784,18 @@ class SmModel:
         dirs = []
         i += 2
         while i < len(words):
-            if words[i] == "at" and i + 3 < len(words) and \
-                    words[i + 2] == "depth":
-                w, d = self.ev(words[i + 1]), self.ev(words[i + 3])
-                lo, hi = w - d / 2, w + d / 2
+            if words[i] == "from" and i + 3 < len(words) and \
+                    words[i + 2] == "to":
+                lo, hi = self.ev(words[i + 1]), self.ev(words[i + 3])
+                if not hi > lo:
+                    raise Reject("from W0 to W1 needs W1 > W0")
                 i += 4
-            elif words[i] == "pattern":
+            elif words[i] == "pattern" and words[0] == "hole":
+                if i + 1 < len(words) and words[i + 1] == "hex":
+                    raise Reject("the model has no hex pattern")
                 i += 1
-                while i < len(words) and words[i] != "at":
+                while i < len(words) and words[i] not in ("from",
+                                                          "csink"):
                     if len(dirs) == 2 or i + 2 >= len(words):
                         raise Reject("bad pattern")
                     ax, sg = axis_word(words[i])
@@ -775,6 +809,8 @@ class SmModel:
                     i += 3
                 if not dirs:
                     raise Reject("empty pattern")
+            elif words[i] == "csink":
+                raise Reject("the model has no countersink")
             else:
                 raise Reject("unknown option")
         copies = [(0.0, 0.0)]
@@ -787,15 +823,16 @@ class SmModel:
         return a, lo, hi, copies
 
     def through(self, words):
+        self.new_name(words)
         if words[0] == "hole":
-            d, u, v = (self.ev(x) for x in words[1:4])
+            d, u, v = (self.ev(x) for x in words[2:5])
             if not d > 0:
                 raise Reject("hole size")
-            a, lo, hi, copies = self.where(words, 4)
+            a, lo, hi, copies = self.where(words, 5)
             foot = (u - d / 2, v - d / 2, u + d / 2, v + d / 2)
         else:
-            u0, v0, u1, v1 = (self.ev(x) for x in words[1:5])
-            a, lo, hi, copies = self.where(words, 5)
+            u0, v0, u1, v1 = (self.ev(x) for x in words[2:6])
+            a, lo, hi, copies = self.where(words, 6)
             foot = (min(u0, u1), min(v0, v1), max(u0, u1), max(v0, v1))
         for du, dv in copies:
             f = (foot[0] + du, foot[1] + dv, foot[2] + du, foot[3] + dv,
@@ -832,7 +869,7 @@ class SmModel:
         self.outline = None
         if len(pts) < 2:
             raise Reject("short outline")
-        a, lo, hi, copies = self.where(words, 1)
+        a, lo, hi, copies = self.where(words, 2)
         us = [p[0] for p in pts]
         vs = [p[1] for p in pts]
         for p in pts:
@@ -849,8 +886,12 @@ class SmModel:
             self.removed += area * len(hits)
 
     def round(self, words):
-        i = self.slab(words[1])
-        r = self.ev(words[2])
+        # round R NAME [at X Y Z]
+        if len(words) not in (3, 7) or (len(words) == 7 and
+                                        words[3] != "at"):
+            raise Reject("round R NAME [at X Y Z]")
+        r = self.ev(words[1])
+        i = self.slab(words[2])
         if not r > 0:
             raise Reject("round radius")
         b = self.bodies[i]
@@ -977,6 +1018,16 @@ class SheetGen:
         self.model = SmModel()
         self.lines = []
         self.taken = {}
+        self.nfeat = 0
+
+    def fresh(self, kind):
+        # A new name for a feature of kind, unlike the names of the
+        # plate, the flanges and the other features.
+        while True:
+            self.nfeat += 1
+            name = "%s%d" % (kind, self.nfeat)
+            if name not in self.model.feats:
+                return name
 
     def num(self, x):
         # Writes x, now and then as a sum or through a name.
@@ -1019,7 +1070,7 @@ class SheetGen:
         u = rng.choice(AXES)
         v = rng.choice([a for a in AXES if a[1] != u[1]])
         o = [fmt(rng.choice([0, rng.uniform(-80, 80)])) for _ in range(3)]
-        self.add("plate base %s %s %s %s origin %s %s %s axes %s %s" % (
+        self.add("plate base %s %s %s %s at %s %s %s axes %s %s" % (
             fmt(x0), fmt(y0), self.num(x0 + w), self.num(y0 + h),
             o[0], o[1], o[2], u, v))
         for i in range(rng.choice([0, 1, 2, 3, 4, 4, 5, 6, 8, 10])):
@@ -1033,7 +1084,34 @@ class SheetGen:
         rng.shuffle(feats)
         for i in feats:
             self.feature(i)
+        for _ in range(rng.choice([0, 0, 0, 1, 2, 3])):
+            self.coat()
         return "\n".join(self.lines) + "\n"
+
+    def coat(self):
+        # A coat of a random material on a side: the whole blank, a flat
+        # rectangle or triangle, or a rectangle across a random axis, at
+        # times only from one depth to another along it.
+        rng = self.rng
+        head = "coat %s %s%s" % (rng.choice(["black", "clear"]),
+                                 rng.choice(["near", "far"]),
+                                 rng.choice(["", " edges"]))
+        x = [fmt(q(rng.uniform(-60, 260))) for _ in range(6)]
+        kind = rng.randrange(4)
+        if kind == 0:
+            self.add(head + " all")
+        elif kind == 1:
+            self.add(head + " flat %s %s %s %s" % tuple(x[:4]))
+        elif kind == 2:
+            self.add(head + " flat %s %s %s %s %s %s" % tuple(x))
+        else:
+            depth = ""
+            if rng.random() < 0.5:
+                w0 = q(rng.uniform(-80, 80))
+                depth = " from %s to %s" % (fmt(w0), fmt(
+                    w0 + q(rng.uniform(0.5, 100))))
+            self.add(head + " %s %s %s %s along %s%s" % (
+                x[0], x[1], x[2], x[3], rng.choice("xyz"), depth))
 
     def angle(self):
         rng = self.rng
@@ -1134,7 +1212,7 @@ class SheetGen:
                 rr = q(rng.uniform(0.2, 0.45 * min(leg, span)))
                 if rr <= 0.05:
                     continue
-                if self.add("round %s %s" % (b["name"], fmt(rr))):
+                if self.add("round %s %s" % (fmt(rr), b["name"])):
                     e = b["end"]
                     for al in ((y0, y1) if ax == 0 else (x0, x1)):
                         pt = (e, al) if ax == 0 else (al, e)
@@ -1166,7 +1244,7 @@ class SheetGen:
                 z = rng.choice([0, -m.t])
                 p = rig_pt(b["m"], (cx, cy, z))
                 line = "round %s %s at %s %s %s" % (
-                    b["name"], fmt(rr), fmt(p[0]), fmt(p[1]), fmt(p[2]))
+                    fmt(rr), b["name"], fmt(p[0]), fmt(p[1]), fmt(p[2]))
                 if self.add(line):
                     self.take(i, cx - rr, cy - rr, cx + rr, cy + rr)
 
@@ -1273,16 +1351,17 @@ class SheetGen:
                                          fmt(pitch)))
         pat = " pattern " + " ".join(words) if words else ""
         body = []
+        name = self.fresh(kind)
         if kind == "hole":
-            head = "hole %s %s %s" % (fmt(fw), fmt(fu + fw / 2),
-                                      fmt(fv + fh / 2))
+            head = "hole %s %s %s %s" % (name, fmt(fw), fmt(fu + fw / 2),
+                                         fmt(fv + fh / 2))
         elif kind == "cut":
             cut = [fmt(fu), fmt(fv), fmt(fu + fw), fmt(fv + fh)]
             if rng.random() < 0.5:
                 cut = [cut[2], cut[1], cut[0], cut[3]]
-            head = "cut " + " ".join(cut)
+            head = "cut %s %s" % (name, " ".join(cut))
         else:
-            head = "outline"
+            head = "outline " + name
             body = self.outline_points(fu, fv, fw, fh)
             if body is None:
                 return
@@ -1290,10 +1369,11 @@ class SheetGen:
         foot = (bu, bv, bu + span[0], bv + span[1])
         depth = ""
         if rng.random() < 0.5 or not self.line_clear(i, a, foot, None):
-            dl = q(m.t * (1 + rng.uniform(0.2, 1)))
-            if not self.line_clear(i, a, foot, (w, dl)):
+            dl = m.t * (1 + rng.uniform(0.2, 1))
+            w0, w1 = q(w - dl / 2), q(w + dl / 2)
+            if not self.line_clear(i, a, foot, (w0, w1)):
                 return
-            depth = " at %s depth %s" % (fmt(w), fmt(dl))
+            depth = " from %s to %s" % (fmt(w0), fmt(w1))
         line = "%s along %s%s%s" % (head, "xyz"[a], depth, pat)
 
         def one_hit():
@@ -1382,11 +1462,11 @@ class SheetGen:
         return lines
 
     def line_clear(self, i, a, foot, depth):
-        # Whether the cut through foot, a (U, V) box, misses every other
+        # Whether the cut through foot, a (U, V) box, from depth[0] to
+        # depth[1] along the axis, or all through, misses every other
         # body.
         m = self.model
-        lo, hi = (-1e9, 1e9) if depth is None else \
-            (depth[0] - depth[1] / 2, depth[0] + depth[1] / 2)
+        lo, hi = (-1e9, 1e9) if depth is None else depth
         au = 1 if a == 0 else 0
         av = 1 if a == 2 else 2
         p, r = [0.0] * 3, [0.0] * 3
@@ -1460,7 +1540,7 @@ class SolidGen:
         return sol
 
     def cylinder(self, box, axis, draft=0.0):
-        # A cylinder or a cone along axis, its circle centred in box.
+        # A cylinder or a cone along axis, its circle centered in box.
         u, v = [i for i in range(3) if i != axis]
         lo, hi = box[:3], box[3:]
         cu = self.g(lo[u], hi[u])
@@ -1482,8 +1562,8 @@ class SolidGen:
                                         w1 - w0)
             opt = " draft %s" % fmt(draft)
         prof = self.name("c")
-        self.lines.append("circle %s along %s %s %s %s" % (
-            prof, "xyz"[axis], fmt(cu), fmt(cv), fmt(d)))
+        self.lines.append("circle %s %s %s %s along %s" % (
+            prof, fmt(d), fmt(cu), fmt(cv), "xyz"[axis]))
         sol = self.name("s")
         self.lines.append("extrude %s from %s to %s %s%s" % (
             sol, fmt(w0), fmt(w1), prof, opt))
@@ -1516,8 +1596,8 @@ class SolidGen:
             acc = self.cylinder(base, 2)
         axis = rng.randrange(3)
         for _ in range(rng.randint(1, 4)):
-            op = rng.choice(["cut", "cut", "union", "common"])
-            box = self.tool_box(base, op == "cut")
+            op = rng.choice(["subtract", "subtract", "union", "common"])
+            box = self.tool_box(base, op == "subtract")
             k = rng.random()
             if k < 0.4:
                 tool = self.block(box, 0.45)
@@ -1538,19 +1618,27 @@ class FilletGen(SolidGen):
     # A random part with rules for fillet: a block, at times with a hole
     # or with a block on it, and rounds of one or two radii on all its
     # edges, on those that turn one way, or on those of faces picked by
-    # name.  Many of these leave no room or meet at a corner that has no
-    # exact round, which fillet must refuse.  want holds the volume of a
-    # plain block with every edge round, else None.
+    # name: the solid, its ends, its sides, the side of a named corner,
+    # any face, or a set of these.  Many of these leave no room or meet
+    # at a corner that has no exact round, which fillet must refuse.
+    # want holds the volume of a plain block with every edge round, else
+    # None.
 
     def gen(self):
         rng = self.rng
         a, b, c = self.g(4, 30), self.g(4, 30), self.g(2, 20)
         self.want = None
-        self.lines.append("profile p along z 0 0 0 %s 0 0 %s %s 0 0 %s 0" % (
-            fmt(a), fmt(a), fmt(b), fmt(b)))
+        kind = rng.randrange(5)
+        # The corners of the block, each with the name of the side that
+        # runs from it to the next, s0 to s3, or at times with none.
+        named = kind == 3 or rng.random() < 0.5
+        corners = []
+        for k, (u, v) in enumerate([(0, 0), (a, 0), (a, b), (0, b)]):
+            corners.append("%s %s 0%s" % (fmt(u), fmt(v), " side s%d" % k
+                                          if named else ""))
+        self.lines.append("profile p along z " + " ".join(corners))
         self.lines.append("extrude blk from 0 to %s p" % fmt(c))
         small = min(a, b, c)
-        kind = rng.randrange(5)
         r = self.g(self.GRID, max(self.GRID, small * rng.choice([0.2, 0.45,
                                                                  0.6])))
         if kind == 0:
@@ -1560,20 +1648,26 @@ class FilletGen(SolidGen):
                     a + b + c - 6 * r) - (8 - 4 * math.pi / 3) * r ** 3
         elif kind == 1:
             d = self.g(self.GRID, max(self.GRID, min(a, b) - 1))
-            self.lines.append("circle h along z %s %s %s" % (
-                fmt(a / 2), fmt(b / 2), fmt(d)))
+            self.lines.append("circle h %s %s %s along z" % (
+                fmt(d), fmt(a / 2), fmt(b / 2)))
             self.lines.append("extrude hole from -1 to %s h" % fmt(c + 1))
-            self.lines.append("cut u blk hole")
+            self.lines.append("subtract u blk hole")
             self.lines.append("round %s %s" % (fmt(r), rng.choice(
-                ["convex", "blk.end hole.*", "blk.* hole.*"])))
+                ["convex", "blk.end hole", "blk hole", "blk.end hole.side"])))
         elif kind == 2:
             r2 = self.g(self.GRID, max(self.GRID, small * 0.45))
-            self.lines.append("round %s blk.p.* blk.p.*" % fmt(r))
-            self.lines.append("round %s blk.%s *" % (
-                fmt(r2), rng.choice(["end", "start", "*"])))
+            self.lines.append("round %s blk.side blk.side" % fmt(r))
+            self.lines.append("round %s %s any" % (
+                fmt(r2), rng.choice(["blk.end", "blk.start", "blk"])))
         elif kind == 3:
-            faces = ["blk.p.0", "blk.p.1", "blk.p.2", "blk.p.3", "blk.start",
-                     "blk.end", "blk.p.*", "blk.*"]
+            faces = ["blk.s0", "blk.s1", "blk.s2", "blk.s3", "blk.start",
+                     "blk.end", "blk.side", "blk", "any"]
+            # Sets of faces, the later at times of the earlier.
+            for k in range(rng.choice([0, 0, 1, 2])):
+                name = "set%d" % k
+                self.lines.append("faces %s %s" % (name, " ".join(
+                    rng.sample(faces, rng.randint(1, 3)))))
+                faces.append(name)
             for _ in range(rng.randint(1, 3)):
                 self.lines.append("%s %s %s" % (
                     rng.choice(["round %s" % fmt(r), "round %s" % fmt(
@@ -1589,7 +1683,7 @@ class FilletGen(SolidGen):
             self.lines.append("extrude top from %s to %s q" % (
                 fmt(c), fmt(c + self.g(1, 8))))
             self.lines.append("union u blk top")
-            for w in rng.sample(["convex", "blk.end top.*"], 2):
+            for w in rng.sample(["convex", "blk.end top"], 2):
                 self.lines.append("round %s %s" % (
                     fmt(self.g(self.GRID, max(self.GRID, small / 2))), w))
         return "\n".join(self.lines) + "\n"
@@ -1620,7 +1714,7 @@ def ddmin(units, test, budget):
     return units, runs
 
 
-def minimise(data, test, budget=MIN_RUNS):
+def minimize(data, test, budget=MIN_RUNS):
     # Line-level, then token-level delta debugging of data (bytes).
     lines = data.split(b"\n")
     lines, used = ddmin(lines, lambda u: test(b"\n".join(u)), budget)
@@ -1650,8 +1744,6 @@ VIEW_EYE = {"front": [0, -1, 0], "back": [0, 1, 0], "right": [1, 0, 0],
 SCALES = ["2", "1.5", "1", "0.75", "0.5", "0.375", "0.25"]
 GS = "/usr/bin/gs"
 FONTDIR = "/home/jk/prog/freecad/FreeCAD/src/Mod/TechDraw/Gui/Resources/fonts"
-OUTSIDE_DRAWINGS = ""
-OUTSIDE_FOLDS = ""
 HLR_TOL = 0.08
 SHORT = 1e-3            # mm: no line or arc of smview is shorter
 VIEW_REFUSAL = re.compile(r"view \w+: the circle about \(.*\) is seen at an "
@@ -1659,7 +1751,8 @@ VIEW_REFUSAL = re.compile(r"view \w+: the circle about \(.*\) is seen at an "
 # The refusals of smdraw that may name no line: those of the file as a
 # whole.
 DRAW_REFUSAL = re.compile(
-    r"^\S*:\d+: |: no view$|: no template record|has a box, but no view has "
+    r"^\S*:\d+: |: no view$|: no template record|: no units record|"
+    r"has a box, but no view has "
     r"a flag|the template has no %%PliCad|lies off the paper|"
     r"the template has no %%PliCadNotes|the notes take|"
     r"a flag|names no note with a box|: sheet \d+: |: no view \w+, which|"
@@ -1678,31 +1771,25 @@ OSI_W = [890, 450, 801, 1256, 954, 1564, 1258, 417, 522, 522, 950, 952, 477,
 
 
 def put_templates(d):
-    # The plain templates of the tests in d, under their names and those
-    # of the outside drawings.
+    # The plain templates of the library in d.
     for k in "bcd":
-        with open(os.path.join(HERE, "plain_%s.ps" % k), "rb") as f:
+        path = os.path.join(LIB, "templates", "plain_%s.ps" % k)
+        with open(path, "rb") as f:
             t = f.read()
-        for name in ("plain_%s.ps" % k, "plain_%s.ps" % k):
-            with open(os.path.join(d, name), "wb") as f:
-                f.write(t)
+        with open(os.path.join(d, "plain_%s.ps" % k), "wb") as f:
+            f.write(t)
 
 
-def old_draw(data):
-    # A drawing file of the time before templates, with its paper in a
-    # size record and its texts in records of their own, in the form of
-    # today: template and field records.
-    names = {b"title": b"Title", b"number": b"Number", b"rev": b"Rev",
-             b"drawn": b"Drawn", b"eng": b"Eng"}
+def plain_templates(data):
+    # A drawing file with its template, NAME_b.ps, _c.ps or _d.ps or any
+    # other, turned into the plain template of the tests of that size.
     out = []
     for line in data.split(b"\n"):
-        w = line.split(b" ", 1)
-        if w[0] == b"size" and len(w) > 1:
-            out.append(b"template plain_%s.ps" % w[1].strip().lower())
-        elif w[0] in names and len(w) > 1:
-            out.append(b"field " + names[w[0]] + b" " + w[1])
-        elif w[0] not in (b"company", b"address", b"logo"):
-            out.append(line)
+        w = line.split()
+        if len(w) == 2 and w[0] == b"template":
+            m = re.search(rb"_([bcd])\.ps$", w[1])
+            line = b"template plain_%s.ps" % (m.group(1) if m else b"b")
+        out.append(line)
     return b"\n".join(out)
 
 
@@ -1743,7 +1830,16 @@ def view_records(text):
         if not w:
             return ("blank", "line %d is blank" % no)
         k = w[0]
+        # A line, an arc or a hole may end in "by FEATURE".
+        if k in ("line", "arc", "hole") and len(w) > 3 and w[-2] == "by":
+            w = w[:-2]
         shape = VIEW_SHAPES.get(k)
+        if k == "coat":
+            # coat MATERIAL near|far N X0 Y0 ... XN-1 YN-1
+            n = int(w[3]) if len(w) > 3 and w[3].isdigit() else -1
+            if w[2:3] not in (["near"], ["far"]) or n < 3:
+                return ("coat", "line %d: %s" % (no, line))
+            shape = "ss" + "n" * (1 + 2 * n)
         if k == "hole":
             shape = "nnn" if len(w) == 4 else "nnnsnns"
             if len(w) == 8 and (w[4] != "csink" or w[7] not in
@@ -1819,7 +1915,7 @@ def tx_rect(line, dx, dy):
     x, y, ang, h, al = [float(v) for v in m.groups()[1:]]
     wd = text_width(text, h)
     lo = -wd * al / 2
-    # x, y is the middle of the left, the centre or the right end.
+    # x, y is the middle of the left, the center or the right end.
     if abs(ang) < 1:
         return (x + dx + lo, y + dy - h / 2, x + dx + lo + wd,
                 y + dy + h / 2)
@@ -2080,13 +2176,27 @@ WORDS_NOTE = ["MASK", "PAINT", "SURFACE", "ENTIRE", "FLANGE", "HOLE",
 
 class DrawGen:
     # A random drawing file, and the plan that explains its refusals.
+    # feats holds the names of the features of the part, for the drop
+    # records.
 
-    def __init__(self, rng):
+    def __init__(self, rng, feats):
         self.rng = rng
+        self.feats = feats
 
     def words(self, lo, hi):
         return " ".join(self.rng.choice(WORDS_NOTE)
                         for _ in range(self.rng.randint(lo, hi)))
+
+    def length(self, x):
+        # The length x, in inches, in inches or in mm.
+        if self.rng.random() < 0.5:
+            return fmt(x) + "in"
+        return fmt(x * 25.4)
+
+    def more(self, out, text):
+        # Runs the last line of out on into a line of text.
+        out[-1] += " \\"
+        out.append("    " + text)
 
     def gen(self):
         rng = self.rng
@@ -2095,12 +2205,13 @@ class DrawGen:
         plan = {"size": size, "unflagged": set(), "badflags": set(),
                 "lin": False, "radius": False, "badfields": set(),
                 "room": (w - 1.8, h - 1.8)}
-        out = ["template " + TEMPLATES[size]]
+        out = ["units " + rng.choice(["in", "in", "in mm", "mm", "mm in"]),
+               "template " + TEMPLATES[size]]
         for f in rng.sample(FIELDS, rng.randint(0, len(FIELDS))):
             out.append("field %s %s" % (f, self.words(0, 5).replace(
                 "%%", "(\\") if rng.random() < 0.8 else "a ) ( \\ b"))
             if rng.random() < 0.2:
-                out.append("+ " + self.words(1, 3))
+                self.more(out, self.words(1, 3))
         if rng.random() < 0.05:
             bad = rng.choice(["Titel", "Sheet", "Scale", "Revisions"])
             out.append("field %s X" % bad)
@@ -2125,7 +2236,7 @@ class DrawGen:
                 else:
                     out.append("note " + self.words(2, 12))
             if rng.random() < 0.3:
-                out.append("+ " + self.words(1, 8))
+                self.more(out, self.words(1, 8))
         for _ in range(rng.randint(0, 3)):
             out.append("revision %s 11/13/26 JK %s" % (
                 rng.choice("ABC"), self.words(1, 6)))
@@ -2153,25 +2264,30 @@ class DrawGen:
             out.append(line)
             for f in flags[n]:
                 out.append(" flag %s %s %s%s" % (
-                    fmt(rng.uniform(0, 4)), fmt(rng.uniform(0, 3)), f,
+                    self.length(rng.uniform(0, 4)),
+                    self.length(rng.uniform(0, 3)), f,
                     " FARSIDE" if rng.random() < 0.3 else ""))
             for _ in range(rng.randint(0, 2)):
                 out.append(" leader %s %s %s" % (
-                    fmt(rng.uniform(0, 4)), fmt(rng.uniform(0, 3)),
+                    self.length(rng.uniform(0, 4)),
+                    self.length(rng.uniform(0, 3)),
                     self.words(1, 7)))
             if rng.random() < 0.2:
                 x0, y0 = rng.uniform(0, 3), rng.uniform(0, 2)
                 out.append(" hatch %s %s %s %s" % (
-                    fmt(x0), fmt(y0), fmt(x0 + rng.uniform(0.2, 4)),
-                    fmt(y0 + rng.uniform(0.2, 3))))
+                    self.length(x0), self.length(y0),
+                    self.length(x0 + rng.uniform(0.2, 4)),
+                    self.length(y0 + rng.uniform(0.2, 3))))
             if rng.random() < 0.1:
                 plan["lin"] = True
-                out.append(" lin %s 0 %s%s" % (
-                    rng.choice("xy"), fmt(rng.uniform(0.1, 4)),
-                    " +.010 -.000" if rng.random() < 0.5 else ""))
+                tol = " +%s -%s" % (self.length(0.01), self.length(0))
+                out.append(" lin %s %s %s%s" % (
+                    rng.choice("xy"), self.length(0),
+                    self.length(rng.uniform(0.1, 4)),
+                    tol if rng.random() < 0.5 else ""))
             if rng.random() < 0.1:
-                out.append(" drop %s %s" % (rng.choice("xydr"),
-                                            inch_text(rng.uniform(0, 80))))
+                out.append(" drop %s%s" % (rng.choice(self.feats), rng.choice(
+                    ["", " x", " y", " d", " r"])))
         return ("\n".join(out) + "\n").encode(), plan
 
 
@@ -2221,7 +2337,11 @@ class Fuzzer:
         corpus = []
         for name in sorted(os.listdir(HERE)):
             ext = os.path.splitext(name)[1]
-            if ext in (".sm", ".part", ".fold", ".txt", ".params",
+            # The prototypes of the schematic programs keep their own
+            # tests.
+            if name.startswith(("sch", "bad_sch", "netdiff")):
+                continue
+            if ext in (".sm", ".part", ".st", ".txt", ".params",
                        ".expected", ".py", ".draw"):
                 with open(os.path.join(HERE, name), "rb") as f:
                     data = f.read()
@@ -2230,7 +2350,7 @@ class Fuzzer:
                     # sanitizers.
                     continue
                 if ext == ".txt":
-                    data = re.sub(rb"\S+\.fold", lambda m: b"a.fold"
+                    data = re.sub(rb"\S+\.st", lambda m: b"a.st"
                                   if b"bad" not in m.group(0)
                                   else m.group(0).split(b"/")[-1], data)
                 corpus.append((ext, data))
@@ -2241,19 +2361,27 @@ class Fuzzer:
                 if name.endswith((".c", ".h")):
                     with open(os.path.join(src, name), "rb") as f:
                         corpus.append((name[-2:], f.read()))
-        # The outside drawing files, copied into WORK, and the folds
-        # of its parts, for the drawing programs.
+        # The drawing files of a project, if WORK/outside names their
+        # directory on its first line and that of the folds of its parts
+        # on its second, copied into WORK, for the drawing programs.
         self.draw_folds = []
         copies = os.path.join(self.work, "drawings")
         os.makedirs(copies, exist_ok=True)
-        if os.path.isdir(OUTSIDE_DRAWINGS):
-            for name in sorted(os.listdir(OUTSIDE_DRAWINGS)):
+        dirs = ["", ""]
+        outside = os.path.join(self.work, "outside")
+        if os.path.isfile(outside):
+            with open(outside) as f:
+                dirs = (f.read().split("\n") + ["", ""])[:2]
+        if os.path.isdir(dirs[0]):
+            for name in sorted(os.listdir(dirs[0])):
                 if not name.endswith(".draw"):
                     continue
-                shutil.copy(os.path.join(OUTSIDE_DRAWINGS, name), copies)
-                with open(os.path.join(copies, name), "rb") as f:
-                    corpus.append((".draw", old_draw(f.read())))
-                fold = os.path.join(OUTSIDE_FOLDS, name[:-5] + ".fold")
+                with open(os.path.join(dirs[0], name), "rb") as f:
+                    data = plain_templates(f.read())
+                with open(os.path.join(copies, name), "wb") as f:
+                    f.write(data)
+                corpus.append((".draw", data))
+                fold = os.path.join(dirs[1], name[:-5] + ".st")
                 if os.path.isfile(fold) and os.path.getsize(fold) < 2 ** 18:
                     with open(fold, "rb") as f:
                         self.draw_folds.append(f.read())
@@ -2268,12 +2396,12 @@ class Fuzzer:
                 if aux.endswith(".params"):
                     shutil.copy(os.path.join(HERE, aux), tmp)
             shutil.copy(os.path.join(HERE, name), tmp)
-            out = os.path.join(tmp, base + ".fold")
+            out = os.path.join(tmp, base + ".st")
             r = run([self.prog("smfold"), os.path.join(tmp, name)],
                     out=out)
             if r.verdict == "OK":
                 with open(out, "rb") as f:
-                    corpus.append((".fold", f.read()))
+                    corpus.append((".st", f.read()))
                 if base in ("cube", "bracket", "plate", "notch"):
                     with open(out, "rb") as f:
                         self.draw_folds.append(f.read())
@@ -2334,7 +2462,7 @@ class Fuzzer:
             f.write("command: %s\n" % " ".join(self.show(bad.argv)))
             f.write("pipeline: %s\n" % PIPES.get(mode, "the command"))
             if mbad is not None:
-                f.write("minimised in %d runs to min/%s (%d -> %d bytes)\n"
+                f.write("minimized in %d runs to min/%s (%d -> %d bytes)\n"
                         "min command: %s\n" % (
                             runs, main, len(files[main]), len(small),
                             " ".join(self.show(mbad.argv))))
@@ -2378,7 +2506,7 @@ class Fuzzer:
         try:
             if not test(files[main]):
                 return files[main], 1, None
-            small, runs = minimise(files[main], test)
+            small, runs = minimize(files[main], test)
             test(small)
         except Exception as e:
             self.note("min", "fuzz", "ERROR", repr(e), 0)
@@ -2401,7 +2529,7 @@ class Fuzzer:
             model.feed_text(data.decode("latin-1"))
         except Exception as e:
             raise Refused("model: %r" % e)
-        fold = os.path.join(d, "gen.fold")
+        fold = os.path.join(d, "gen.st")
         try:
             argv = [self.prog("smfold"), sm]
             r = run(argv, cwd=d, out=fold)
@@ -2454,7 +2582,7 @@ class Fuzzer:
         with open(fold, "rb") as f:
             fd = f.read()
         self.keep_corpus(".sm", data)
-        self.keep_corpus(".fold", fd)
+        self.keep_corpus(".st", fd)
         self.pool.append((fd, m))
         if len(self.pool) > 50:
             del self.pool[0]
@@ -2736,7 +2864,7 @@ class Fuzzer:
         asm = os.path.join(d, "asm.txt")
         with open(asm, "wb") as f:
             f.write(data)
-        fold = os.path.join(d, "asm.fold")
+        fold = os.path.join(d, "asm.st")
         try:
             argv = [self.prog("place"), asm]
             r = run(argv, cwd=d, out=fold)
@@ -2793,7 +2921,25 @@ class Fuzzer:
                 raise Bad("MISMATCH", "interfere", "MISMATCH interfere dup",
                           "two copies at one place do not collide", argv)
 
-    def gen_asm(self, seed):
+    def assemble_check(self, d, data):
+        # Writes data as d/asm.txt and runs assemble on it: it must pass,
+        # or say a clash or a refusal, and never break.
+        asm = os.path.join(d, "asm.txt")
+        with open(asm, "wb") as f:
+            f.write(data)
+        argv = [self.prog("assemble"), "-v", asm]
+        r = run(argv, cwd=d, out=os.path.join(d, "asm.out"))
+        try:
+            if r.verdict not in ("OK", "FAIL"):
+                must(r, argv, False)
+        except Bad as b:
+            return b
+        return None
+
+    def gen_assemble(self, seed):
+        self.gen_asm(seed, paths=True)
+
+    def gen_asm(self, seed, paths=False):
         rng = random.Random(seed)
         if not self.pool:
             return
@@ -2805,30 +2951,60 @@ class Fuzzer:
             picks[1] = picks[0]
         lines, parts = [], []
         files = {}
+        # The materials, in a file of their own or in the assembly: a few
+        # for the parts, and those of the coats of the parts.
+        mats = ["m%d" % k for k in range(rng.randint(0, 3))]
+        coats = set()
+        for fd, m in picks:
+            coats.update(re.findall(rb"^coat (\S+)", fd, re.M))
+        mats += sorted(c.decode("latin-1") for c in coats)
+        mlines = ["material %s %s %s %s %s %s" % (
+            n, fmt(rng.random()), fmt(rng.random()), fmt(rng.random()),
+            fmt(rng.random()), fmt(rng.uniform(0.5, 20))) for n in mats]
+        if mlines and rng.random() < 0.5:
+            files["mats"] = ("\n".join(mlines) + "\n").encode()
+            with open(os.path.join(d, "mats"), "wb") as f:
+                f.write(files["mats"])
+            lines.append("materials mats")
+        else:
+            lines += mlines
         cursor = 0.0
         same = None
         for i, (fd, m) in enumerate(picks):
-            fname = "p%d.fold" % (i if mode != "dup" else 0)
+            fname = "p%d.st" % (i if mode != "dup" else 0)
             files[fname] = fd
             with open(os.path.join(d, fname), "wb") as f:
                 f.write(fd)
-            rots = []
+            # The steps of the place but the last move, in order: turns
+            # about the origin or a point, and at times a move.
+            steps = []
             square = True
             for _ in range(rng.randint(0, 3)):
+                if rng.random() < 0.2:
+                    steps.append(("move", tuple(q(rng.uniform(-30, 30))
+                                                for _ in range(3))))
+                    continue
                 ax = rng.choice("xyz")
                 if rng.random() < 0.8:
                     deg = rng.choice([90, 180, 270, -90])
                 else:
                     deg = q(rng.uniform(-180, 180))
                     square = False
-                rots.append((ax, deg))
+                about = None
+                if rng.random() < 0.3:
+                    about = tuple(q(rng.uniform(-30, 30)) for _ in range(3))
+                steps.append(("turn", ax, deg, about))
             if mode == "dup" and same is not None:
-                rots = same[0]
+                steps = same[0]
                 square = same[2]
             rig = IDENT
-            for ax, deg in rots:
-                rig = rig_mul(rig_rot((0, 0, 0), axis_vec("xyz".index(ax)),
-                                      deg), rig)
+            for s in steps:
+                if s[0] == "move":
+                    step = (IDENT[0], s[1])
+                else:
+                    step = rig_rot(s[3] or (0, 0, 0),
+                                   axis_vec("xyz".index(s[1])), s[2])
+                rig = rig_mul(step, rig)
             b = m["bbox"]
             corners = [rig_pt(rig, (b[3 * (c & 1)], b[1 + 3 * (c >> 1 & 1)],
                                     b[2 + 3 * (c >> 2 & 1)]))
@@ -2839,19 +3015,50 @@ class Fuzzer:
             else:
                 at = (q(cursor - lo[0]), q(rng.uniform(-50, 50)),
                       q(rng.uniform(-50, 50)))
-                same = (rots, at, square)
+                same = (steps, at, square)
             cursor += hi[0] - lo[0] + 5 + rng.uniform(0, 20)
             box = list(vadd(lo, at)) + list(vadd(hi, at)) if square else None
             name = "a%d" % i
-            words = [name, fname]
-            for ax, deg in rots:
-                words += ["rot", ax, fmt(deg)]
-            if rng.random() < 0.5 and rots:
-                words[2:2] = ["at"] + [fmt(x) for x in at]
-            else:
-                words += ["at"] + [fmt(x) for x in at]
+            words = ["part", name, fname]
+            for s in steps:
+                if s[0] == "move":
+                    words += ["move"] + [fmt(x) for x in s[1]]
+                else:
+                    words += ["turn", s[1], fmt(s[2])]
+                    if s[3]:
+                        words += ["about"] + [fmt(x) for x in s[3]]
+            words += ["move"] + [fmt(x) for x in at]
+            if mats and rng.random() < 0.7:
+                words += ["material", rng.choice(mats)]
+            if paths and rng.random() < 0.8:
+                words += ["path"]
+                for _ in range(rng.randint(1, 3)):
+                    if rng.random() < 0.7:
+                        words += ["move"] + [fmt(q(rng.uniform(-40, 40)))
+                                             for _ in range(3)]
+                    else:
+                        words += ["turn", rng.choice("xyz"),
+                                  fmt(q(rng.uniform(-90, 90)))]
+                if rng.random() < 0.3:
+                    words += ["step", fmt(rng.uniform(0.5, 4)),
+                              fmt(rng.uniform(1, 10))]
             lines.append(" ".join(words))
             parts.append((name, m, box))
+        if paths:
+            lines.insert(0, "step %s %s" % (fmt(rng.uniform(0.5, 3)),
+                                            fmt(rng.uniform(2, 10))))
+            if rng.random() < 0.5:
+                lines.insert(1, "clearance %s" % fmt(rng.uniform(0.1, 1)))
+            data = ("\n".join(lines) + "\n").encode()
+            files["asm.txt"] = data
+            bad = self.assemble_check(d, data)
+            if bad:
+                self.finding("assemble", seed, bad, files, "asm.txt",
+                             lambda dd, x: self.retry(self.assemble_check,
+                                                      dd, x))
+                return
+            self.note("assemble", "assemble", "PASS", "parts=%d" % k, seed)
+            return
         data = ("\n".join(lines) + "\n").encode()
         files["asm.txt"] = data
         expect = {"mode": mode, "parts": parts}
@@ -2942,12 +3149,12 @@ class Fuzzer:
         return repr(x * 2)
 
     def mut_files(self, d, data, ext):
-        # Writes the fold files of a damaged assembly and the include
-        # files of a damaged part.
+        # Writes the stream and materials files of a damaged assembly and
+        # the include files of a damaged part.
         files = {}
-        folds = [x for e, x in self.corpus if e == ".fold"]
+        folds = [x for e, x in self.corpus if e == ".st"]
         params = [x for e, x in self.corpus if e == ".params"]
-        for m in re.finditer(rb"(?:^|\s)([\w.-]+\.fold)(?=\s|$)", data):
+        for m in re.finditer(rb"(?:^|\s)([\w.-]+\.st)(?=\s|$)", data):
             name = m.group(1).decode("latin-1")
             if name in files or name.startswith(".") or not folds:
                 continue
@@ -2961,6 +3168,12 @@ class Fuzzer:
             name = m.group(1).decode("latin-1")
             if name not in files and params and not name.startswith("."):
                 files[name] = self.rng.choice(params)
+        # The materials files of an assembly: those of the library.
+        for m in re.finditer(rb"materials\s+([\w.-]+)", data):
+            name = m.group(1).decode("latin-1")
+            if name not in files and not name.startswith("."):
+                with open(os.path.join(LIB, "materials"), "rb") as f:
+                    files[name] = f.read()
         # A mutated name can exceed the file system's limit of 255 bytes;
         # such a file can't exist, so the program sees it as missing.
         for name, x in list(files.items()):
@@ -2976,7 +3189,7 @@ class Fuzzer:
         src = os.path.join(d, "mut" + ext)
         with open(src, "wb") as f:
             f.write(data)
-        fold = src if ext == ".fold" else os.path.join(d, "mut.fold")
+        fold = src if ext == ".st" else os.path.join(d, "mut.st")
         try:
             for name in CHECKERS[1:]:
                 if os.path.exists(self.prog(name)):
@@ -3003,7 +3216,7 @@ class Fuzzer:
                         f.write(data)
                 with open(os.path.join(d, "inc.sm"), "wb") as f:
                     f.write(b"include inc.params\nsheet T R K\nplate p 0 0 "
-                            b"W L origin 0 0 0 axes +x +y\nflange f p +x 90 "
+                            b"W L at 0 0 0 axes +x +y\nflange f p +x 90 "
                             b"H\n")
                 src = os.path.join(d, "inc.sm")
                 ext = ".sm"
@@ -3032,10 +3245,11 @@ class Fuzzer:
                     step = out if r.verdict == "OK" else None
                 if prog == "measure":
                     meas = r.out if r.verdict == "OK" else None
-            if ext == ".fold":
+            if ext == ".st":
                 asm = os.path.join(d, "wrap.txt")
                 with open(asm, "wb") as f:
-                    f.write(b"a mut.fold\nb mut.fold rot z 90 at 1 2 3\n")
+                    f.write(b"part a mut.st\npart b mut.st turn z 90 move 1 "
+                            b"2 3\n")
                 argv = [self.prog("place"), asm]
                 r = run(argv, cwd=d)
                 if r.verdict not in ("OK", "FAIL"):
@@ -3129,8 +3343,8 @@ class Fuzzer:
     def gen_args(self, seed):
         rng = random.Random(seed)
         d = self.fresh()
-        folds = [x for e, x in self.corpus if e == ".fold"]
-        files = {"a.fold": rng.choice(folds), "empty": b"",
+        folds = [x for e, x in self.corpus if e == ".st"]
+        files = {"a.st": rng.choice(folds), "empty": b"",
                  "bin": bytes(rng.randrange(256) for _ in range(300))}
         for e in (".sm", ".txt", ".params", ".expected"):
             pick = [x for k, x in self.corpus if k == e]
@@ -3148,12 +3362,12 @@ class Fuzzer:
                 "dxf", "svg", "x", "X=1", "T=0", "W=1/0", "K=-1",
                 "volume=rel:1e-3", "a=abs:x", "=", "rel:", "1e400", "-90",
                 "nan", "dir", "empty", "bin", "/nonexistent/x", "a" * 5000,
-                "a.fold", "a.sm", "a.txt", "a.params", "a.expected",
+                "a.st", "a.sm", "a.txt", "a.params", "a.expected",
                 "params.d", "", "\x01"]
         argv = [self.prog(name)] + [rng.choice(pool) for _ in
                                     range(rng.randint(0, 6))]
         if rng.random() < 0.5:
-            argv.append(rng.choice(["a.fold", "a.sm", "a.txt", "a.params",
+            argv.append(rng.choice(["a.st", "a.sm", "a.txt", "a.params",
                                     "a.expected"]))
         r = run(argv, cwd=d, stdout_msg=name in CHECKERS)
         if r.verdict in ("OK", "FAIL"):
@@ -3289,7 +3503,7 @@ class Fuzzer:
             return None
         try:
             must(r, argv, True)
-            argv = [self.prog("smdim"), "-s", scale]
+            argv = [self.prog("smdim"), "-s", scale, "-u", "in"]
             with open(vfile, "rb") as f:
                 p = subprocess.run(argv, stdin=f, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, timeout=TIMEOUT,
@@ -3343,7 +3557,7 @@ class Fuzzer:
         # Returns the first line of a refusal, or None for a drawing;
         # raises Bad.
         argv = [self.prog("smdraw"), draw, fold]
-        env = dict(os.environ, PLICAD=self.bin, **SAN_ENV)
+        env = dict(os.environ, PLICAD_BIN=self.bin, **SAN_ENV)
         ps = os.path.join(d, "out.ps")
         # smdraw runs the other programs: on a timeout, the whole group
         # of its processes goes.
@@ -3427,7 +3641,7 @@ class Fuzzer:
         if data is None:
             self.note("sheet", "smfold", "REJECT", "part", seed)
             return
-        draw, plan = DrawGen(rng).gen()
+        draw, plan = DrawGen(rng, sorted(self.last[3].feats)).gen()
         check = lambda dd, x: self.sheet_check(dd, x, data, plan)
         bad = self.retry(check, self.case, draw)
         if bad:
@@ -3445,7 +3659,7 @@ class Fuzzer:
         path = os.path.join(d, "mut.draw")
         with open(path, "wb") as f:
             f.write(data)
-        fpath = os.path.join(d, "part.fold")
+        fpath = os.path.join(d, "part.st")
         with open(fpath, "wb") as f:
             f.write(fold)
         try:
@@ -3463,16 +3677,17 @@ class Fuzzer:
     def gen_mutdraw(self, seed):
         rng = random.Random(seed)
         draws = [x for e, x in self.corpus if e == ".draw"]
-        folds = [x for e, x in self.corpus if e == ".fold"]
+        folds = [x for e, x in self.corpus if e == ".st"]
         if not draws or not folds:
             return
         data = self.mutate(rng, rng.choice(draws))
         fold = rng.choice(self.draw_folds or folds)
         d = self.fresh()
-        files = {"mut.draw": data, "part.fold": fold}
+        files = {"mut.draw": data, "part.st": fold}
         for k in "bcd":
-            with open(os.path.join(HERE, "plain_%s.ps" % k), "rb") as f:
-                files["plain_%s.ps" % k] = files["plain_%s.ps" % k] = f.read()
+            path = os.path.join(LIB, "templates", "plain_%s.ps" % k)
+            with open(path, "rb") as f:
+                files["plain_%s.ps" % k] = f.read()
         put_templates(d)
         bad = self.mutdraw_check(d, data, fold)
         if bad:
@@ -3552,11 +3767,13 @@ class Fuzzer:
 
     # The words of the commands of view.
     VIEW_CMDS = ["hide", "show", "only", "all", "view", "fit", "turn", "zoom",
-                 "size", "pick", "shot", "list", "spin", "quit", "iso",
-                 "explode", "drag", "home", "reset", "undo", "redo", "help",
+                 "pick", "shot", "list", "spin", "quit", "iso",
+                 "play", "move", "home", "reset", "undo", "redo", "help",
+                 "select", "center",
                  "cube", "gen", "0.5", "25", "background", "key", "h", "o",
-                 "s", "see", "solid", "20", "15",
-                 "front", "top", "*", "a*", "fc", "pic", "-1", "0", "1",
+                 "s", "see", "solid", "20", "15", "H", "O", "S", "level",
+                 "label", "2", "u1", "u1/u2", "u1/gen", "u1/u2/gen",
+                 "front", "top", "point", "fc", "pic", "gp", "-1", "0", "1",
                  "1e9", "nan", "80", "60", "out.ppm", "/", ""]
 
     def scene_check(self, d, files, cmds):
@@ -3570,7 +3787,7 @@ class Fuzzer:
         try:
             argv = [self.prog("view"), "-c", scene]
             must(run(argv, cwd=d), argv, False)
-            argv = [self.prog("view"), "-b", scene]
+            argv = [self.prog("view"), "-b", "-s", "40x30", scene]
             env = dict(os.environ, **SAN_ENV)
             p = subprocess.run(argv, input=cmds, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, timeout=TIMEOUT,
@@ -3585,7 +3802,8 @@ class Fuzzer:
                               "CRASH", s), s, argv + ["<", "cmds"], err)
         except subprocess.TimeoutExpired:
             return Bad("HANG", "view", "HANG view -b", "timeout",
-                       [self.prog("view"), "-b", "scene.txt"])
+                       [self.prog("view"), "-b", "-s", "40x30",
+                        "scene.txt"])
         except Bad as b:
             return b
         return None
@@ -3618,7 +3836,43 @@ class Fuzzer:
                 for _ in range(4 * w * h))
         with open(os.path.join(HERE, "view.scene"), "rb") as f:
             scene = f.read().replace(b"../build/view.ppm", b"pic.ppm")
-        scene += b"mesh gen gen.obj colour 0.2 0.5 0.9 move 0 0 60\n"
+        # The generated mesh, moved and turned about the axes, at times
+        # about a point, and at times a picture on it.
+        steps = ["move 0 0 60"]
+        for _ in range(rng.randint(0, 3)):
+            if rng.random() < 0.3:
+                steps.append("move %s %s %s" % tuple(
+                    fmt(rng.uniform(-50, 50)) for _ in range(3)))
+                continue
+            step = "turn %s %s" % (rng.choice("xyz"),
+                                   fmt(rng.uniform(-180, 180)))
+            if rng.random() < 0.3:
+                step += " about %s %s %s" % tuple(
+                    fmt(rng.uniform(-50, 50)) for _ in range(3))
+            steps.append(step)
+        rng.shuffle(steps)
+        # At times the mesh lies in a unit, or in a unit in a unit, each
+        # turned and moved too.
+        # Each at times with an insertion path, for play.
+        def path():
+            if rng.random() < 0.5:
+                return ""
+            if rng.random() < 0.5:
+                return " path move 0 0 %s" % fmt(rng.uniform(-40, 40))
+            return " path turn %s %s move %s 0 0" % (
+                rng.choice("xyz"), fmt(rng.uniform(-180, 180)),
+                fmt(rng.uniform(-40, 40)))
+        units = rng.choice([0, 0, 1, 2])
+        for k in range(units):
+            scene += ("unit u%d turn z %s move %s 0 0%s\n" % (
+                k + 1, fmt(rng.uniform(-180, 180)),
+                fmt(rng.uniform(-20, 20)), path())).encode()
+        scene += ("mesh gen gen.obj color 0.2 0.5 0.9 %s%s\n" %
+                  (" ".join(steps), path())).encode()
+        if rng.random() < 0.5:
+            c = [fmt(rng.uniform(-50, 50)) for _ in range(9)]
+            scene += ("image gp pic.ppm on gen %s\n" % " ".join(c)).encode()
+        scene += b"end\n" * units
         files = {"cube.obj": mesh, "point.obj": mesh, "gen.obj": mesh,
                  "pic.ppm": ppm}
         with open(os.path.join(HERE, "freecad.obj"), "rb") as f:
@@ -3640,7 +3894,6 @@ class Fuzzer:
         for _ in range(rng.randint(1, 30)):
             lines.append(" ".join(rng.choice(self.VIEW_CMDS) for _ in
                                   range(rng.randint(1, 4))))
-        lines.insert(0, "size 40 30")
         cmds = ("\n".join(l for l in lines if not l.startswith("spin")) +
                 "\n").encode()
         try:
@@ -3662,11 +3915,13 @@ class Fuzzer:
 
     # The modes of the drawing programs take half of the cases.
     MODES = ["sm"] * 9 + ["solid"] * 6 + ["fillet"] * 4 + ["asm"] + \
+        ["assemble"] + \
         ["mut"] * 8 + ["args"] * 2 + ["view"] * 8 + ["dim"] * 8 + \
         ["sheet"] * 8 + ["mutdraw"] * 6 + ["mesh"] * 4 + ["scene"] * 4
 
     def one(self, mode, seed):
         {"sm": self.gen_sm, "asm": self.gen_asm, "solid": self.gen_solid,
+         "assemble": self.gen_assemble,
          "fillet": self.gen_fillet,
          "mut": self.gen_mut, "args": self.gen_args, "view": self.gen_view,
          "dim": self.gen_dim, "sheet": self.gen_sheet,

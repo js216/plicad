@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# tapped.draw -- The drawing of tapped.part: thread and countersink callouts
+# Copyright (c) 2026 Jakob Kastelic
+
+units mm
+template plain_c.ps
+scale 2
+field Title TAPPED PLATE
+material 6061-T6 ALUMINUM ALLOY.
+finish NONE.
+view top
+view front hidden

@@ -1,0 +1,95 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" plicad-lib.7 -- Manual page of the library and the layout of the tree
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PLICAD-LIB 7
+.SH NAME
+plicad-lib \- the library of PliCad and the layout of its tree
+.SH DESCRIPTION
+The tree of PliCad holds:
+.TP 12
+.B src/
+every program, side by side;
+.TP
+.B man/
+the manual pages: man1 for the programs, man5 for the files, man7 for
+the language,
+.IR plicad (7),
+and this page;
+.TP
+.B lib/
+the library;
+.TP
+.B test/
+the fixtures of the tests and what they expect;
+.TP
+.B build/
+what the build makes.
+.PP
+A program looks for a file that a source names, as
+.B materials
+or
+.BR template ,
+next to that source first, and then in the library: the directory
+lib under the directory that PLICAD names, or else the lib of the tree
+it was built in.
+.SS The library
+.TP 12
+.B materials
+the materials and finishes,
+.IR plicad (7):
+bodies with their densities, the coats of sheet metal, and the
+textures of molds by their VDI 3400 grade with the least draft each
+needs, their color unused, as a texture shows that of the body;
+.TP
+.B templates/
+the papers of drawings,
+.IR draw (5),
+as plain_b.ps, plain_c.ps and plain_d.ps;
+.TP
+.B tables/
+standard tables in plain text, one row a line, a comment at the top
+that names the columns: screws (heads and threads by size and style),
+holes (clearance holes and countersinks by screw size), inserts
+(self-clinching hardware: its kind, its mounting hole, least sheet and
+least distance to an edge or a bend line, its thread, the size of its
+body and the material of the body, and whether it sits flush in its
+hole or in a blind hole of a depth,
+.BR "insert " in
+.IR sm (5);
+a table inserts next to a source adds its types to these),
+bends (inside radius and K-factor by material and
+thickness) and packages (the bodies of electronic packages);
+.TP
+.B parts/
+bought 3D parts, as
+.IB maker / partnumber .part ,
+named by their maker and its part number, or
+.IB maker / partnumber _ piece .sm
+for each piece of one of sheet: sunon/EEC0252B3-000U-A99.part, an axial
+fan of 120 mm, and keystone/8353_mount.sm and 8353_strap.sm, the end
+mount and the strap of a carry handle;
+.TP
+.B symbols/
+the symbols of schematics;
+.TP
+.B fonts/
+the fonts of the lettering: osifont-lgpl3fe.ttf and osifont-italic.ttf,
+the lettering of drawings, whose widths
+.IR smsheet (1)
+lays text out by, under the license osifont.license (the GPL with the
+font exception), for Ghostscript as
+.BR "ps2pdf \-sFONTPATH=" $PLICAD/lib/fonts ;
+and the glyphs of Nimbus Sans, nimbussans.txt, of the schematics
+(nimbussans.LICENSE).
+.PP
+Screws, inserts and the bodies of packages are families: a part is
+made from a row of its table, not kept as a file for each size.
+Every length of a table is in the units of
+.IR plicad (7),
+mm unless a number ends in in.
+.SH ENVIRONMENT
+.TP
+.B PLICAD
+the directory whose lib is the library.
+.SH SEE ALSO
+plicad(7), draw(5), sm(5), part(5), assembly(5)

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# coat.sm -- A box with a black band on the outside of its front wall
+# Copyright (c) 2026 Jakob Kastelic
+
+# The base is clear all over, inside; the band on the outside of the
+# front wall runs 10 to 20 mm up, and the outside of the bends is black.
+# Seen along y, the band's rectangle meets the back wall too: at and
+# depth hold it to the front wall.
+sheet 1 1 0.44
+plate base 0 0 100 60 at 0 0 0 axes +x +y
+flange front base -y 90 30
+flange back base +y 90 30
+flange left base -x 90 30 span 5 55
+coat clear near all
+coat black far 0 10 100 20 along y from -1 to 0
+coat black far edges flat 0 -2.5 100 0
+coat black far edges flat 0 60 100 62.5

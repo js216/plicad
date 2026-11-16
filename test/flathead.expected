@@ -1,0 +1,6 @@
+part k
+volume 63.1664
+area 118.4600
+center 0.0000 0.0000 0.8195
+bbox -4.0000 -4.0000 0.0000 4.0000 4.0000 2.0000
+faces 4 plane 2 cylinder 0 cone 2 sphere 0 torus 0

@@ -3,8 +3,10 @@
 // Copyright (c) 2026 Jakob Kastelic
 
 #include "fold.h"
+#include "shape.h"
 #include "geom.h"
 #include "util.h"
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +20,8 @@ enum {
 #define UNIT_EPS 1e-9 // How far a unit vector may miss length 1.
 #define RADIUS_EPS 1e-6 // How far the ends of an arc may differ in radius.
 #define ZERO 1e-13 // Numbers closer to 0 than this are written as 0.
+#define DRAFT_MAX 45.0 // A least draft is below this, in degrees.
+#define VDI_MAX 45.0 // The roughest grade of VDI 3400.
 
 double bend_za(const struct part *p, const struct map *m)
 {
@@ -170,7 +174,7 @@ double face_area2(const struct part *p, size_t f)
 	}
 	a /= 2;
 	for (size_t i = 0; i < p->nholes; i++) {
-		if (p->holes[i].face == f) {
+		if (p->holes[i].face == f && !(p->holes[i].blind > 0)) {
 			a -= PI * p->holes[i].r * p->holes[i].r;
 		}
 	}
@@ -302,6 +306,12 @@ double hole_radius(const struct part *p, const struct hole *h, double z)
 {
 	double d = h->side > 0 ? -z : z + p->t; // Below the countersunk face.
 
+	if (h->blind > 0) {
+		double in = h->bside > 0 ? -z :
+					   z + p->t; // Below its open face.
+
+		return in < h->blind ? h->r : 0;
+	}
 	if (!h->side || !(d < h->h)) {
 		return h->r;
 	}
@@ -405,6 +415,12 @@ static void check_edge(const struct part *p, size_t i, const char *where)
 
 void check_part(const struct part *p, const char *where)
 {
+	for (size_t i = 0; i < p->nins; i++) {
+		if (p->ins[i].hole >= p->nholes) {
+			die("%s: insert %s has no such hole", where,
+			    p->ins[i].name);
+		}
+	}
 	if (!(p->t > 0)) {
 		die("%s: the thickness must be positive", where);
 	}
@@ -435,6 +451,11 @@ void check_part(const struct part *p, const char *where)
 			    "above the hole and a depth inside the sheet",
 			    where, i);
 		}
+		if (h->blind > 0 && (h->side || !(h->blind < p->t))) {
+			die("%s: blind hole %zu needs a depth inside the "
+			    "sheet and no countersink",
+			    where, i);
+		}
 	}
 	for (size_t i = 0; i < p->nfaces; i++) {
 		if (!(face_area2(p, i) > 0)) {
@@ -444,10 +465,10 @@ void check_part(const struct part *p, const char *where)
 	}
 }
 
-// The reader of a fold file: its path and line, and the words of the line.
+// The reader of a record of a part: its place in the stream, as
+// "file:line", and the words of the line.
 struct reader {
-	const char *path;
-	unsigned line;
+	const char *where;
 	char *w[MAXWORDS];
 	size_t n;
 	size_t k; // The next word.
@@ -456,7 +477,7 @@ struct reader {
 static const char *word(struct reader *r)
 {
 	if (r->k >= r->n) {
-		die("%s:%u: too few fields", r->path, r->line);
+		die("%s: too few fields", r->where);
 	}
 	return r->w[r->k++];
 }
@@ -468,7 +489,7 @@ static double num(struct reader *r)
 	double v = strtod(t, &end);
 
 	if (*end || end == t || !num_ok(v)) {
-		die("%s:%u: bad number %s, or beyond 1e6", r->path, r->line, t);
+		die("%s: bad number %s, or beyond 1e6", r->where, t);
 	}
 	return v;
 }
@@ -484,7 +505,7 @@ static size_t index_of(struct reader *r)
 	}
 	v = strtoul(t, &end, DECIMAL);
 	if (*end || end == t || t[0] == '-') {
-		die("%s:%u: bad index %s", r->path, r->line, t);
+		die("%s: bad index %s", r->where, t);
 	}
 	return v;
 }
@@ -493,7 +514,7 @@ static size_t index_of(struct reader *r)
 static void own_index(struct reader *r, size_t count)
 {
 	if (index_of(r) != count) {
-		die("%s:%u: the index must be %zu", r->path, r->line, count);
+		die("%s: the index must be %zu", r->where, count);
 	}
 }
 
@@ -529,28 +550,54 @@ static void read_map(struct part *p, struct reader *r)
 		m.ang = num(r);
 		m.r = num(r);
 	} else {
-		die("%s:%u: a map is rigid or bend", r->path, r->line);
+		die("%s: a map is rigid or bend", r->where);
 	}
 	PUSH(p->maps, p->nmaps, p->capmaps, m);
 }
 
+size_t part_feature(struct part *p, const char *name)
+{
+	for (size_t i = 0; i < p->nfeats; i++) {
+		if (strcmp(p->feats[i].s, name) == 0) {
+			return i;
+		}
+	}
+	{
+		struct str f = { xstrdup(name) };
+
+		PUSH(p->feats, p->nfeats, p->capfeats, f);
+	}
+	return p->nfeats - 1;
+}
+
+// Reads the feature of a record, "by NAME", if the record goes on.
+static size_t read_by(struct part *p, struct reader *r)
+{
+	if (r->k == r->n) {
+		return NONE;
+	}
+	if (strcmp(word(r), "by") != 0) {
+		die("%s: expected by NAME", r->where);
+	}
+	return part_feature(p, word(r));
+}
+
 static void read_edge(struct part *p, struct reader *r)
 {
-	struct edge e = { 0, 0, NONE, NONE, 0, 0, 0 };
+	struct edge e = { 0, 0, NONE, NONE, 0, 0, 0, NONE };
 
 	own_index(r, p->nedges);
 	e.v0 = index_of(r);
 	e.v1 = index_of(r);
 	e.lf = index_of(r);
 	e.rf = index_of(r);
-	if (r->k < r->n) {
-		if (strcmp(word(r), "arc") != 0) {
-			die("%s:%u: expected arc", r->path, r->line);
-		}
+	if (r->k < r->n && strcmp(r->w[r->k], "arc") == 0) {
+		r->k++;
 		e.arc = 1;
 		e.cx = num(r);
 		e.cy = num(r);
 	}
+	e.by = read_by(p, r);
 	PUSH(p->edges, p->nedges, p->capedges, e);
 }
 
@@ -573,6 +620,17 @@ static void read_vertex(struct part *p, struct reader *r)
 	PUSH(p->verts, p->nverts, p->capverts, v);
 }
 
+// Reads near or far as 1 or -1.
+static int read_side(struct reader *r)
+{
+	const char *s = word(r);
+
+	if (strcmp(s, "near") != 0 && strcmp(s, "far") != 0) {
+		die("%s: expected near or far", r->where);
+	}
+	return s[0] == 'n' ? 1 : -1;
+}
+
 static void read_hole(struct part *p, struct reader *r)
 {
 	struct hole h;
@@ -584,45 +642,298 @@ static void read_hole(struct part *p, struct reader *r)
 	h.side = 0;
 	h.rc = h.r;
 	h.h = 0;
-	if (r->k < r->n) {
-		const char *k = word(r);
-		const char *s = NULL;
-
-		if (strcmp(k, "csink") != 0) {
-			die("%s:%u: expected csink RC H top|bottom", r->path,
-			    r->line);
-		}
+	h.blind = 0;
+	h.bside = 0;
+	if (r->k < r->n && strcmp(r->w[r->k], "csink") == 0) {
+		r->k++;
 		h.rc = num(r);
 		h.h = num(r);
-		s = word(r);
-		h.side = strcmp(s, "top") == 0 ? 1 : -1;
-		if (strcmp(s, "top") != 0 && strcmp(s, "bottom") != 0) {
-			die("%s:%u: a countersink is at top or bottom", r->path,
-			    r->line);
+		h.side = read_side(r);
+	}
+	if (r->k < r->n && strcmp(r->w[r->k], "blind") == 0) {
+		r->k++;
+		h.blind = num(r);
+		h.bside = read_side(r);
+		if (!(h.blind > 0)) {
+			die("%s: a blind hole has a depth above 0", r->where);
 		}
 	}
+	h.by = read_by(p, r);
 	PUSH(p->holes, p->nholes, p->capholes, h);
 }
 
-static void read_colour(struct part *p, struct reader *r)
+// Where a record of a stream stands.
+struct at {
+	const char *where;
+};
+
+// A number of a stream, the word w; ctx is where it stands.
+static double plain_num(void *ctx, const char *w)
 {
-	if (p->colour) {
-		die("%s:%u: a second colour", r->path, r->line);
+	char *end = NULL;
+	double v = strtod(w, &end);
+
+	if (*end || end == w || !num_ok(v)) {
+		const struct at *at = ctx;
+
+		die("%s: bad number %s, or beyond 1e6", at->where, w);
 	}
-	p->colour = xstrdup(word(r));
-	for (int i = 0; i < 3; i++) {
-		p->rgb[i] = num(r);
+	return v;
+}
+
+// Puts the n words w into out, of size room, a blank between each two;
+// dies if they do not fit.
+static void join_words(char *out, size_t room, char **w, size_t n)
+{
+	size_t k = 0;
+
+	out[0] = 0;
+	for (size_t i = 0; i < n; i++) {
+		size_t m = strlen(w[i]);
+
+		if (k + m + 2 > room) {
+			die("a callout is too long: %s", w[0]);
+		}
+		if (i) {
+			out[k++] = ' ';
+		}
+		memcpy(out + k, w[i], m + 1);
+		k += m;
 	}
-	p->rough = num(r);
+}
+
+void read_material(struct material *m, char *line, const char *where)
+{
+	struct reader r;
+
+	memset(&r, 0, sizeof(r));
+	r.where = where;
+	r.n = split_words(line, r.w, MAXWORDS);
+	if (r.n > MAXWORDS || strcmp(word(&r), "material") != 0) {
+		die("%s: expected material NAME R G B ROUGHNESS DENSITY",
+		    where);
+	}
+	m->name = xstrdup(word(&r));
 	for (int i = 0; i < 3; i++) {
-		if (!(p->rgb[i] >= 0 && p->rgb[i] <= 1)) {
-			die("%s:%u: a colour runs from 0 to 1", r->path,
-			    r->line);
+		m->rgb[i] = num(&r);
+	}
+	m->rough = num(&r);
+	m->density = num(&r);
+	{
+		struct at at = { where };
+		struct finish_words fw = { r.w + r.k, r.n - r.k, where,
+					   plain_num, &at };
+
+		material_finish(m, &fw);
+	}
+	check_material(m, where);
+}
+
+void material_finish(struct material *m, const struct finish_words *fw)
+{
+	size_t i = 0;
+
+	m->draft = 0;
+	m->vdi = -1;
+	m->mark = 0;
+	m->callout[0] = 0;
+	while (i < fw->n) {
+		const char *k = fw->w[i];
+
+		if (i + 1 >= fw->n) {
+			die("%s: %s needs a value", fw->where, k);
+		}
+		if (!strcmp(k, "draft")) {
+			m->draft = fw->num(fw->ctx, fw->w[i + 1]);
+		} else if (!strcmp(k, "mark") && strlen(fw->w[i + 1]) == 1 &&
+			   isupper((unsigned char)fw->w[i + 1][0])) {
+			m->mark = fw->w[i + 1][0];
+		} else if (!strcmp(k, "vdi")) {
+			m->vdi = fw->num(fw->ctx, fw->w[i + 1]);
+			if (!(m->vdi >= 0 && m->vdi <= VDI_MAX)) {
+				die("%s: a VDI 3400 grade runs from 0 to 45",
+				    fw->where);
+			}
+			xsnprintf(m->callout, "VDI 3400 REF %g", m->vdi);
+		} else if (!strcmp(k, "callout")) {
+			join_words(m->callout, sizeof(m->callout),
+				   fw->w + i + 1, fw->n - i - 1);
+			return;
+		} else {
+			die("%s: expected draft DEG, mark LETTER, vdi GRADE or "
+			    "callout TEXT",
+			    fw->where);
+		}
+		i += 2;
+	}
+}
+
+void check_material(const struct material *m, const char *where)
+{
+	for (int i = 0; i < 3; i++) {
+		if (!(m->rgb[i] >= 0 && m->rgb[i] <= 1)) {
+			die("%s: a color runs from 0 to 1", where);
 		}
 	}
-	if (!(p->rough >= 0 && p->rough <= 1)) {
-		die("%s:%u: a roughness runs from 0 to 1", r->path, r->line);
+	if (!(m->rough >= 0 && m->rough <= 1)) {
+		die("%s: a roughness runs from 0 to 1", where);
 	}
+	if (!(m->density >= 0 && m->density <= DENSITY_MAX)) {
+		die("%s: a density runs from 0 to that of the densest metal",
+		    where);
+	}
+	if (!(m->draft >= 0 && m->draft < DRAFT_MAX)) {
+		die("%s: a least draft runs from 0 to 45 degrees", where);
+	}
+}
+
+// Reads a coat record: MATERIAL near|far edges|- N and N corners.
+static void read_coat(struct part *p, struct reader *r)
+{
+	struct coat c;
+	const char *edges = NULL;
+	double n = 0;
+
+	memset(&c, 0, sizeof(c));
+	c.material = xstrdup(word(r));
+	c.side = read_side(r);
+	edges = word(r);
+	n = num(r);
+	if (strcmp(edges, "edges") != 0 && strcmp(edges, "-") != 0) {
+		die("%s: a coat takes edges or -", r->where);
+	}
+	if (!(n >= 3 && n <= (double)(r->n - r->k) / 2)) {
+		die("%s: a coat has 3 corners or more", r->where);
+	}
+	c.edges = edges[0] == 'e';
+	c.n = (size_t)n;
+	c.pt = xmalloc(c.n * sizeof(*c.pt));
+	for (size_t k = 0; k < c.n; k++) {
+		c.pt[k].x = num(r);
+		c.pt[k].y = num(r);
+	}
+	PUSH(p->coats, p->ncoats, p->capcoats, c);
+}
+
+const struct material *part_material(const struct part *p, const char *name)
+{
+	for (size_t i = 0; i < p->nmats; i++) {
+		if (strcmp(p->mats[i].name, name) == 0) {
+			return &p->mats[i];
+		}
+	}
+	return NULL;
+}
+
+// Whether a and b differ; neither is NaN.
+static int numbers_differ(double a, double b)
+{
+	return a < b || a > b;
+}
+
+int materials_differ(const struct material *a, const struct material *b)
+{
+	for (int i = 0; i < 3; i++) {
+		if (numbers_differ(a->rgb[i], b->rgb[i])) {
+			return 1;
+		}
+	}
+	return numbers_differ(a->rough, b->rough) ||
+	       numbers_differ(a->density, b->density) ||
+	       numbers_differ(a->draft, b->draft) || a->mark != b->mark ||
+	       strcmp(a->callout, b->callout) != 0;
+}
+
+void set_base(struct part *p, const struct material *m)
+{
+	free(p->base);
+	p->base = xstrdup(m->name);
+	memcpy(p->rgb, m->rgb, sizeof(p->rgb));
+	p->rough = m->rough;
+	p->density = m->density;
+}
+
+// Reads a record finish MATERIAL REF... of a solid.
+static void read_finish(struct part *p, struct reader *r)
+{
+	struct face_finish f = { NULL, NULL, 0 };
+	size_t cap = 0;
+
+	f.material = xstrdup(word(r));
+	if (r->k == r->n) {
+		die("%s: finish MATERIAL REF...", r->where);
+	}
+	while (r->k < r->n) {
+		struct str s = { xstrdup(word(r)) };
+
+		PUSH(f.refs, f.n, cap, s);
+	}
+	PUSH(p->fins, p->nfins, p->capfins, f);
+}
+
+// Reads a record thread REF [deep D] DESIGNATION... of a solid.
+static void read_thread(struct part *p, struct reader *r)
+{
+	struct face_thread t = { NULL, NULL, 0 };
+	size_t n = 1;
+	size_t k = 0;
+
+	t.ref = xstrdup(word(r));
+	if (r->k < r->n && strcmp(r->w[r->k], "deep") == 0) {
+		r->k++;
+		t.deep = num(r);
+		if (!(t.deep > 0)) {
+			die("%s: the depth of a thread is above 0", r->where);
+		}
+	}
+	if (r->k == r->n) {
+		die("%s: thread REF [deep D] DESIGNATION...", r->where);
+	}
+	for (size_t i = r->k; i < r->n; i++) {
+		n += strlen(r->w[i]) + 1;
+	}
+	t.spec = xmalloc(n);
+	for (; r->k < r->n; r->k++) {
+		size_t m = strlen(r->w[r->k]);
+
+		if (k) {
+			t.spec[k++] = ' ';
+		}
+		memcpy(t.spec + k, r->w[r->k], m);
+		k += m;
+	}
+	t.spec[k] = 0;
+	PUSH(p->threads, p->nthreads, p->capthreads, t);
+}
+
+// Reads a record insert NAME TYPE near|far HOLE D H [fills]
+// [material M].
+static void read_insert(struct part *p, struct reader *r)
+{
+	struct part_insert in;
+
+	memset(&in, 0, sizeof(in));
+	in.name = xstrdup(word(r));
+	in.type = xstrdup(word(r));
+	in.side = read_side(r);
+	in.hole = index_of(r);
+	in.body_d = num(r);
+	in.body_h = num(r);
+	if (r->k < r->n && strcmp(r->w[r->k], "fills") == 0) {
+		r->k++;
+		in.fills = 1;
+	}
+	if (r->k < r->n && strcmp(r->w[r->k], "material") == 0) {
+		r->k++;
+		in.material = xstrdup(word(r));
+	}
+	if (!(in.body_d > 0) || !(in.body_h >= 0) ||
+	    !(in.body_h > 0 || in.fills)) {
+		die("%s: an insert needs a body: D above 0, and H above 0 "
+		    "unless it fills its hole",
+		    r->where);
+	}
+	PUSH(p->ins, p->nins, p->capins, in);
 }
 
 static void read_record(struct part *p, struct reader *r, const char *k)
@@ -641,17 +952,28 @@ static void read_record(struct part *p, struct reader *r, const char *k)
 		read_edge(p, r);
 	} else if (strcmp(k, "hole") == 0) {
 		read_hole(p, r);
-	} else if (strcmp(k, "colour") == 0) {
-		read_colour(p, r);
+	} else if (strcmp(k, "base") == 0) {
+		if (p->base) {
+			die("%s: a second base", r->where);
+		}
+		p->base = xstrdup(word(r));
+	} else if (strcmp(k, "coat") == 0) {
+		read_coat(p, r);
+	} else if (strcmp(k, "finish") == 0) {
+		read_finish(p, r);
+	} else if (strcmp(k, "thread") == 0) {
+		read_thread(p, r);
+	} else if (strcmp(k, "insert") == 0) {
+		read_insert(p, r);
 	} else {
-		die("%s:%u: unknown record %s", r->path, r->line, k);
+		die("%s: unknown record %s", r->where, k);
 	}
 	if (r->k != r->n) {
-		die("%s:%u: too many fields", r->path, r->line);
+		die("%s: too many fields", r->where);
 	}
 }
 
-static struct part new_part(const char *name)
+struct part new_part(const char *name)
 {
 	struct part z;
 
@@ -661,79 +983,88 @@ static struct part new_part(const char *name)
 	return z;
 }
 
-static void end_part(struct part *p, const struct reader *r)
+// Ends part p: a part with no record of a blank, nor of a solid, is an
+// empty solid, as a common of two solids apart.
+static void end_part(struct part *p, const char *where)
 {
-	char where[WHERE_LEN];
+	int blank = p->nmaps || p->nfaces || p->nverts || p->nedges ||
+		    p->nholes || p->t > 0;
 
-	xsnprintf(where, "%s:%u", r->path, r->line);
+	if (!p->solid && !blank) {
+		p->solid = xmalloc(sizeof(*p->solid));
+		shape_init(p->solid, p->name);
+	}
+	if (p->solid) {
+		if (blank) {
+			die("%s: a part has both a blank and a solid", where);
+		}
+		shape_check(p->solid, where);
+		return;
+	}
 	check_part(p, where);
 	index_faces(p);
 }
 
-// Splits line l of r into its fields and returns the first one, or NULL
-// for a blank line or a comment.
-static const char *split_record(char *l, struct reader *r)
+// Whether k is the key of a record of an exact solid (shape.h).
+static int solid_key(const char *k)
 {
-	r->line++;
-	r->n = split_words(l, r->w, MAXWORDS);
-	r->k = 0;
-	if (r->n > MAXWORDS) {
-		die("%s:%u: too many fields", r->path, r->line);
-	}
-	if (!r->n || r->w[0][0] == '#') {
-		return NULL;
-	}
-	return word(r);
+	return !strcmp(k, "v") || !strcmp(k, "e") || !strcmp(k, "f") ||
+	       !strcmp(k, "l");
 }
 
-// Reads record k of the open part p, or dies if no part is open.
-// Returns whether the part stays open.
-static int in_part(struct part *p, struct reader *r, const char *k)
+int part_line(struct part *p, char *line, const char *where)
 {
-	if (!p) {
-		die("%s:%u: %s outside a part", r->path, r->line, k);
+	struct reader r;
+	char *copy = NULL;
+	const char *k = NULL;
+
+	memset(&r, 0, sizeof(r));
+	r.where = where;
+	copy = xstrdup(line);
+	r.n = split_words(copy, r.w, MAXWORDS);
+	if (!r.n) {
+		free(copy);
+		return 1;
 	}
+	if (r.n > MAXWORDS && !solid_key(r.w[0])) {
+		die("%s: too many fields", where);
+	}
+	k = word(&r);
 	if (strcmp(k, "end") == 0) {
-		end_part(p, r);
+		if (r.n != 1) {
+			die("%s: too many fields", where);
+		}
+		free(copy);
+		end_part(p, where);
 		return 0;
 	}
-	read_record(p, r, k);
+	if (solid_key(k)) {
+		free(copy);
+		if (!p->solid) {
+			p->solid = xmalloc(sizeof(*p->solid));
+			shape_init(p->solid, p->name);
+		}
+		(void)shape_record(p->solid, line, where);
+		return 1;
+	}
+	read_record(p, &r, k);
+	free(copy);
 	return 1;
 }
 
-size_t read_fold(const char *path, struct part **out)
+void free_finish(struct face_finish *f)
 {
-	char *text = read_file(path);
-	char *rest = text;
-	char *l = NULL;
-	struct part *ps = NULL;
-	size_t np = 0;
-	size_t cap = 0;
-	int open = 0;
-	struct reader r = { path, 0, { NULL }, 0, 0 };
-
-	while ((l = next_line(&rest)) != NULL) {
-		const char *k = split_record(l, &r);
-
-		if (!k) {
-			continue;
-		}
-		if (strcmp(k, "part") == 0) {
-			if (open) {
-				die("%s:%u: missing end", path, r.line);
-			}
-			PUSH(ps, np, cap, new_part(word(&r)));
-			open = 1;
-		} else {
-			open = in_part(open ? &ps[np - 1] : NULL, &r, k);
-		}
+	free(f->material);
+	for (size_t k = 0; k < f->n; k++) {
+		free(f->refs[k].s);
 	}
-	free(text);
-	if (open) {
-		die("%s: missing end", path);
-	}
-	*out = ps;
-	return np;
+	free(f->refs);
+}
+
+void free_thread(struct face_thread *t)
+{
+	free(t->ref);
+	free(t->spec);
 }
 
 void clear_part(struct part *p)
@@ -746,7 +1077,38 @@ void clear_part(struct part *p)
 	free(p->holes);
 	free(p->fe_start);
 	free(p->fe);
-	free(p->colour);
+	free(p->base);
+	for (size_t i = 0; i < p->ncoats; i++) {
+		free(p->coats[i].material);
+		free(p->coats[i].pt);
+	}
+	for (size_t i = 0; i < p->nfins; i++) {
+		free_finish(&p->fins[i]);
+	}
+	free(p->fins);
+	for (size_t i = 0; i < p->nthreads; i++) {
+		free_thread(&p->threads[i]);
+	}
+	free(p->threads);
+	for (size_t i = 0; i < p->nins; i++) {
+		free(p->ins[i].type);
+		free(p->ins[i].name);
+		free(p->ins[i].material);
+	}
+	free(p->ins);
+	free(p->coats);
+	for (size_t i = 0; i < p->nmats; i++) {
+		free(p->mats[i].name);
+	}
+	free(p->mats);
+	for (size_t i = 0; i < p->nfeats; i++) {
+		free(p->feats[i].s);
+	}
+	free(p->feats);
+	if (p->solid) {
+		shape_free(p->solid);
+		free(p->solid);
+	}
 	memset(p, 0, sizeof(*p));
 }
 
@@ -804,8 +1166,18 @@ static void write_map(size_t i, const struct map *m)
 	printf("\n");
 }
 
-static void write_edge(size_t i, const struct edge *e)
+// Writes " by NAME" for feature f of p, if any.
+static void write_by(const struct part *p, size_t f)
 {
+	if (f != NONE) {
+		printf(" by %s", p->feats[f].s);
+	}
+}
+
+static void write_edge(const struct part *p, size_t i)
+{
+	const struct edge *e = &p->edges[i];
+
 	printf("edge %zu %zu %zu", i, e->v0, e->v1);
 	pidx(e->lf);
 	pidx(e->rf);
@@ -814,24 +1186,60 @@ static void write_edge(size_t i, const struct edge *e)
 		pnum(e->cx);
 		pnum(e->cy);
 	}
+	write_by(p, e->by);
 	printf("\n");
 }
 
-void write_fold(const struct part *p)
+void write_material(const struct material *m)
 {
-	printf("part %s\nt", p->name);
-	pnum(p->t);
-	printf("\nplace");
-	rig_write(&p->place);
-	printf("\n");
-	if (p->colour) {
-		printf("colour %s", p->colour);
-		for (int i = 0; i < 3; i++) {
-			pnum(p->rgb[i]);
-		}
-		pnum(p->rough);
-		printf("\n");
+	printf("material %s", m->name);
+	for (int i = 0; i < 3; i++) {
+		pnum(m->rgb[i]);
 	}
+	pnum(m->rough);
+	pnum(m->density);
+	if (m->draft > 0) {
+		printf(" draft");
+		pnum(m->draft);
+	}
+	if (m->mark) {
+		printf(" mark %c", m->mark);
+	}
+	if (m->vdi >= 0) {
+		printf(" vdi");
+		pnum(m->vdi);
+	} else if (m->callout[0]) {
+		printf(" callout %s", m->callout);
+	}
+	printf("\n");
+}
+
+static void write_hole(const struct part *p, const struct hole *h)
+{
+	printf("hole %zu", h->face);
+	pnum(h->cx);
+	pnum(h->cy);
+	pnum(h->r);
+	if (h->side) {
+		printf(" csink");
+		pnum(h->rc);
+		pnum(h->h);
+		printf(" %s", h->side > 0 ? "near" : "far");
+	}
+	if (h->blind > 0) {
+		printf(" blind");
+		pnum(h->blind);
+		printf(" %s", h->bside > 0 ? "near" : "far");
+	}
+	write_by(p, h->by);
+	printf("\n");
+}
+
+static void write_blank(const struct part *p)
+{
+	printf("t");
+	pnum(p->t);
+	printf("\n");
 	for (size_t i = 0; i < p->nmaps; i++) {
 		write_map(i, &p->maps[i]);
 	}
@@ -845,20 +1253,70 @@ void write_fold(const struct part *p)
 		printf("\n");
 	}
 	for (size_t i = 0; i < p->nedges; i++) {
-		write_edge(i, &p->edges[i]);
+		write_edge(p, i);
 	}
 	for (size_t i = 0; i < p->nholes; i++) {
-		printf("hole %zu", p->holes[i].face);
-		pnum(p->holes[i].cx);
-		pnum(p->holes[i].cy);
-		pnum(p->holes[i].r);
-		if (p->holes[i].side) {
-			printf(" csink");
-			pnum(p->holes[i].rc);
-			pnum(p->holes[i].h);
-			printf(" %s", p->holes[i].side > 0 ? "top" : "bottom");
+		write_hole(p, &p->holes[i]);
+	}
+}
+
+void write_part(const struct part *p)
+{
+	printf("part %s\n", p->name);
+	printf("place");
+	rig_write(&p->place);
+	printf("\n");
+	if (p->base) {
+		printf("base %s\n", p->base);
+	}
+	for (size_t i = 0; i < p->ncoats; i++) {
+		const struct coat *c = &p->coats[i];
+
+		printf("coat %s %s %s %zu", c->material,
+		       c->side > 0 ? "near" : "far", c->edges ? "edges" : "-",
+		       c->n);
+		for (size_t k = 0; k < c->n; k++) {
+			pnum(c->pt[k].x);
+			pnum(c->pt[k].y);
 		}
 		printf("\n");
+	}
+	for (size_t i = 0; i < p->nins && !p->bodied; i++) {
+		const struct part_insert *in = &p->ins[i];
+
+		printf("insert %s %s %s %zu", in->name, in->type,
+		       in->side > 0 ? "near" : "far", in->hole);
+		pnum(in->body_d);
+		pnum(in->body_h);
+		if (in->fills) {
+			printf(" fills");
+		}
+		if (in->material) {
+			printf(" material %s", in->material);
+		}
+		printf("\n");
+	}
+	for (size_t i = 0; i < p->nfins; i++) {
+		printf("finish %s", p->fins[i].material);
+		for (size_t k = 0; k < p->fins[i].n; k++) {
+			printf(" %s", p->fins[i].refs[k].s);
+		}
+		printf("\n");
+	}
+	for (size_t i = 0; i < p->nthreads; i++) {
+		const struct face_thread *t = &p->threads[i];
+
+		printf("thread %s", t->ref);
+		if (t->deep > 0) {
+			printf(" deep");
+			pnum(t->deep);
+		}
+		printf(" %s\n", t->spec);
+	}
+	if (p->solid) {
+		shape_write(stdout, p->solid);
+	} else {
+		write_blank(p);
 	}
 	printf("end\n");
 }

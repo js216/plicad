@@ -7,5 +7,5 @@ extrude blk from 0 to 5 r
 profile q along z 5 2 0 15 2 0 15 8 0 5 8 0
 extrude top from 5 to 7 q
 union u blk top
-round 0.5 blk.end top.*
+round 0.5 blk.end top
 round 0.8 convex

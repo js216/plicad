@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# play.scene -- The scene of the tests of the assembly sequence of view
+# Copyright (c) 2026 Jakob Kastelic
+
+# The meshes of test/view.scene with insertion paths: the cube comes 40
+# down, with the FreeCAD cube and the picture on it, and then the pit
+# turns a quarter about its origin and comes 20 down.
+mesh cube cube.obj color 0.8 0.1 0.1 path move 0 0 -40
+mesh point point.obj move 60 0 0 turn z 30 path turn z 90 move 0 0 -20
+mesh fc freecad.obj move 0 70 0 with cube
+image pic ../build/view.ppm on cube 0 -40 0 50 -40 0 0 -10 0
+view front

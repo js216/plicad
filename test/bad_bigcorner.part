@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_bigcorner.part -- A round larger than the drafted corner it meets
+# Copyright (c) 2026 Jakob Kastelic
+
+# A block 60 by 60 with corners of 5, drafted 3 degrees, so that its
+# corners narrow toward its end to a radius of 2.7.  A round of 5.08
+# where the end meets the sides has no room at those corners.
+profile b along y 0 0 5 60 0 5 60 60 5 0 60 5
+extrude box from 30 to -14 b draft 3
+round 5.08 box.side box.end

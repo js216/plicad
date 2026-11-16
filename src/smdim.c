@@ -2,14 +2,18 @@
 // smdim.c -- Add dimensions and callouts to a drawing view
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: smdim [-s SCALE] < part.view > part.dim
+// Usage: smdim [-s SCALE] [-u in|mm[,in|mm]] < part.view > part.dim
 //
-// As in smview VIEW part.fold | smdim -s SCALE > part.dim, reads one
+// As in smview VIEW part.st | smdim -s SCALE > part.dim, reads one
 // view of smview, in mm, and writes it at SCALE in inches on the paper,
 // with the origin at the datum, the lower left corner of the view.  The
-// fill, line and arc records stay as they are but for the units; the
-// view record gains the scale, and these records come new:
-//   line c v X0 Y0 X1 Y1           (the centre marks of the holes)
+// fill, line, arc and poly records stay as they are but for the units.
+// A record fill cut I, the faces of part I that a section cuts, becomes
+// fill hatch ANGLE GAP: a region of material with section lines at the
+// angle of the part, GAP inches apart (hatching): 45 degrees for part 0,
+// 135 for part 1, then 30, 120, 60 and 150, and round again.  The view
+// record gains the scale, and these records come new:
+//   line c v X0 Y0 X1 Y1           (the center marks of the holes)
 //   thin X0 Y0 X1 Y1               (a thin line of a dimension)
 //   text X Y ANGLE ALIGN HEIGHT STRING...
 //   arrow X Y DX DY                (a head at X Y that points along DX DY)
@@ -28,33 +32,44 @@
 //                                   past the gap of an ordinate)
 //   clear X0 Y0 X1 Y1              (a text on a hatch, where its lines
 //                                   stop)
+//   texture MARK CALLOUT           (a texture of the coats, for the
+//                                   notes; each coat of it bears the
+//                                   mark, a text in its middle)
 // The thick and radius records pass through, in mm.  ALIGN is l, c or
-// r: where X Y lies in the text, at half its height.  In a STRING, %%c
-// is the diameter sign, %%v the countersink sign, %%d the degree sign
-// and %%p the plus and minus sign.
+// r: where X Y lies in the text, at half its height.  A record may have
+// any number of fields.  In a STRING, %%c is the diameter sign, %%v the
+// countersink sign, %%d the degree sign and %%p the plus and minus
+// sign.
 //
-// The dimensions are in inches, to three decimals, without the zero
-// before the point.  On each axis an ordinate from the datum goes to
-// the far end of the view, to every hole seen along its axis, to every
-// straight edge of a cut-out and every centre line along the other
-// axis, and to the other straight edges that lie more than CLOSE sheet
-// thicknesses from the nearest of those: the faces of one wall and the
-// ends of a bend share one.  Of a row of equal holes at one pitch only
-// the first two and the last get theirs, and the callout of the holes
-// gives the pitch.  The holes of one size share a callout with their
-// count, and so do the arcs of one radius.  In the flat view, each bend
-// line says UP or DOWN, toward the eye or away, and the angle.  No
-// text lies on another: the ordinates spread out along their row, and
-// each callout goes to a free place inside the view or round it, with
-// a leader no longer than REACH inches if there is such a place, the
-// shortest one, and a slanted one before a level or an upright one.
-// No leader crosses a text, another leader, or an ordinate text with
-// ROW_GAP inches to each side of it.
+// The dimensions are in the first unit of -u, inches unless it says mm,
+// and in the second one, if any, in brackets after them: inches to
+// three decimals, without the zero before the point, and mm to two.  On
+// each axis an ordinate from the datum goes to the far end of the view,
+// to every hole seen along its axis, to every straight edge of a
+// cut-out and every center line along the other axis, and to the other
+// straight edges that lie more than CLOSE sheet thicknesses from the
+// nearest of those: the faces of one wall and the ends of a bend share
+// one.  Of a row of equal holes at one pitch only the first two and the
+// last get theirs, and the callout of the holes gives the pitch.  The
+// holes of one kind share a callout with their count, and so do the
+// arcs of one radius: the diameter, and the depth of a blind hole, as
+// %%c.089 X .230 DEEP; for a thread, its designation and THRU or its
+// depth, as 4-40 UNC-2B X .230 DEEP, the drill not called out; and for
+// a countersink a second line, as %%v%%c.110 X 82%%d.  No poly record
+// gets an ordinate.  In the flat view, each bend line says UP or DOWN,
+// toward the eye or away, and the angle.  No text lies on another: the
+// ordinates spread out along their row, and each callout goes to a free
+// place inside the view or round it, with a leader no longer than REACH
+// inches if there is such a place, the shortest one, and a slanted one
+// before a level or an upright one.  No leader crosses a text, another
+// leader, or an ordinate text with ROW_GAP inches to each side of it.
 //
 // A line "#line N NAME" makes the messages about the records after it
 // name line N of NAME, and so on.  These records, after the view on the
 // input, change the result:
-//   drop x|y|d|r STRING            (leave out the dimension that says so)
+//   drop FEATURE [x|y|d|r]         (leave out the dimensions of the
+//                                   feature of that name, or those of
+//                                   one kind)
 //   lin x|y A B [PLUS MINUS]       (a linear dimension between two
 //                                   ordinates, with its tolerances)
 //   leader X Y STRING...           (a note with a dot at X Y, in inches
@@ -62,10 +77,15 @@
 //                                   and a text after it)
 //   hatch X0 Y0 X1 Y1              (thin lines across the material in
 //                                   this rectangle; it passes through)
+//   inserts FORMAT                 (the callout of a group of inserts)
+//   hatching GAP                   (the gap between the section lines,
+//                                   in inches; GAP_IN if none)
+//   unhatched MATERIAL...          (the coats of these get no hatch)
 
 #include "font.h"
 #include "geom.h"
 #include "util.h"
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,7 +100,7 @@
 #define JOG1 0.24 // and where it is straight again.
 #define GAP 0.03 // Between a line and what it points at.
 #define PAD 0.04 // Round each text.
-#define MARK 0.06 // The reach of a centre mark past its hole.
+#define MARK 0.06 // The reach of a center mark past its hole.
 #define LAND 0.15 // The level start of a leader.
 #define STEP 0.2 // From one place for a callout to the next.
 #define RING 0.5 // From one ring of places to the next.
@@ -97,23 +117,25 @@
 #define THOU 1000.0 // Thousandths in one inch.
 #define CLOSE 2.5 // Sheets between two edges with an ordinate each.
 #define SHORT_EDGE 1.05 // An edge of a cut-out is longer, in sheets.
+#define GAP_IN 0.08 // Between the section lines, in inches, by default.
+#define MARK_STEP 0.03 // The grid of the places of the mark of a face.
 
 enum {
 	RINGS = 12, // The rings of places tried for a callout.
 	LEVELS = 3, // The levels of spot_free.
 	NOTE_LINES = 3, // The most lines of a callout.
-	WORDS = 12, // The most fields of a record.
 	FILL_NUMS = 5, // The most numbers of a fill record.
-	LABEL = 160, // Room for one line of a callout.
-	SHORT = 48, // Room for the text of one number.
+	LABEL = 256, // Room for one line of a callout.
+	SHORT = 96, // Room for the text of one number.
 	LONG_LEN = 24, // Room for the digits of a long.
 	UPRIGHT = 90, // The angle of a text that reads from the right.
+	ANGLES = 6, // The angles of the section lines of the parts.
 	DECIMAL = 10 // The base of the number of a #line record.
 };
 
 // The ranks of the places for an ordinate: an end of the view, a hole,
-// a centre line, an edge of a cut-out and another edge.
-enum { R_END, R_HOLE, R_CENTRE, R_CUT, R_EDGE };
+// a center line, an edge of a cut-out and another edge.
+enum { R_END, R_HOLE, R_CENTER, R_CUT, R_EDGE };
 
 struct pt {
 	double x, y;
@@ -123,23 +145,40 @@ struct rect {
 	double x0, y0, x1, y1;
 };
 
+// The feature of the part that a line, an arc or a hole comes from, or
+// NULL: the name of its statement in the source (smfold).
 struct seg {
 	char kind, vis;
 	struct pt a, b;
+	char *by;
 };
 
 struct arc {
 	char kind, vis;
 	struct pt c;
 	double r, a0, a1;
+	char *by;
 };
 
-// A hole, with the diameter dc and the angle of its countersink, at
-// the near or the far face; dc is 0 without one.
+// A hole, with its depth from its mouth if blind, else 0, and the
+// diameter dc and the angle of its countersink, at the near or the far
+// face; dc is 0 without one.
 struct hole {
 	struct pt c;
-	double d, dc, ang;
+	double d, deep, dc, ang;
 	int far;
+	char *by;
+	char *ins; // The type of the insert in it, or NULL,
+	int ins_far; // and whether it stands on the far side.
+	char *thread; // The designation of its thread, or NULL,
+	double tdeep; // and its depth, 0 through.
+};
+
+// A curve of a solid, a line through n points.
+struct poly {
+	char kind, vis;
+	struct pt *p;
+	size_t n;
 };
 
 // A bend line of the flat view, from a to b, and the angle of the bend.
@@ -148,11 +187,13 @@ struct bend {
 	double angle;
 };
 
-// A fill record: its word, and its n numbers.
+// A fill record: its word, its n numbers, and for the start of the
+// faces of a part that a section cuts, that part plus 1, else 0.
 struct fill {
 	char op;
 	double x[FILL_NUMS];
 	size_t n;
+	size_t cut;
 };
 
 // A drop, lin, hatch, leader or flag record, as text.
@@ -168,6 +209,7 @@ struct rule {
 struct item {
 	double p, q, len;
 	int rank, hi;
+	const char *by; // The feature of its edge or hole, or NULL.
 };
 
 struct items {
@@ -214,7 +256,36 @@ struct label {
 	char s[SHORT];
 };
 
+// A texture of coats: their material, the letter that marks them, and
+// the callout of the texture.
+struct texture {
+	char *material;
+	char mark;
+	char *callout;
+};
+
+// A coat that is a rectangle along the axes, and its material.
+struct coat_rect {
+	struct rect r;
+	char *mat;
+};
+
+// A coat of a face of a solid: its material and its polygon of n
+// corners.
+struct face_coat {
+	char *mat;
+	struct pt *p;
+	size_t n, cap;
+};
+
+// The mark of a textured coat: where, in mm, and its letter.
+struct mark {
+	struct pt at;
+	char letter;
+};
+
 struct view {
+	int units[2]; // The units of the texts: U_IN or U_MM, U_NONE.
 	const char *name, *part; // In the input.
 	double k; // Inches on the paper for one mm.
 	double scale, thick, radius;
@@ -227,6 +298,8 @@ struct view {
 	size_t nseg, capseg;
 	struct arc *arc;
 	size_t narc, caparc;
+	struct poly *poly;
+	size_t npoly, cappoly;
 	struct hole *hole;
 	size_t nhole, caphole;
 	struct bend *bend;
@@ -246,6 +319,14 @@ struct view {
 	size_t next, capext;
 	struct rect *hatch; // The hatched rectangles.
 	size_t nhatch, caphatch;
+	struct coat_rect *coat; // The coats that are rectangles, in mm.
+	size_t ncoat, capcoat;
+	struct texture *tex; // The textures of the coats.
+	size_t ntex, captex;
+	struct mark *mark; // The marks of the coats that have one.
+	size_t nmark, capmark;
+	struct face_coat *face; // The coats of faces of a solid.
+	size_t nface, capface;
 	struct obstacle *obst; // What a text inside the view keeps off,
 	size_t nobst, capobst;
 	size_t *cell, *in_cell; // by the cells of a grid over the view,
@@ -259,19 +340,21 @@ struct view {
 	size_t nplace[2], capplace[2];
 };
 
-// A record under reading: its line, its fields, and the next one.
+// A record under reading: its line, its fields, as many as it has, and
+// the next one.
 struct reader {
 	const char *what; // The name of the input, for messages.
 	const char *text; // The whole line.
 	unsigned line;
-	char *w[WORDS + 1];
-	size_t n, k;
+	char **w;
+	size_t n, k, cap;
 };
 
 static const char *word(struct reader *r)
 {
 	if (r->k >= r->n) {
-		die("%s:%u: %s: too few fields", r->what, r->line, r->w[0]);
+		die("%s:%u: %s: too few fields", r->what, r->line,
+		    r->n ? r->w[0] : "record");
 	}
 	return r->w[r->k++];
 }
@@ -322,6 +405,59 @@ static struct label inches(double v)
 		xsnprintf(head, "%ld", whole);
 	}
 	xsnprintf(l.s, "%s%s.%03ld", v < 0 && n ? "-" : "", head, rest);
+	return l;
+}
+
+enum { U_NONE, U_IN, U_MM };
+
+#define HUNDRED 100.0 // Hundredths of a mm, for the texts in mm.
+enum { HUNDREDS = 100 };
+
+// A size v, in inches, to write in unit u.
+struct size_in {
+	double v;
+	int u;
+};
+
+// The text of the size x.v, in inches, in unit x.u: inches as inches()
+// writes them, or mm to two decimals.
+static struct label in_unit(struct size_in x)
+{
+	struct label l;
+	double v = x.v;
+	long n = lround(fabs(v) * INCH * HUNDRED);
+
+	if (x.u == U_IN) {
+		return inches(v);
+	}
+	xsnprintf(l.s, "%s%ld.%02ld", v < 0 && n ? "-" : "", n / HUNDREDS,
+		  n % HUNDREDS);
+	return l;
+}
+
+// The text of the size v, in inches, in the units of the view: the
+// first, and the second after it in brackets.
+static struct label size_text(const struct view *v, double x)
+{
+	struct size_in first = { x, v->units[0] };
+	struct size_in second = { x, v->units[1] };
+	struct label l = in_unit(first);
+	struct label b;
+	size_t na = 0;
+	size_t nb = 0;
+
+	if (v->units[1] == U_NONE) {
+		return l;
+	}
+	b = in_unit(second);
+	na = strlen(l.s);
+	nb = strlen(b.s);
+	if (na + nb + 4 > sizeof(l.s)) {
+		die("smdim: a size is too long to write");
+	}
+	memcpy(l.s + na, " [", 2);
+	memcpy(l.s + na + 2, b.s, nb);
+	memcpy(l.s + na + 2 + nb, "]", 2);
 	return l;
 }
 
@@ -442,11 +578,32 @@ static void text(struct style st, const char *s)
 	       st.align, st.h, s);
 }
 
+// Reads "by FEATURE" at the end of a record, if there.
+static char *read_by(struct reader *r)
+{
+	if (r->k == r->n) {
+		return NULL;
+	}
+	if (strcmp(word(r), "by") != 0) {
+		die("%s:%u: expected by FEATURE", r->what, r->line);
+	}
+	return xstrdup(word(r));
+}
+
+// Adds the side of a coat from a to b, of the material mat, as a line.
+static void add_coat_side(struct view *v, struct pt a, struct pt b,
+			  const char *mat)
+{
+	struct seg s = { 'p', 'v', a, b, xstrdup(mat) };
+
+	PUSH(v->seg, v->nseg, v->capseg, s);
+}
+
 static void read_curve(struct view *v, struct reader *r)
 {
 	int is_arc = r->w[0][0] == 'a';
-	struct arc a = { 0, 0, { 0, 0 }, 0, 0, 0 };
-	struct seg s = { 0, 0, { 0, 0 }, { 0, 0 } };
+	struct arc a = { 0, 0, { 0, 0 }, 0, 0, 0, NULL };
+	struct seg s = { 0, 0, { 0, 0 }, { 0, 0 }, NULL };
 
 	a.kind = s.kind = letter(r);
 	a.vis = s.vis = letter(r);
@@ -455,21 +612,177 @@ static void read_curve(struct view *v, struct reader *r)
 		a.r = num(r);
 		a.a0 = num(r);
 		a.a1 = num(r);
+		a.by = read_by(r);
 		PUSH(v->arc, v->narc, v->caparc, a);
 	} else {
 		s.a = point(r);
 		s.b = point(r);
+		s.by = read_by(r);
 		PUSH(v->seg, v->nseg, v->capseg, s);
 	}
 }
 
+// Reads a poly record, KIND VIS N and N points.
+static void read_poly(struct view *v, struct reader *r)
+{
+	struct poly p = { 0, 0, NULL, 0 };
+	long n = 0;
+
+	p.kind = letter(r);
+	p.vis = letter(r);
+	n = lround(num(r));
+	if (n < 2 || (size_t)(2 * n) != r->n - r->k) {
+		die("%s:%u: a poly has N of 2 or more, and N points", r->what,
+		    r->line);
+	}
+	p.n = (size_t)n;
+	p.p = xmalloc(p.n * sizeof(*p.p));
+	for (size_t i = 0; i < p.n; i++) {
+		p.p[i] = point(r);
+	}
+	PUSH(v->poly, v->npoly, v->cappoly, p);
+}
+
+// The words of r left, with a blank between each two, as a new text.
+static char *rest_words(struct reader *r)
+{
+	size_t n = 1;
+	char *t = NULL;
+
+	for (size_t i = r->k; i < r->n; i++) {
+		n += strlen(r->w[i]) + 1;
+	}
+	t = xmalloc(n);
+	t[0] = 0;
+	for (size_t k = 0; r->k < r->n; r->k++) {
+		size_t m = strlen(r->w[r->k]);
+
+		if (k) {
+			t[k++] = ' ';
+		}
+		memcpy(t + k, r->w[r->k], m + 1);
+		k += m;
+	}
+	return t;
+}
+
+// Reads a texture record, MATERIAL MARK CALLOUT...: the coats of the
+// material bear the mark, and the callout goes on to smsheet.
+static void read_texture(struct view *v, struct reader *r)
+{
+	struct texture t;
+
+	t.material = xstrdup(word(r));
+	t.mark = word(r)[0];
+	t.callout = rest_words(r);
+	PUSH(v->tex, v->ntex, v->captex, t);
+}
+
+// The mark of the coats of the material, or 0.
+static char mark_of(const struct view *v, const char *material)
+{
+	for (size_t i = 0; i < v->ntex; i++) {
+		if (strcmp(v->tex[i].material, material) == 0) {
+			return v->tex[i].mark;
+		}
+	}
+	return 0;
+}
+
+// Grows box to hold q.
+static void rect_add(struct rect *box, struct pt q)
+{
+	box->x0 = fmin(box->x0, q.x);
+	box->y0 = fmin(box->y0, q.y);
+	box->x1 = fmax(box->x1, q.x);
+	box->y1 = fmax(box->y1, q.y);
+}
+
+// Marks the coat of material mat in the box with the mark of its
+// texture, if it has one.
+static void add_mark(struct view *v, const char *mat, struct rect box)
+{
+	if (mark_of(v, mat) && mark_of(v, mat) != '-') {
+		struct mark mk = { { (box.x0 + box.x1) / 2,
+				     (box.y0 + box.y1) / 2 },
+				   mark_of(v, mat) };
+
+		PUSH(v->mark, v->nmark, v->capmark, mk);
+	}
+}
+
+// Reads the n corners of a coat of material mat from r into v: its
+// sides, its box if it is a rectangle square to the paper, and its mark;
+// of a coat of a face, its mark alone.
+static void coat_corners(struct view *v, struct reader *r, const char *mat,
+			 long n)
+{
+	int face = r->n - r->k == (size_t)(2 * n) + 1 &&
+		   strcmp(r->w[r->n - 1], "face") == 0;
+	struct face_coat fc = { xstrdup(mat), NULL, 0, 0 };
+	struct pt first = point(r);
+	struct pt last = first;
+	struct rect box = { first.x, first.y, first.x, first.y };
+	int square = 1;
+
+	PUSH(fc.p, fc.n, fc.cap, first);
+	for (long i = 1; i < n; i++) {
+		struct pt q = point(r);
+
+		rect_add(&box, q);
+		PUSH(fc.p, fc.n, fc.cap, q);
+		if (!face) {
+			add_coat_side(v, last, q, mat);
+		}
+		square = square &&
+			 (fabs(q.x - last.x) < ONE || fabs(q.y - last.y) < ONE);
+		last = q;
+	}
+	if (face) {
+		r->k++;
+		PUSH(v->face, v->nface, v->capface, fc);
+		return;
+	}
+	free(fc.mat);
+	free(fc.p);
+	add_coat_side(v, last, first, mat);
+	if (square && n == 4) {
+		struct coat_rect cr = { box, xstrdup(mat) };
+
+		PUSH(v->coat, v->ncoat, v->capcoat, cr);
+	}
+	add_mark(v, mat, box);
+}
+
+// Reads a coat record, MATERIAL near|far N, N corners and face for the
+// coat of a face of a solid: the sides of a coat become lines of kind
+// p, places for ordinates, and a coat that is a rectangle along the axes
+// gets a hatch; a coat of a face, whose sides are its edges, gets its
+// mark alone.
+static void read_coat(struct view *v, struct reader *r)
+{
+	const char *mat = word(r);
+	long n = 0;
+
+	(void)word(r);
+	n = lround(num(r));
+	if (n < 3) {
+		die("%s:%u: a coat has 3 corners or more", r->what, r->line);
+	}
+	coat_corners(v, r, mat, n);
+}
+
 static void read_hole(struct view *v, struct reader *r)
 {
-	struct hole h = { { 0, 0 }, 0, 0, 0, 0 };
+	struct hole h = { { 0, 0 }, 0, 0, 0, 0, 0, NULL, NULL, 0, NULL, 0 };
 
 	h.c = point(r);
 	h.d = num(r);
-	if (r->k < r->n) {
+	if (r->k < r->n && strcmp(r->w[r->k], "deep") == 0) {
+		r->k++;
+		h.deep = num(r);
+	}
+	if (r->k < r->n && strcmp(r->w[r->k], "csink") == 0) {
 		if (strcmp(word(r), "csink") != 0) {
 			die("%s:%u: expected csink DC ANGLE near|far", r->what,
 			    r->line);
@@ -478,6 +791,35 @@ static void read_hole(struct view *v, struct reader *r)
 		h.ang = num(r);
 		h.far = strcmp(word(r), "far") == 0;
 	}
+	if (r->k < r->n && strcmp(r->w[r->k], "insert") == 0) {
+		r->k++;
+		h.ins = xstrdup(word(r));
+		h.ins_far = strcmp(word(r), "far") == 0;
+	}
+	if (r->k < r->n && strcmp(r->w[r->k], "thread") == 0) {
+		size_t end = r->k + 2;
+
+		r->k++;
+		if (strcmp(word(r), "thru") != 0) {
+			r->k--;
+			h.tdeep = num(r);
+		}
+		while (end < r->n && strcmp(r->w[end], "by") != 0) {
+			end++;
+		}
+		if (end == r->k) {
+			die("%s:%u: expected thread thru|DEPTH DESIGNATION...",
+			    r->what, r->line);
+		}
+		{
+			size_t n = r->n;
+
+			r->n = end;
+			h.thread = rest_words(r);
+			r->n = n;
+		}
+	}
+	h.by = read_by(r);
 	PUSH(v->hole, v->nhole, v->caphole, h);
 }
 
@@ -502,9 +844,15 @@ static void read_box(struct view *v, struct reader *r)
 // Reads a fill record: its word and the numbers after it.
 static void read_fill(struct view *v, struct reader *r)
 {
-	struct fill f = { r->w[0][0], { 0 }, 0 };
+	struct fill f = { r->w[0][0], { 0 }, 0, 0 };
 
-	if (r->n - 1 > FILL_NUMS) {
+	if (f.op == 'f' && r->k < r->n) {
+		if (strcmp(word(r), "cut") != 0) {
+			die("%s:%u: expected fill [cut I]", r->what, r->line);
+		}
+		f.cut = (size_t)lround(fabs(num(r))) + 1;
+	}
+	if (r->n - r->k > FILL_NUMS) {
 		die("%s:%u: too many fields", r->what, r->line);
 	}
 	while (r->k < r->n) {
@@ -545,15 +893,18 @@ static void read_record(struct view *v, struct reader *r)
 		const char *name;
 		void (*read)(struct view *v, struct reader *r);
 	} kinds[] = {
-		{ "view", read_name },	   { "thick", read_thick },
-		{ "radius", read_radius }, { "bend", read_bend },
-		{ "box", read_box },	   { "line", read_curve },
-		{ "arc", read_curve },	   { "hole", read_hole },
-		{ "fill", read_fill },	   { "m", read_fill },
-		{ "l", read_fill },	   { "a", read_fill },
-		{ "z", read_fill },	   { "drop", read_rule },
-		{ "lin", read_rule },	   { "leader", read_rule },
-		{ "flag", read_rule },	   { "hatch", read_rule },
+		{ "view", read_name },	    { "thick", read_thick },
+		{ "radius", read_radius },  { "bend", read_bend },
+		{ "box", read_box },	    { "line", read_curve },
+		{ "arc", read_curve },	    { "hole", read_hole },
+		{ "poly", read_poly },	    { "hatching", read_rule },
+		{ "unhatched", read_rule }, { "coat", read_coat },
+		{ "fill", read_fill },	    { "texture", read_texture },
+		{ "m", read_fill },	    { "l", read_fill },
+		{ "a", read_fill },	    { "z", read_fill },
+		{ "drop", read_rule },	    { "lin", read_rule },
+		{ "leader", read_rule },    { "flag", read_rule },
+		{ "hatch", read_rule },	    { "inserts", read_rule },
 	};
 	const char *k = word(r);
 	size_t i = 0;
@@ -575,11 +926,13 @@ static void read_record(struct view *v, struct reader *r)
 // comment.
 static int split_record(struct reader *r, char *l)
 {
+	char *f = NULL;
+
 	r->line++;
-	r->n = split_words(l, r->w, WORDS);
+	r->n = 0;
 	r->k = 0;
-	if (r->n > WORDS) {
-		die("%s:%u: too many fields", r->what, r->line);
+	while ((f = split_first(&l)) != NULL) {
+		PUSH(r->w, r->n, r->cap, f);
 	}
 	return r->n && r->w[0][0] != '#';
 }
@@ -597,7 +950,7 @@ static const char *name_of(struct view *v, const char *s)
 // N of the file NAME, for the messages.
 static void read_input(struct view *v, char *input)
 {
-	struct reader r = { "stdin", NULL, 0, { NULL }, 0, 0 };
+	struct reader r = { "stdin", NULL, 0, NULL, 0, 0, 0 };
 	char *rest = input;
 	char *l = NULL;
 
@@ -624,6 +977,7 @@ static void read_input(struct view *v, char *input)
 		}
 		free(copy);
 	}
+	free(r.w);
 	if (!v->name[0] || v->box.x1 <= v->box.x0 || v->box.y1 <= v->box.y0) {
 		die("stdin: no view with a box");
 	}
@@ -636,15 +990,74 @@ static struct pt to_paper(const struct view *v, struct pt p)
 	return q;
 }
 
-// Prints the fill records on the paper.
-static void print_fills(const struct view *v)
+// The gap between the section lines, in inches: that of the last
+// hatching rule, or GAP_IN.
+static double hatch_gap(const struct view *v)
 {
-	for (size_t i = 0; i < v->nfill; i++) {
-		const struct fill *f = &v->fill[i];
-		struct pt p = { f->x[0], f->x[1] };
+	static const char head[] = "hatching ";
+	double gap = GAP_IN;
 
+	for (size_t i = 0; i < v->nrule; i++) {
+		const char *r = v->rule[i].s + strspn(v->rule[i].s, " \t");
+		char *end = NULL;
+
+		if (strncmp(r, head, sizeof(head) - 1) != 0) {
+			continue;
+		}
+		gap = strtod(r + sizeof(head) - 1, &end);
+		if (*end || !(gap > 0) || !num_ok(gap)) {
+			die("%s:%u: expected hatching GAP, above 0",
+			    v->rule[i].what, v->rule[i].line);
+		}
+	}
+	return gap;
+}
+
+// Grows box, on the paper, to hold the fill record f at the point p.
+static void fill_box(struct rect *box, const struct fill *f, struct pt p,
+		     double r)
+{
+	struct pt lo = { p.x - r, p.y - r };
+	struct pt hi = { p.x + r, p.y + r };
+
+	if (f->n) {
+		rect_add(box, lo);
+		rect_add(box, hi);
+	}
+}
+
+// Prints the fill records on the paper: a fill of the faces of a part
+// that a section cuts with the angle and the gap of its section lines,
+// and its region, as a hatch, for the texts that lie on it.
+static void print_fills(struct view *v)
+{
+	static const int angles[ANGLES] = { 45, 135, 30, 120, 60, 150 };
+	struct rect box = { HUGE_VAL, HUGE_VAL, -HUGE_VAL, -HUGE_VAL };
+	int cut = 0;
+
+	for (size_t i = 0; i <= v->nfill; i++) {
+		const struct fill *f = i < v->nfill ? &v->fill[i] : NULL;
+		struct pt p = { 0, 0 };
+
+		if ((!f || f->op == 'f') && cut && box.x0 < box.x1) {
+			PUSH(v->hatch, v->nhatch, v->caphatch, box);
+		}
+		if (!f) {
+			break;
+		}
+		p.x = f->x[0];
+		p.y = f->x[1];
 		p = to_paper(v, p);
-		if (f->n == 0) {
+		if (f->op == 'f') {
+			box.x0 = box.y0 = HUGE_VAL;
+			box.x1 = box.y1 = -HUGE_VAL;
+			cut = f->cut > 0;
+		}
+		fill_box(&box, f, p, f->n == FILL_NUMS ? f->x[2] * v->k : 0);
+		if (f->cut) {
+			printf("fill hatch %d %.4f\n",
+			       angles[(f->cut - 1) % ANGLES], hatch_gap(v));
+		} else if (f->n == 0) {
 			printf("%s\n", f->op == 'f' ? "fill" : "z");
 		} else if (f->n == 2) {
 			printf("%c %.4f %.4f\n", f->op, p.x, p.y);
@@ -657,7 +1070,7 @@ static void print_fills(const struct view *v)
 	}
 }
 
-// Prints the centre mark of hole h: a cross that reaches past it.
+// Prints the center mark of hole h: a cross that reaches past it.
 static void print_mark(const struct view *v, const struct hole *h)
 {
 	double r = (fmax(h->d, h->far ? 0 : h->dc) * v->k / 2) + MARK;
@@ -686,6 +1099,8 @@ static void print_curves(struct view *v)
 			v->seg[n++] = *s;
 			printf("line %c %c %.4f %.4f %.4f %.4f\n", s->kind,
 			       s->vis, s->a.x, s->a.y, s->b.x, s->b.y);
+		} else {
+			free(s->by);
 		}
 	}
 	v->nseg = n;
@@ -699,9 +1114,45 @@ static void print_curves(struct view *v)
 			v->arc[n++] = *a;
 			printf("arc %c %c %.4f %.4f %.4f %.3f %.3f\n", a->kind,
 			       a->vis, a->c.x, a->c.y, a->r, a->a0, a->a1);
+		} else {
+			free(a->by);
 		}
 	}
 	v->narc = n;
+	for (size_t i = 0; i < v->nface; i++) {
+		for (size_t k = 0; k < v->face[i].n; k++) {
+			v->face[i].p[k] = to_paper(v, v->face[i].p[k]);
+		}
+	}
+	for (size_t i = 0; i < v->npoly; i++) {
+		struct poly *l = &v->poly[i];
+		double length = 0;
+
+		n = 0;
+		for (size_t k = 0; k < l->n; k++) {
+			struct pt q = to_paper(v, l->p[k]);
+
+			if (!n || k + 1 == l->n ||
+			    hypot(q.x - l->p[n - 1].x, q.y - l->p[n - 1].y) >=
+				    DOT) {
+				l->p[n++] = q;
+			}
+		}
+		l->n = n;
+		for (size_t k = 1; k < l->n; k++) {
+			length += hypot(l->p[k].x - l->p[k - 1].x,
+					l->p[k].y - l->p[k - 1].y);
+		}
+		if (length < DOT) {
+			l->n = 0;
+			continue;
+		}
+		printf("poly %c %c %zu", l->kind, l->vis, l->n);
+		for (size_t k = 0; k < l->n; k++) {
+			printf(" %.4f %.4f", l->p[k].x, l->p[k].y);
+		}
+		printf("\n");
+	}
 	for (size_t i = 0; i < v->nhole; i++) {
 		v->hole[i].c = to_paper(v, v->hole[i].c);
 		print_mark(v, &v->hole[i]);
@@ -718,19 +1169,23 @@ static void print_curves(struct view *v)
 	v->inner = v->box;
 }
 
-// Whether a drop record of kind k names the text s.
-static int dropped(const struct view *v, const char *k, const char *s)
+// Whether a drop record of kind k (x, y, d or r), or of every kind,
+// names the feature by.
+static int dropped(const struct view *v, char k, const char *by)
 {
 	static const char head[] = "drop ";
 	size_t nh = sizeof(head) - 1;
-	size_t nk = strlen(k);
+	size_t nb = by ? strlen(by) : 0;
 
-	for (size_t i = 0; i < v->nrule; i++) {
+	for (size_t i = 0; by && i < v->nrule; i++) {
 		const char *r = v->rule[i].s;
 
 		r += strspn(r, " \t");
-		if (strncmp(r, head, nh) == 0 && strncmp(r + nh, k, nk) == 0 &&
-		    r[nh + nk] == ' ' && strcmp(r + nh + nk + 1, s) == 0) {
+		if (strncmp(r, head, nh) != 0 || strncmp(r + nh, by, nb) != 0) {
+			continue;
+		}
+		r += nh + nb;
+		if (*r == 0 || (*r == ' ' && r[1] == k && r[2] == 0)) {
 			return 1;
 		}
 	}
@@ -820,15 +1275,19 @@ static void add_item(struct view *v, struct items *it, int axis, struct item x,
 	PUSH(v->place[axis], v->nplace[axis], v->capplace[axis], x.p);
 }
 
-// Lists the edges and centre lines that may get an ordinate on the
+// Lists the edges and center lines that may get an ordinate on the
 // axis: the visible ones square to it, but for the short ends of the
 // sheet, which mark no place of their own.
 static void list_edges(struct view *v, struct items *it, int axis)
 {
 	for (size_t i = 0; i < v->nseg; i++) {
 		const struct seg *s = &v->seg[i];
-		struct item x = { along(axis, s->a), across(axis, s->a), 0,
-				  R_CENTRE, 0 };
+		struct item x = { along(axis, s->a),
+				  across(axis, s->a),
+				  0,
+				  R_CENTER,
+				  0,
+				  s->by };
 		double sheet = v->thick * v->k;
 		double least = 0;
 
@@ -841,7 +1300,10 @@ static void list_edges(struct view *v, struct items *it, int axis)
 			x.rank = R_EDGE;
 			least = 2 * sheet;
 		}
-		if (strchr("eic", s->kind) && s->vis == 'v' &&
+		if (s->kind == 'p') {
+			x.rank = R_CUT;
+		}
+		if (strchr("eicp", s->kind) && s->vis == 'v' &&
 		    fabs(along(axis, s->b) - x.p) < ONE && x.len > least) {
 			add_item(v, it, axis, x, across(axis, s->b));
 		}
@@ -851,7 +1313,7 @@ static void list_edges(struct view *v, struct items *it, int axis)
 // Lists every place for an ordinate on the axis.
 static void list_items(struct view *v, struct items *it, int axis)
 {
-	struct item x = { 0, 0, 0, R_END, 0 };
+	struct item x = { 0, 0, 0, R_END, 0, NULL };
 
 	add_item(v, it, axis, x, 0);
 	x.p = axis ? v->frame.y1 : v->frame.x1;
@@ -860,6 +1322,7 @@ static void list_items(struct view *v, struct items *it, int axis)
 	for (size_t i = 0; i < v->nhole; i++) {
 		x.p = along(axis, v->hole[i].c);
 		x.q = across(axis, v->hole[i].c);
+		x.by = v->hole[i].by;
 		if (in_pattern(v, axis, &v->hole[i]) < ONE) {
 			add_item(v, it, axis, x, x.q);
 		}
@@ -893,7 +1356,7 @@ static int cmp_place(const void *lhs, const void *rhs)
 }
 
 // Whether item x gets an ordinate, next to the n items of it that do:
-// its place is new, and for a plain edge no edge, centre line or end of
+// its place is new, and for a plain edge no edge, center line or end of
 // the view is within CLOSE sheet thicknesses of it.
 static int keeps(const struct view *v, const struct items *it, size_t n,
 		 const struct item *x)
@@ -920,7 +1383,7 @@ static void choose_items(const struct view *v, struct items *it, int axis)
 		const struct item *x = &it->v[i];
 
 		if (keeps(v, it, n, x) &&
-		    !dropped(v, axis ? "y" : "x", inches(x->p / v->scale).s)) {
+		    !dropped(v, axis ? 'y' : 'x', x->by)) {
 			it->v[n++] = *x;
 		}
 	}
@@ -998,7 +1461,7 @@ static void draw_ordinate(struct view *v, int axis, const struct item *x,
 {
 	double s = x->hi ? 1 : -1;
 	double edge = x->hi ? far_side(v, axis) : 0;
-	struct label t = inches(x->p / v->scale);
+	struct label t = size_text(v, x->p / v->scale);
 	double row = edge + (s * ROW);
 	double end = row + (s * text_width(t.s, TEXT_H));
 	struct style st = { pq(axis, l, row), axis ? 0 : UPRIGHT,
@@ -1084,8 +1547,30 @@ static void ordinates(struct view *v, int axis)
 	free(it.v);
 }
 
+// Whether a visible edge of the view, square to the axis, or a hole,
+// lies at p on the axis: of the outline, of a cut-out or of a bend.
+static int visible_at(const struct view *v, int axis, double p)
+{
+	for (size_t i = 0; i < v->nseg; i++) {
+		const struct seg *s = &v->seg[i];
+
+		if (s->vis == 'v' && s->kind != 'c' &&
+		    fabs(along(axis, s->a) - p) < 1 / THOU / 2 &&
+		    fabs(along(axis, s->b) - p) < 1 / THOU / 2) {
+			return 1;
+		}
+	}
+	for (size_t i = 0; i < v->nhole; i++) {
+		if (fabs(along(axis, v->hole[i].c) - p) < 1 / THOU / 2) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 // Reads an end of a linear dimension, in inches from the datum, and
-// dies unless an ordinate may stand there.  Returns it on the paper.
+// dies unless an ordinate may stand there: at an edge or a hole.
+// Returns it on the paper.
 static double lin_end(const struct view *v, struct reader *r, int axis)
 {
 	double p = num(r) * v->scale;
@@ -1095,8 +1580,11 @@ static double lin_end(const struct view *v, struct reader *r, int axis)
 			return p;
 		}
 	}
-	die("%s:%u: lin %c: no edge or hole at %s", r->what, r->line,
-	    axis ? 'y' : 'x', inches(p / v->scale).s);
+	if (!visible_at(v, axis, p)) {
+		die("%s:%u: lin %c: no edge or hole at %s", r->what, r->line,
+		    axis ? 'y' : 'x', size_text(v, p / v->scale).s);
+	}
+	return p;
 }
 
 // Draws the linear dimension of the rule in r, below or left of all
@@ -1111,7 +1599,7 @@ static void linear(struct view *v, struct reader *r)
 	double a = lin_end(v, r, axis);
 	double b = lin_end(v, r, axis);
 	double row = (axis ? v->box.x0 : v->box.y0) - ROW;
-	struct label t = inches(fabs(b - a) / v->scale);
+	struct label t = size_text(v, fabs(b - a) / v->scale);
 	double end = ((a + b) / 2) + (text_width(t.s, TEXT_H) / 2) + PAD;
 	double top = row + (up * 2 * TEXT_H);
 	double tol_w = 0;
@@ -1133,10 +1621,14 @@ static void linear(struct view *v, struct reader *r)
 	st.align = 'l';
 	st.h = SMALL_H;
 	for (int k = 1; r->k < r->n; k = -1) {
-		const char *tol = word(r);
+		double x = num(r);
+		struct size_in size = { fabs(x), v->units[0] };
+		struct label tl = in_unit(size);
+		char tol[SHORT + 2];
 
 		st.at = pq(axis, end,
 			   row + (up * (TEXT_H + (k * ((SMALL_H / 2) + GAP)))));
+		xsnprintf(tol, "%c%s", signbit(x) ? '-' : '+', tl.s);
 		text(st, tol);
 		top = row + (up * (TEXT_H + (2 * SMALL_H)));
 		tol_w = fmax(tol_w, text_width(tol, SMALL_H) + PAD);
@@ -1261,7 +1753,7 @@ static void add_obstacle(struct view *v, struct obstacle o)
 
 // Lists what a text inside the view must keep off: its lines, the
 // lines of its ordinates, and each arc as its square with room for a
-// centre mark and a gap.  A text may lie on a hatch, whose lines stop
+// center mark and a gap.  A text may lie on a hatch, whose lines stop
 // round it (print_clear).
 static void list_obstacles(struct view *v)
 {
@@ -1276,6 +1768,13 @@ static void list_obstacles(struct view *v)
 		o.a = v->ext[i].a;
 		o.b = v->ext[i].b;
 		add_obstacle(v, o);
+	}
+	for (size_t i = 0; i < v->npoly; i++) {
+		for (size_t k = 1; k < v->poly[i].n; k++) {
+			o.a = v->poly[i].p[k - 1];
+			o.b = v->poly[i].p[k];
+			add_obstacle(v, o);
+		}
 	}
 	o.box = 1;
 	for (size_t i = 0; i < v->narc; i++) {
@@ -1697,7 +2196,13 @@ static struct label times(const char *sep, size_t n)
 static int same_hole(const struct hole *a, const struct hole *b)
 {
 	return fabs(a->d - b->d) < ONE && fabs(a->dc - b->dc) < ONE &&
-	       fabs(a->ang - b->ang) < ONE && a->far == b->far;
+	       fabs(a->ang - b->ang) < ONE && a->far == b->far &&
+	       fabs(a->deep - b->deep) < ONE && !a->ins == !b->ins &&
+	       (!a->ins ||
+		(strcmp(a->ins, b->ins) == 0 && a->ins_far == b->ins_far)) &&
+	       !a->thread == !b->thread &&
+	       (!a->thread || (strcmp(a->thread, b->thread) == 0 &&
+			       fabs(a->tdeep - b->tdeep) < ONE));
 }
 
 // The pitch along the axis of the rows of the holes like h, or 0 if
@@ -1724,12 +2229,12 @@ static void pitch_line(const struct view *v, const struct hole *h,
 	double y = row_pitch(v, 1, h);
 	int same = fabs(x - y) < ONE;
 	int split = x > 0 && y > 0 && !same;
-	struct label a = inches((x > 0 ? x : y) / v->scale);
+	struct label a = size_text(v, (x > 0 ? x : y) / v->scale);
 	struct label b = { "" };
 	const char *axis = x > 0 ? " X" : " Y";
 
 	if (split) {
-		b = inches(y / v->scale);
+		b = size_text(v, y / v->scale);
 	}
 	if (x > 0 || y > 0) {
 		xsnprintf(nt->own[nt->nlines], "PITCH %s%s%s%s%s", a.s,
@@ -1741,24 +2246,112 @@ static void pitch_line(const struct view *v, const struct hole *h,
 	}
 }
 
-// Writes the callout nt of the holes like h: the diameter and the
-// count, and for a countersink a second line with its diameter and
-// angle.
-static void hole_text(const struct hole *h, struct note *nt)
+// Puts the text s at the end of the text in buf, of room LABEL.
+static void put_text(char *buf, const char *s)
 {
-	struct label d = inches(h->d / INCH);
-	struct label dc = inches(h->dc / INCH);
+	size_t n = strlen(buf);
+	size_t m = strlen(s);
 
+	if (n + m >= LABEL) {
+		die("smdim: a callout is too long to write: %s%s", buf, s);
+	}
+	memcpy(buf + n, s, m + 1);
+}
+
+// Puts the depth of a hole or a thread, deep mm, at the end of buf:
+// THRU for 0, else X DEPTH DEEP.
+static void put_depth(const struct view *v, char *buf, double deep)
+{
+	if (deep > 0) {
+		put_text(buf, " X ");
+		put_text(buf, size_text(v, deep / INCH).s);
+		put_text(buf, " DEEP");
+	} else {
+		put_text(buf, " THRU");
+	}
+}
+
+// Writes the callout nt of the holes like h: the diameter, or the
+// designation of a thread, the depth of a blind one or THRU, and the
+// count; for a countersink, a second line with its diameter and angle,
+// and the count.  A plain hole through gives no THRU.
+static void hole_text(const struct view *v, const struct hole *h,
+		      struct note *nt)
+{
+	struct label dc = size_text(v, h->dc / INCH);
+	char *head = nt->own[0];
+
+	head[0] = 0;
+	if (h->thread) {
+		put_text(head, h->thread);
+		put_depth(v, head, h->tdeep);
+	} else {
+		put_text(head, "%%c");
+		put_text(head, size_text(v, h->d / INCH).s);
+		if (h->deep > 0 || h->dc > 0) {
+			put_depth(v, head, h->deep);
+		}
+	}
 	nt->nlines = 1;
 	if (h->dc > 0) {
-		xsnprintf(nt->own[0], "%%%%c%s THRU", d.s);
 		xsnprintf(nt->own[1], "%%%%v%%%%c%s X %ld%%%%d%s%s", dc.s,
 			  lround(h->ang), h->far ? " FARSIDE" : "",
 			  times(", ", nt->n).s);
 		nt->nlines = 2;
 	} else {
-		xsnprintf(nt->own[0], "%%%%c%s%s", d.s, times(" ", nt->n).s);
+		put_text(head,
+			 times(h->thread || h->deep > 0 ? ", " : " ", nt->n).s);
 	}
+}
+
+// Writes the callout nt of the inserts like h: the format of the
+// inserts rule, or INSTALL %n %t, %s SIDE, with %n the count, %t the
+// type and %s the side, NEAR or FAR, in capitals.
+// The format of the callouts of inserts of the view v: that of its
+// last rule inserts, or the default.
+static const char *insert_format(const struct view *v)
+{
+	static const char head[] = "inserts ";
+	const char *f = "INSTALL %n %t, %s SIDE";
+
+	for (size_t i = 0; i < v->nrule; i++) {
+		const char *r = v->rule[i].s + strspn(v->rule[i].s, " \t");
+
+		if (strncmp(r, head, sizeof(head) - 1) == 0) {
+			f = r + sizeof(head) - 1;
+		}
+	}
+	return f;
+}
+
+static void insert_text(const struct view *v, const struct hole *h,
+			struct note *nt)
+{
+	const char *f = insert_format(v);
+	const char *side = h->ins_far ? "FAR" : "NEAR";
+	char *o = nt->own[0];
+	size_t k = 0;
+
+	for (; *f && k + SHORT < LABEL; f++) {
+		char count[SHORT] = "";
+		const char *put = count;
+
+		if (*f != '%' || !strchr("nts", f[1])) {
+			o[k++] = *f;
+			continue;
+		}
+		f++;
+		if (*f == 'n') {
+			xsnprintf(count, "%zu", nt->n);
+		} else {
+			put = *f == 't' ? h->ins : side;
+		}
+		for (; *put && k + 1 < LABEL; put++) {
+			o[k++] = (char)toupper((unsigned char)*put);
+		}
+	}
+	o[k] = 0;
+	nt->nlines = 1;
 }
 
 // Whether hole i is the first of its kind.
@@ -1779,8 +2372,7 @@ static void hole_notes(struct view *v)
 		const struct hole *h = &v->hole[i];
 		struct note nt;
 
-		if (!first_hole(v, i) ||
-		    dropped(v, "d", inches(h->d / INCH).s)) {
+		if (!first_hole(v, i) || dropped(v, 'd', h->by)) {
 			continue;
 		}
 		init_note(&nt);
@@ -1793,9 +2385,15 @@ static void hole_notes(struct view *v)
 				add_target(&nt, g->c, d * v->k / 2);
 			}
 		}
-		hole_text(h, &nt);
-		printf("dim hole %.4f %zu %s\n", h->d, nt.n, nt.line[0]);
-		pitch_line(v, h, &nt);
+		if (h->ins) {
+			insert_text(v, h, &nt);
+			printf("dim insert %zu %s\n", nt.n, nt.line[0]);
+		} else {
+			hole_text(v, h, &nt);
+			printf("dim hole %.4f %zu %s\n", h->d, nt.n,
+			       nt.line[0]);
+			pitch_line(v, h, &nt);
+		}
 		place_note(v, &nt);
 	}
 }
@@ -1809,16 +2407,33 @@ static int is_round(const struct arc *a)
 	       a->a1 - a->a0 < FULL;
 }
 
-// Whether arc a is the first rounded corner of its radius; with centre
-// set, the first of its radius about its centre.
-static int first_round(const struct view *v, const struct arc *a, int centre)
+// Whether the visible arcs of v about the center of arc a, of its radius,
+// make a circle together, as the edges of a circle of a solid do.
+static int whole(const struct view *v, const struct arc *a)
+{
+	double sweep = 0;
+
+	for (size_t i = 0; i < v->narc; i++) {
+		const struct arc *b = &v->arc[i];
+
+		if (b->vis == 'v' && fabs(b->r - a->r) < ONE &&
+		    hypot(b->c.x - a->c.x, b->c.y - a->c.y) < ONE) {
+			sweep += b->a1 - b->a0;
+		}
+	}
+	return sweep >= FULL;
+}
+
+// Whether arc a is the first rounded corner of its radius; with center
+// set, the first of its radius about its center.
+static int first_round(const struct view *v, const struct arc *a, int center)
 {
 	if (!is_round(a)) {
 		return 0;
 	}
 	for (const struct arc *b = v->arc; b < a; b++) {
 		if (is_round(b) && fabs(b->r - a->r) < ONE &&
-		    (!centre ||
+		    (!center ||
 		     hypot(b->c.x - a->c.x, b->c.y - a->c.y) < ONE)) {
 			return 0;
 		}
@@ -1832,10 +2447,11 @@ static void round_notes(struct view *v)
 {
 	for (size_t i = 0; i < v->narc; i++) {
 		const struct arc *a = &v->arc[i];
-		struct label r = inches(a->r / v->scale);
+		struct label r = size_text(v, a->r / v->scale);
 		struct note nt;
 
-		if (!first_round(v, a, 0) || dropped(v, "r", r.s)) {
+		if (!first_round(v, a, 0) || dropped(v, 'r', a->by) ||
+		    whole(v, a)) {
 			continue;
 		}
 		init_note(&nt);
@@ -1845,7 +2461,8 @@ static void round_notes(struct view *v)
 			struct pt at = { b->c.x + (b->r * cos(mid)),
 					 b->c.y + (b->r * sin(mid)) };
 
-			if (first_round(v, b, 1) && fabs(b->r - a->r) < ONE) {
+			if (first_round(v, b, 1) && fabs(b->r - a->r) < ONE &&
+			    !whole(v, b)) {
 				add_target(&nt, at, 0);
 			}
 		}
@@ -1886,6 +2503,193 @@ static void rule_note(struct view *v, struct reader *r, const char *s)
 	place_note(v, &nt);
 }
 
+// Twice the area of polygon c, above 0 counterclockwise.
+static double poly_area(const struct face_coat *c)
+{
+	double a = 0;
+
+	for (size_t i = 0; i < c->n; i++) {
+		struct pt p = c->p[i];
+		struct pt q = c->p[(i + 1) % c->n];
+
+		a += (p.x * q.y) - (q.x * p.y);
+	}
+	return a;
+}
+
+// Whether q lies inside polygon c, by the even-odd rule.
+static int in_poly(const struct face_coat *c, struct pt q)
+{
+	int in = 0;
+
+	for (size_t i = 0; i < c->n; i++) {
+		struct pt a = c->p[i];
+		struct pt b = c->p[(i + 1) % c->n];
+
+		if ((a.y > q.y) != (b.y > q.y) &&
+		    q.x < a.x + ((q.y - a.y) / (b.y - a.y) * (b.x - a.x))) {
+			in = !in;
+		}
+	}
+	return in;
+}
+
+// The room of a mark of letter s centered at q, with PAD round it.
+static struct rect mark_rect(const char *s, struct pt q)
+{
+	double w = (text_width(s, TEXT_H) / 2) + PAD;
+	double h = (TEXT_H / 2) + PAD;
+	struct rect r = { q.x - w, q.y - h, q.x + w, q.y + h };
+
+	return r;
+}
+
+// Whether the mark s may stand at q in coat c: its room lies in c, on no
+// line of the view and on no text.
+static int mark_fits(const struct view *v, const struct face_coat *c,
+		     const char *s, struct pt q)
+{
+	struct rect r = mark_rect(s, q);
+	const struct pt at[4] = {
+		{ r.x0, r.y0 }, { r.x1, r.y0 }, { r.x1, r.y1 }, { r.x0, r.y1 }
+	};
+
+	for (int k = 0; k < 4; k++) {
+		if (!in_poly(c, at[k])) {
+			return 0;
+		}
+	}
+	return in_poly(c, q) && r.x0 > v->inner.x0 && r.x1 < v->inner.x1 &&
+	       r.y0 > v->inner.y0 && r.y1 < v->inner.y1 && is_clear(v, r) &&
+	       is_free(v, r);
+}
+
+// Finds in coat c the place for the mark s nearest the middle of its
+// box, of a grid MARK_STEP apart; returns 0 if it has none.
+static int mark_spot(const struct view *v, const struct face_coat *c,
+		     const char *s, struct pt *at)
+{
+	struct rect b = { HUGE_VAL, HUGE_VAL, -HUGE_VAL, -HUGE_VAL };
+	struct pt mid = { 0, 0 };
+	double best = HUGE_VAL;
+	long nx = 0;
+	long ny = 0;
+
+	for (size_t i = 0; i < c->n; i++) {
+		rect_add(&b, c->p[i]);
+	}
+	mid.x = (b.x0 + b.x1) / 2;
+	mid.y = (b.y0 + b.y1) / 2;
+	nx = lround(floor((b.x1 - b.x0) / MARK_STEP));
+	ny = lround(floor((b.y1 - b.y0) / MARK_STEP));
+	for (long i = 0; i <= nx; i++) {
+		for (long j = 0; j <= ny; j++) {
+			struct pt q = { b.x0 + ((double)i * MARK_STEP),
+					b.y0 + ((double)j * MARK_STEP) };
+			double d = hypot(q.x - mid.x, q.y - mid.y);
+
+			if (d < best && mark_fits(v, c, s, q)) {
+				best = d;
+				*at = q;
+			}
+		}
+	}
+	return best < HUGE_VAL;
+}
+
+// Writes the mark of each texture of the coats of faces once in the
+// view: on the largest of its coats that has room for it, at the free
+// place nearest the middle; a coat without room gets none.
+static void face_marks(struct view *v)
+{
+	size_t *order = xmalloc((v->nface + 1) * sizeof(*order));
+
+	for (size_t i = 0; i < v->nface; i++) {
+		order[i] = i;
+	}
+	for (size_t i = 1; i < v->nface; i++) {
+		for (size_t k = i;
+		     k > 0 && fabs(poly_area(&v->face[order[k]])) >
+				      fabs(poly_area(&v->face[order[k - 1]]));
+		     k--) {
+			size_t x = order[k];
+
+			order[k] = order[k - 1];
+			order[k - 1] = x;
+		}
+	}
+	for (size_t t = 0; t < v->ntex; t++) {
+		const char s[2] = { v->tex[t].mark, 0 };
+
+		for (size_t i = 0; s[0] != '-' && i < v->nface; i++) {
+			const struct face_coat *c = &v->face[order[i]];
+			struct pt at = { 0, 0 };
+
+			if (strcmp(c->mat, v->tex[t].material) == 0 &&
+			    mark_spot(v, c, s, &at)) {
+				struct style st = { at, 0, 'c', TEXT_H };
+
+				text(st, s);
+				take(v, mark_rect(s, at));
+				break;
+			}
+		}
+	}
+	free(order);
+}
+
+// Whether an unhatched rule names the material mat.
+static int unhatched(const struct view *v, const char *mat)
+{
+	static const char head[] = "unhatched ";
+	size_t n = strlen(mat);
+
+	for (size_t i = 0; i < v->nrule; i++) {
+		const char *r = v->rule[i].s + strspn(v->rule[i].s, " \t");
+
+		if (strncmp(r, head, sizeof(head) - 1) != 0) {
+			continue;
+		}
+		for (r += sizeof(head) - 1; *r; r += strcspn(r, " \t")) {
+			r += strspn(r, " \t");
+			if (strncmp(r, mat, n) == 0 &&
+			    (r[n] == 0 || r[n] == ' ' || r[n] == '\t')) {
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+// Hatches each coat that is a rectangle, on the paper, but those of a
+// material an unhatched rule names, writes the mark of each textured
+// coat in its middle, and passes each texture on.
+static void hatch_coats(struct view *v)
+{
+	for (size_t i = 0; i < v->ntex; i++) {
+		printf("texture %c %s\n", v->tex[i].mark, v->tex[i].callout);
+	}
+	for (size_t i = 0; i < v->nmark; i++) {
+		struct style st = { to_paper(v, v->mark[i].at), 0, 'c',
+				    TEXT_H };
+		const char s[2] = { v->mark[i].letter, 0 };
+
+		text(st, s);
+	}
+	for (size_t i = 0; i < v->ncoat; i++) {
+		struct rect c = v->coat[i].r;
+		struct pt a = to_paper(v, (struct pt){ c.x0, c.y0 });
+		struct pt b = to_paper(v, (struct pt){ c.x1, c.y1 });
+		struct rect h = corners(a, b);
+
+		if (unhatched(v, v->coat[i].mat)) {
+			continue;
+		}
+		printf("hatch %.4f %.4f %.4f %.4f\n", h.x0, h.y0, h.x1, h.y1);
+		PUSH(v->hatch, v->nhatch, v->caphatch, h);
+	}
+}
+
 // Reads the hatch record in r: prints it on the paper, and keeps its
 // rectangle.
 static void hatch_rule(struct view *v, struct reader *r)
@@ -1920,8 +2724,13 @@ static void rules(struct view *v, int lin)
 {
 	for (size_t i = 0; i < v->nrule; i++) {
 		char *copy = xstrdup(v->rule[i].s);
-		struct reader r = { v->rule[i].what, NULL, v->rule[i].line - 1,
-				    { NULL },	     0,	   0 };
+		struct reader r = { v->rule[i].what,
+				    NULL,
+				    v->rule[i].line - 1,
+				    NULL,
+				    0,
+				    0,
+				    0 };
 		const char *k = NULL;
 		int note = 0;
 
@@ -1940,6 +2749,7 @@ static void rules(struct view *v, int lin)
 			v->at = NULL;
 		}
 		free(copy);
+		free(r.w);
 	}
 }
 
@@ -1970,9 +2780,39 @@ static void free_view(struct view *v)
 	free(v->names);
 	free(v->fill);
 	free(v->rule);
+	for (size_t i = 0; i < v->nseg; i++) {
+		free(v->seg[i].by);
+	}
+	for (size_t i = 0; i < v->narc; i++) {
+		free(v->arc[i].by);
+	}
+	for (size_t i = 0; i < v->nhole; i++) {
+		free(v->hole[i].by);
+		free(v->hole[i].ins);
+		free(v->hole[i].thread);
+	}
+	for (size_t i = 0; i < v->npoly; i++) {
+		free(v->poly[i].p);
+	}
+	free(v->poly);
+	for (size_t i = 0; i < v->nface; i++) {
+		free(v->face[i].mat);
+		free(v->face[i].p);
+	}
+	free(v->face);
 	free(v->seg);
 	free(v->arc);
 	free(v->hole);
+	for (size_t i = 0; i < v->ncoat; i++) {
+		free(v->coat[i].mat);
+	}
+	free(v->coat);
+	for (size_t i = 0; i < v->ntex; i++) {
+		free(v->tex[i].material);
+		free(v->tex[i].callout);
+	}
+	free(v->tex);
+	free(v->mark);
 	free(v->bend);
 	free(v->text);
 	free(v->row);
@@ -1987,21 +2827,57 @@ static void free_view(struct view *v)
 	free(v->place[1]);
 }
 
+// Reads the units of option -u: in or mm, and after a comma the other.
+static void read_units(struct view *v, const char *s)
+{
+	const char *comma = strchr(s, ',');
+	size_t n = comma ? (size_t)(comma - s) : strlen(s);
+
+	v->units[1] = U_NONE;
+	if (n == 2 && !strncmp(s, "in", 2)) {
+		v->units[0] = U_IN;
+	} else if (n == 2 && !strncmp(s, "mm", 2)) {
+		v->units[0] = U_MM;
+	} else {
+		die("smdim: -u in|mm[,in|mm]");
+	}
+	if (comma && !strcmp(comma + 1, "in")) {
+		v->units[1] = U_IN;
+	} else if (comma && !strcmp(comma + 1, "mm")) {
+		v->units[1] = U_MM;
+	}
+	if (comma) {
+		if (v->units[1] == U_NONE || v->units[1] == v->units[0]) {
+			die("smdim: -u in|mm[,in|mm], two units apart");
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
-	struct reader args = { "-s", NULL, 0, { NULL }, 1, 0 };
+	char *arg[1] = { NULL };
+	struct reader args = { "-s", NULL, 0, arg, 1, 0, 1 };
 	struct view v;
 	char *input = NULL;
 
 	memset(&v, 0, sizeof(v));
 	v.name = v.part = "";
 	v.scale = 1;
-	if (argc == 3 && strcmp(argv[1], "-s") == 0) {
-		args.w[0] = argv[2];
-		v.scale = num(&args);
+	v.units[0] = U_IN;
+	for (int i = 1; i + 1 < argc; i += 2) {
+		if (strcmp(argv[i], "-s") == 0) {
+			args.w[0] = argv[i + 1];
+			args.k = 0;
+			v.scale = num(&args);
+		} else if (strcmp(argv[i], "-u") == 0) {
+			read_units(&v, argv[i + 1]);
+		} else {
+			v.scale = 0;
+		}
 	}
-	if ((argc != 1 && argc != 3) || !(v.scale > 0)) {
-		die("usage: smdim [-s SCALE] < part.view > part.dim");
+	if (argc % 2 == 0 || !(v.scale > 0)) {
+		die("usage: smdim [-s SCALE] [-u in|mm[,in|mm]] < part.view > "
+		    "part.dim");
 	}
 	v.k = v.scale / INCH;
 	input = read_file("-");
@@ -2011,6 +2887,7 @@ int main(int argc, char **argv)
 		printf("radius %.4f\n", v.radius);
 	}
 	print_fills(&v);
+	hatch_coats(&v);
 	print_curves(&v);
 	ordinates(&v, 0);
 	ordinates(&v, 1);
@@ -2018,6 +2895,7 @@ int main(int argc, char **argv)
 	v.frame = v.box;
 	list_obstacles(&v);
 	sort_obstacles(&v);
+	face_marks(&v);
 	bend_notes(&v);
 	hole_notes(&v);
 	round_notes(&v);

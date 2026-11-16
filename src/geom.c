@@ -147,6 +147,16 @@ struct vec box_corner(struct box b, unsigned k)
 		  (k & 4U) ? b.hi.z : b.lo.z);
 }
 
+struct box box_moved(struct box b, struct rigid m)
+{
+	struct box out = box_empty();
+
+	for (unsigned k = 0; k < BOX_CORNERS; k++) {
+		box_add(&out, rig_pt(m, box_corner(b, k)));
+	}
+	return out;
+}
+
 struct box box_empty(void)
 {
 	struct box b = { { HUGE_VAL, HUGE_VAL, HUGE_VAL },

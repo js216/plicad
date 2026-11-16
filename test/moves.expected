@@ -1,0 +1,75 @@
+left drag       turn
+middle, right   move
+wheel           zoom
+click           pick a part, print its name
+shift drag      move the unit of the part in the view plane
+space           fit all
+c               center on the picked part; again, zoom in
+i f b l r t u   iso front back left right top under
+h               hide the part under the cursor
+o               show only the part under the cursor, or all again
+s               see through the part under the cursor, or not
+H O S           the same for its unit, the level up
+[ ]             the level of the unit down, up
+a               show all, solid, all in place, no moves
++ -             the next part in along its path, the last out
+A               all out, at the starts of their paths
+ctrl-z ctrl-y   undo, redo
+?               this help, on and off
+q               quit
+cube
+point
+fc
+pic
+cube
+cube 380 shown solid at 25.000 55.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 25.000
+pic 2 shown solid at 25.000 5.000 0.000
+cube
+cube 380 shown solid at 25.000 55.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 25.000
+pic 2 shown solid at 25.000 5.000 0.000
+cube
+fc
+cube
+-
+cube 380 hidden solid at 25.000 25.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 35.000
+pic 2 shown solid at 25.000 -25.000 0.000
+cube 380 shown solid at 25.000 25.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 25.000
+pic 2 shown solid at 25.000 -25.000 0.000
+cube 380 hidden solid at 25.000 25.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 35.000
+pic 2 shown solid at 25.000 -25.000 0.000
+cube 380 hidden solid at 25.000 25.000 25.000
+point 94 hidden solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 25.000
+pic 2 hidden solid at 25.000 -25.000 0.000
+cube 380 shown solid at 25.000 25.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 25.000
+pic 2 shown solid at 25.000 -25.000 0.000
+cube 380 hidden solid at 25.000 25.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 25.000
+pic 2 shown solid at 25.000 -25.000 0.000
+cube 380 shown see at 25.000 25.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown see at 25.000 95.000 25.000
+pic 2 shown solid at 25.000 -25.000 0.000
+cube 380 shown see at 25.000 25.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown solid at 25.000 95.000 25.000
+pic 2 shown solid at 25.000 -25.000 0.000
+cube 380 shown see at 25.000 25.000 25.000
+point 94 shown solid at 58.122 39.330 2.500
+fc 268 shown see at 25.000 95.000 25.000
+pic 2 shown solid at 25.000 -25.000 0.000
+3659157049 14413
+943707832 14413

@@ -29,8 +29,8 @@
 # can run for ever.
 #
 # The sheet metal construction follows the README model.  The plate is a
-# box in its flat frame, with z in [-t, 0], placed by its origin and
-# axes.  The bend of a flange is the cross section of the sheet at the
+# box in its flat frame, with z in [-t, 0], placed at its point with
+# its axes.  The bend of a flange is the cross section of the sheet at the
 # edge of its parent, revolved about the bend axis.  The axis lies R
 # above the top face for a positive angle and R below the bottom face
 # for a negative one.  The
@@ -117,9 +117,17 @@ def evaluate(text, names):
 
 
 def statements(path):
+    # The statements of a PliCad source: a line that ends in a
+    # backslash runs on into the next.
+    run = ""
     with open(path) as f:
         for line in f:
-            words = line.split("#", 1)[0].split()
+            line = run + line.split("#", 1)[0].strip()
+            if line.endswith("\\"):
+                run = line[:-1].rstrip() + " "
+                continue
+            run = ""
+            words = line.split()
             if words:
                 yield words
 
@@ -193,7 +201,7 @@ def uv_point(a, u, v, w):
 
 
 def parse_where(words, i, names):
-    # Parses "along A [at W depth L] [pattern AX N P [AX N P]]" from
+    # Parses "along A [from W0 to W1] [pattern AX N P [AX N P]]" from
     # words[i].
     if words[i] != "along":
         raise Skip("expected along")
@@ -202,15 +210,16 @@ def parse_where(words, i, names):
     copies = [V(0, 0, 0)]
     i += 2
     while i < len(words):
-        if words[i] == "at" and i + 3 < len(words) and \
-                words[i + 2] == "depth":
-            w = evaluate(words[i + 1], names)
-            d = evaluate(words[i + 3], names)
-            lo, hi = w - d / 2, w + d / 2
+        if words[i] == "from" and i + 3 < len(words) and \
+                words[i + 2] == "to":
+            lo = evaluate(words[i + 1], names)
+            hi = evaluate(words[i + 3], names)
             i += 4
         elif words[i] == "pattern":
             i += 1
-            while i < len(words) and words[i] != "at":
+            if i < len(words) and words[i] == "hex":
+                raise Skip("hex pattern")
+            while i < len(words) and words[i] not in ("from", "csink"):
                 ax, sg = axis_of(words[i])
                 n = int(round(evaluate(words[i + 1], names)))
                 p = sg * evaluate(words[i + 2], names)
@@ -254,6 +263,8 @@ class SheetPart:
                 self.outline = (words, [])
             elif words[0] == "round":
                 self.rounds.append(words)
+            elif words[0] == "coat":
+                continue
             else:
                 raise Skip("unsupported statement " + words[0])
         self.close_outline()
@@ -294,9 +305,6 @@ class SheetPart:
             elif words[i] == "zone":
                 za, zb = self.ev(words[i + 1]), self.ev(words[i + 2])
                 i += 3
-            elif words[i] == "radius":
-                rad = self.ev(words[i + 1])
-                i += 2
             else:
                 raise Skip("unknown flange option " + words[i])
         if za is None:
@@ -332,11 +340,11 @@ class SheetPart:
 
     def through(self, words):
         if words[0] == "hole":
-            d, u, v = (self.ev(w) for w in words[1:4])
-            a, lo, hi, copies = parse_where(words, 4, self.names)
-        else:
-            u0, v0, u1, v1 = (self.ev(w) for w in words[1:5])
+            d, u, v = (self.ev(w) for w in words[2:5])
             a, lo, hi, copies = parse_where(words, 5, self.names)
+        else:
+            u0, v0, u1, v1 = (self.ev(w) for w in words[2:6])
+            a, lo, hi, copies = parse_where(words, 6, self.names)
         if lo is None:
             lo, hi = -BIG, BIG
         tools = []
@@ -365,7 +373,7 @@ class SheetPart:
             return
         words, pts = self.outline
         self.outline = None
-        a, lo, hi, copies = parse_where(words, 1, self.names)
+        a, lo, hi, copies = parse_where(words, 2, self.names)
         if lo is None:
             lo, hi = -BIG, BIG
         edges = []
@@ -406,8 +414,9 @@ class SheetPart:
         return moved(sq.cut(disc), slab["m"])
 
     def round(self, words):
-        slab = self.slabs[words[1]]
-        r = self.ev(words[2])
+        # round R NAME [at X Y Z]
+        slab = self.slabs[words[2]]
+        r = self.ev(words[1])
         x0, y0, x1, y1 = slab["rect"]
         if len(words) == 3:
             ax, sg = slab["dir"]
@@ -605,16 +614,19 @@ class SolidPart:
             elif words[0] == "corner":
                 self.prof[self.last][2] += self.corners(words[1:])
             elif words[0] == "circle":
-                self.prof[words[1]] = [axis_of(words[3])[0], "circle",
-                                       [self.ev(x) for x in words[4:7]]]
+                dia, u, v = (self.ev(x) for x in words[2:5])
+                self.prof[words[1]] = [axis_of(words[6])[0], "circle",
+                                       [u, v, dia]]
                 self.last = None
             elif words[0] == "extrude":
                 self.solids[words[1]] = self.extrude(words)
-            elif words[0] in ("union", "cut", "common"):
+            elif words[0] in ("material", "materials", "finish"):
+                continue
+            elif words[0] in ("union", "subtract", "common"):
                 acc = self.solids.pop(words[2])
                 for w in words[3:]:
                     b = self.solids.pop(w)
-                    acc = {"union": acc.fuse, "cut": acc.cut,
+                    acc = {"union": acc.fuse, "subtract": acc.cut,
                            "common": acc.common}[words[0]](b)
                 self.solids[words[1]] = acc
             else:
@@ -629,6 +641,9 @@ class SolidPart:
         return joined if joined.isValid() else s
 
     def corners(self, words):
+        # U V R [side SIDE] ...; the names of the sides do not matter.
+        words = [w for i, w in enumerate(words)
+                 if w != "side" and (i == 0 or words[i - 1] != "side")]
         if len(words) % 3:
             raise Skip("corners come in threes")
         v = [self.ev(w) for w in words]
@@ -789,11 +804,13 @@ def hlr_points(shapes):
 
 def view_points(path):
     # The points of the visible lines and arcs of a view of smview, but
-    # its centre lines.
+    # its center lines; a record may end in the feature it comes from.
     pts = []
     with open(path) as f:
         for line in f:
             w = line.split()
+            if len(w) > 2 and w[-2] == "by":
+                w = w[:-2]
             if len(w) < 7 or w[0] not in ("line", "arc") or w[2] != "v" \
                     or w[1] == "c":
                 continue

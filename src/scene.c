@@ -3,10 +3,13 @@
 // Copyright (c) 2026 Jakob Kastelic
 
 #include "scene.h"
+#include "bvh.h"
+#include "expr.h"
 #include "geom.h"
 #include "obj.h"
 #include "util.h"
 #include <math.h>
+#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,9 +18,9 @@
 #define ISO_UP 2.0 // The z of the up (-1, 1, ISO_UP) of the iso view.
 #define HALF_MIN 1e-6 // The least half height of a view, in mm.
 #define HALF_MAX 1e7 // The most half height of a view, in mm.
-#define BACK_GREY \
-	(81.0 / 255) // The grey of a background by default, as FreeCAD's.
-#define PART_GREY 0.6F // The grey of a part of no colour.
+#define BACK_GRAY \
+	(81.0 / 255) // The gray of a background by default, as FreeCAD's.
+#define PART_GRAY 0.6F // The gray of a part of no color.
 #define PICK_EPS 1e-12 // The least determinant of a ray and a triangle.
 
 enum {
@@ -26,16 +29,19 @@ enum {
 	DECIMAL = 10,
 	PIC_MAX = 16384, // The widest and tallest picture, in pixels.
 	BYTE = 255,
-	IMAGE_WORDS = 12, // The words of an image line.
-	MOVE_WORDS = 4, // The words of a colour or a move.
-	TURN_WORDS = 5,
+	CORNER_WORDS = 9, // The numbers of the corners of a picture.
+	IMAGE_WORDS = 5 + CORNER_WORDS, // The words of an image line.
+	MOVE_WORDS = 4, // The words of a color or a move.
+	TURN_WORDS = 3, // turn AXIS DEG, and about X Y Z after it.
+	MSG_LEN = 4096, // Room for the message of an error.
+	PICK_DEPTH = 128, // Room for the nodes of a tree a pick has yet to see.
 	WIN_W = 640, // The size of a new window, in pixels.
 	WIN_H = 480
 };
 
-#define EXPLODE_MAX 100.0 // The largest factor of an explode.
-#define WIN_MAX 8192.0 // The widest and tallest window, in pixels.
 #define FRAMES_MAX 100000.0 // The most frames of a spin.
+#define LEVEL_MAX 64.0 // The most units up for H, O, S and a drag.
+#define CENTER_ZOOM 2.0 // The zoom of a center again.
 
 static void free_part(struct part *p)
 {
@@ -43,7 +49,10 @@ static void free_part(struct part *p)
 	free(p->pos);
 	free(p->nrm);
 	free(p->uv);
+	free(p->col);
+	free(p->grade);
 	free(p->pix);
+	bvh_free(&p->bvh);
 	memset(p, 0, sizeof(*p));
 }
 
@@ -51,6 +60,8 @@ static void free_item(struct item *it)
 {
 	free(it->name);
 	free(it->path);
+	free(it->steps);
+	free(it->with);
 }
 
 void scene_free(struct scene *s)
@@ -67,11 +78,14 @@ void scene_free(struct scene *s)
 	}
 	free(s->hist);
 	free(s->drag);
+	free(s->seq);
 	free(s->p);
 	free(s->it);
 	free(s->view);
 	s->hist = NULL;
 	s->drag = NULL;
+	s->seq = NULL;
+	s->nseq = s->capseq = 0;
 	s->nhist = s->caphist = s->at = 0;
 	s->p = NULL;
 	s->it = NULL;
@@ -84,22 +98,26 @@ const char *const view_help[] = {
 	"middle, right   move",
 	"wheel           zoom",
 	"click           pick a part, print its name",
-	"shift drag      drag the part out",
+	"shift drag      move the unit of the part in the view plane",
 	"space           fit all",
+	"c               center on the picked part; again, zoom in",
 	"i f b l r t u   iso front back left right top under",
 	"h               hide the part under the cursor",
-	"o               show only the part under the cursor",
+	"o               show only the part under the cursor, or all again",
 	"s               see through the part under the cursor, or not",
-	"a               show all, solid, all home",
-	"+ -             explode out, back in",
+	"H O S           the same for its unit, the level up",
+	"[ ]             the level of the unit down, up",
+	"a               show all, solid, all in place, no moves",
+	"+ -             the next part in along its path, the last out",
+	"A               all out, at the starts of their paths",
 	"ctrl-z ctrl-y   undo, redo",
 	"?               this help, on and off",
 	"q               quit",
 	NULL,
 };
 
-// Reads n numbers from words w into x.
-static int numbers(char **w, double *x, size_t n)
+// Reads n numbers of a command from words w into x.
+static int command_numbers(char **w, double *x, size_t n)
 {
 	for (size_t k = 0; k < n; k++) {
 		char *end = NULL;
@@ -112,33 +130,117 @@ static int numbers(char **w, double *x, size_t n)
 	return 0;
 }
 
-// Reads the colour, moves and turns of a mesh, from words w[0 .. n - 1].
-static int mesh_options(struct item *it, char **w, size_t n)
-{
-	double x[4];
+// The reading of a scene file: its names, the trap that an error of an
+// expression jumps to, with its message, the item being read, and the
+// unit open, or NONE.
+struct reading {
+	struct names nm;
+	jmp_buf trap;
+	char msg[MSG_LEN];
+	struct item *it;
+	size_t unit;
+};
 
+// Reads n numbers, expressions, from words w into x.
+static void numbers(struct reading *rd, char **w, double *x, size_t n)
+{
+	for (size_t k = 0; k < n; k++) {
+		x[k] = eval(&rd->nm, w[k]);
+	}
+}
+
+// Reads a turn x|y|z DEG [about X Y Z] or a move DX DY DZ from words w,
+// n of them, into st; returns the words it takes, or 0 for neither.
+static size_t read_step(struct reading *rd, char **w, size_t n,
+			struct pstep *st)
+{
+	double x[3];
+
+	memset(st, 0, sizeof(*st));
+	if (!strcmp(w[0], "move") && n >= MOVE_WORDS) {
+		numbers(rd, w + 1, x, 3);
+		st->d = v3(x[0], x[1], x[2]);
+		return MOVE_WORDS;
+	}
+	if (strcmp(w[0], "turn") != 0 || n < TURN_WORDS || strlen(w[1]) != 1 ||
+	    !strchr("xyz", w[1][0])) {
+		return 0;
+	}
+	st->turn = 1;
+	st->ax = axis_vec(w[1][0] - 'x', 1);
+	numbers(rd, w + 2, &st->deg, 1);
+	if (n >= TURN_WORDS + MOVE_WORDS && !strcmp(w[TURN_WORDS], "about")) {
+		numbers(rd, w + TURN_WORDS + 1, x, 3);
+		st->about = 1;
+		st->at = v3(x[0], x[1], x[2]);
+		return TURN_WORDS + MOVE_WORDS;
+	}
+	return TURN_WORDS;
+}
+
+// The motion of step st, a turn about at if it names no point.
+static struct rigid pstep_rig(const struct pstep *st, struct vec at)
+{
+	struct rigid m = rig_id();
+	struct line3 ax = { st->about ? st->at : at, st->ax };
+
+	if (!st->turn) {
+		m.t = st->d;
+		return m;
+	}
+	return rig_rot(ax, st->deg);
+}
+
+// Reads the steps of an insertion path from words w[0 .. n - 1] into it;
+// a turn that names no point turns about the origin of the part at its
+// place.
+static int path_steps(struct reading *rd, struct item *it, char **w, size_t n)
+{
 	for (size_t i = 0; i < n;) {
-		if (!strcmp(w[i], "colour") && i + 3 < n &&
-		    !numbers(w + i + 1, x, 3)) {
+		struct pstep st;
+		size_t k = read_step(rd, w + i, n - i, &st);
+
+		if (!k) {
+			return -1;
+		}
+		if (st.turn && !st.about) {
+			st.about = 1;
+			st.at = it->m.t;
+		}
+		PUSH(it->steps, it->nsteps, it->capsteps, st);
+		i += k;
+	}
+	return 0;
+}
+
+// Reads the color, moves and turns of a mesh, from words w[0 .. n - 1].
+static int mesh_options(struct reading *rd, struct item *it, char **w, size_t n)
+{
+	for (size_t i = 0; i < n;) {
+		struct pstep st;
+		size_t k = 0;
+
+		if (!strcmp(w[i], "color") && i + 3 < n) {
+			double x[3];
+
+			numbers(rd, w + i + 1, x, 3);
 			it->has_rgb = 1;
-			for (int k = 0; k < 3; k++) {
-				it->rgb[k] = (float)fmin(fmax(x[k], 0), 1);
+			for (int c = 0; c < 3; c++) {
+				it->rgb[c] = (float)fmin(fmax(x[c], 0), 1);
 			}
 			i += MOVE_WORDS;
-		} else if (!strcmp(w[i], "move") && i + 3 < n &&
-			   !numbers(w + i + 1, x, 3)) {
-			it->m.t = add(it->m.t, v3(x[0], x[1], x[2]));
+			continue;
+		}
+		k = read_step(rd, w + i, n - i, &st);
+		if (k) {
+			it->m = rig_mul(pstep_rig(&st, v3(0, 0, 0)), it->m);
 			it->moved = 1;
-			i += MOVE_WORDS;
-		} else if (!strcmp(w[i], "turn") && i + 4 < n &&
-			   !numbers(w + i + 1, x, 4) &&
-			   len(v3(x[0], x[1], x[2])) > 0) {
-			struct line3 ax = { v3(0, 0, 0),
-					    unit(v3(x[0], x[1], x[2])) };
-
-			it->m = rig_mul(rig_rot(ax, x[3]), it->m);
-			it->moved = 1;
-			i += TURN_WORDS;
+			i += k;
+		} else if (!strcmp(w[i], "path") && !it->with) {
+			return path_steps(rd, it, w + i + 1, n - i - 1);
+		} else if (!strcmp(w[i], "with") && i + 2 == n && !it->nsteps) {
+			it->with = xstrdup(w[i + 1]);
+			return 0;
 		} else {
 			return -1;
 		}
@@ -146,11 +248,110 @@ static int mesh_options(struct item *it, char **w, size_t n)
 	return 0;
 }
 
-// Reads one line of words w[0 .. n - 1] into an item of s.
-static int scene_line(struct scene *s, char **w, size_t n, struct item *it)
+// The name of the name n of a line in the unit open, a new string.
+static char *full_name(const struct reading *rd, const struct scene *s,
+		       const char *n)
+{
+	return rd->unit == NONE ? xstrdup(n) :
+				  join_names(s->it[rd->unit].name, n);
+}
+
+// The mesh or unit of the name n of a line, among the items of s so
+// far, or NONE.
+static size_t find_item(const struct reading *rd, const struct scene *s,
+			const char *n)
+{
+	char *name = full_name(rd, s, n);
+	size_t k = NONE;
+
+	for (size_t i = 0; i < s->nit && k == NONE; i++) {
+		if (!s->it[i].image && !strcmp(s->it[i].name, name)) {
+			k = i;
+		}
+	}
+	free(name);
+	return k;
+}
+
+// Puts the mesh or unit it, read in the frame of the unit open, into the
+// world: its place, its path and the item it travels with.
+static void into_unit(const struct reading *rd, const struct scene *s,
+		      struct item *it)
+{
+	const struct item *u = NULL;
+
+	it->up = rd->unit;
+	if (rd->unit == NONE) {
+		return;
+	}
+	u = &s->it[rd->unit];
+	it->m = rig_mul(u->m, it->m);
+	it->moved = it->moved || u->moved;
+	for (size_t i = 0; i < it->nsteps; i++) {
+		struct pstep *st = &it->steps[i];
+		struct rigid r = u->m;
+
+		r.t = v3(0, 0, 0);
+		st->d = rig_pt(r, st->d);
+		st->ax = rig_pt(r, st->ax);
+		st->at = rig_pt(u->m, st->at);
+	}
+	if (it->with) {
+		char *w = join_names(u->name, it->with);
+
+		free(it->with);
+		it->with = w;
+	}
+}
+
+// Reads a line image NAME FILE on PART X0 Y0 Z0 X1 Y1 Z1 X2 Y2 Z2 into
+// it: the corners in the frame of the mesh PART, put into the world.
+static int image_line(struct reading *rd, const struct scene *s, char **w,
+		      size_t n, struct item *it)
+{
+	double x[CORNER_WORDS];
+
+	if (n != IMAGE_WORDS || strcmp(w[3], "on") != 0) {
+		return -1;
+	}
+	it->on = find_item(rd, s, w[4]);
+	if (it->on == NONE) {
+		return -1;
+	}
+	numbers(rd, w + IMAGE_WORDS - CORNER_WORDS, x, CORNER_WORDS);
+	for (size_t k = 0; k < 3; k++) {
+		it->corner[k] =
+			rig_pt(s->it[it->on].m,
+			       v3(x[3 * k], x[(3 * k) + 1], x[(3 * k) + 2]));
+	}
+	return 0;
+}
+
+// Reads one line of words w[0 .. n - 1] into an item of s; returns 0 for
+// an item, 2 for a unit, 1 for a line of neither, or -1.
+static int scene_line(struct reading *rd, struct scene *s, char **w, size_t n,
+		      struct item *it)
 {
 	memset(it, 0, sizeof(*it));
 	it->m = rig_id();
+	it->on = NONE;
+	it->up = NONE;
+	if (!strcmp(w[0], "end") && n == 1) {
+		if (rd->unit == NONE) {
+			return -1;
+		}
+		rd->unit = s->it[rd->unit].up;
+		return 1;
+	}
+	if (!strcmp(w[0], "unit") && n >= 2) {
+		it->unit = 1;
+		if (mesh_options(rd, it, w + 2, n - 2) < 0 || it->has_rgb) {
+			return -1;
+		}
+		it->name = full_name(rd, s, w[1]);
+		into_unit(rd, s, it);
+		return 2;
+	}
 	if (!strcmp(w[0], "view") && n == 2) {
 		struct cam c;
 
@@ -164,9 +365,7 @@ static int scene_line(struct scene *s, char **w, size_t n, struct item *it)
 	if (!strcmp(w[0], "background") && n == 4) {
 		double x[3];
 
-		if (numbers(w + 1, x, 3) < 0) {
-			return -1;
-		}
+		numbers(rd, w + 1, x, 3);
 		for (int k = 0; k < 3; k++) {
 			s->back[k] = (float)fmin(fmax(x[k], 0), 1);
 		}
@@ -177,21 +376,17 @@ static int scene_line(struct scene *s, char **w, size_t n, struct item *it)
 		return -1;
 	}
 	it->image = !strcmp(w[0], "image");
-	if (it->image) {
-		double x[IMAGE_WORDS - 3];
-
-		if (n != IMAGE_WORDS || numbers(w + 3, x, n - 3) < 0) {
-			return -1;
-		}
-		for (size_t k = 0; k < 3; k++) {
-			it->corner[k] =
-				v3(x[3 * k], x[(3 * k) + 1], x[(3 * k) + 2]);
-		}
-	} else if (mesh_options(it, w + 3, n - 3) < 0) {
+	if (it->image ? image_line(rd, s, w, n, it) < 0 :
+			mesh_options(rd, it, w + 3, n - 3) < 0) {
 		return -1;
 	}
-	it->name = xstrdup(w[1]);
+	it->name = full_name(rd, s, w[1]);
 	it->path = sibling_path((struct sibling){ s->path, w[2] });
+	if (!it->image) {
+		into_unit(rd, s, it);
+	} else {
+		it->up = rd->unit;
+	}
 	return 0;
 }
 
@@ -370,6 +565,7 @@ static void part_box(struct part *p)
 	for (size_t i = 0; i < 3 * p->nt; i++) {
 		box_add(&p->box, get3(&p->pos[3 * i]));
 	}
+	bvh_build(&p->bvh, p->pos, p->nt);
 }
 
 // Moves the obj part q by the place of it into p, named name.
@@ -386,11 +582,20 @@ static void mesh_part(const struct item *it, struct obj_part *q, struct part *p,
 		put3(&p->nrm[3 * i], rig_dir(it->m, get3(&p->nrm[3 * i])));
 	}
 	for (int k = 0; k < 3; k++) {
-		p->rgb[k] = PART_GREY;
+		p->rgb[k] = PART_GRAY;
 		if (it->has_rgb) {
 			p->rgb[k] = it->rgb[k];
 		} else if (q->has_rgb) {
 			p->rgb[k] = q->rgb[k];
+		}
+	}
+	p->col = q->col;
+	q->col = NULL;
+	p->grade = q->grade;
+	q->grade = NULL;
+	for (size_t i = 0; p->col && i < 3 * p->nt; i++) {
+		if (p->col[i] < 0) {
+			p->col[i] = p->rgb[i % 3];
 		}
 	}
 }
@@ -444,6 +649,9 @@ static int load_item(const struct scene *s, size_t i, struct part **out,
 
 	*out = NULL;
 	*n = 0;
+	if (it->unit) {
+		return 0;
+	}
 	if (it->image) {
 		*n = 1;
 		return load_image(s, i, out, e);
@@ -473,39 +681,102 @@ static void add_parts(struct scene *s, struct part *p, size_t n)
 	free(p);
 }
 
+// Defines the name of a line NAME = EXPR of words w; returns 0 if the
+// line is none.
+static int define_words(struct reading *rd, char **w, size_t n)
+{
+	size_t k = 0;
+
+	if (n < 3 || strcmp(w[1], "=") != 0) {
+		return 0;
+	}
+	for (const char *c = w[0]; *c; c++) {
+		k += !(*c == '_' || (*c >= 'a' && *c <= 'z') ||
+		       (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9'));
+	}
+	if (k || (w[0][0] >= '0' && w[0][0] <= '9')) {
+		return 0;
+	}
+	{
+		double v = 0;
+
+		numbers(rd, w + 2, &v, 1);
+		if (n != 3) {
+			expr_fail(&rd->nm,
+				  "NAME = EXPR, the expression without "
+				  "blanks",
+				  NULL);
+		}
+		define(&rd->nm, w[0], v, 0);
+	}
+	return 1;
+}
+
+// Reads the line l, numbered no, of the scene file into s.
+static int read_line(struct reading *rd, struct scene *s, char *l, unsigned no,
+		     struct fault *e)
+{
+	char *w[WORDS_MAX + 1];
+	size_t n = split_words(l, w, WORDS_MAX);
+	struct item it;
+	int r = n > WORDS_MAX ? -1 : 1;
+
+	memset(&it, 0, sizeof(it));
+	if (n && n <= WORDS_MAX && !define_words(rd, w, n)) {
+		rd->it = &it;
+		r = scene_line(rd, s, w, n, &it);
+		rd->it = NULL;
+	}
+	if (r < 0) {
+		free_item(&it);
+		fault_at(e, "%s:%u: bad line", s->path, no);
+		return -1;
+	}
+	if (r == 0 || r == 2) {
+		it.line = no;
+		PUSH(s->it, s->nit, s->capit, it);
+	}
+	if (r == 2) {
+		rd->unit = s->nit - 1;
+	}
+	return 0;
+}
+
 // Reads the lines of the scene file text into s.
 static int scene_lines(struct scene *s, char *text, struct fault *e)
 {
-	char *at = text;
-	char *l = NULL;
-	size_t line = 0;
+	struct reading *rd = xcalloc(1, sizeof(*rd));
+	struct src_line *ls = NULL;
+	size_t n = source_lines(text, &ls);
+	char where[WHERE_LEN];
+	int r = 0;
 
-	while ((l = next_line(&at)) != NULL) {
-		char *w[WORDS_MAX + 1];
-		char *hash = strchr(l, '#');
-		size_t n = 0;
-		struct item it;
-		int r = 0;
-
-		line++;
-		if (hash) {
-			*hash = 0;
+	rd->nm.trap = &rd->trap;
+	rd->nm.msg = rd->msg;
+	rd->nm.nmsg = sizeof(rd->msg);
+	rd->nm.where = where;
+	rd->unit = NONE;
+	for (size_t i = 0; i < n && r == 0; i++) {
+		xsnprintf(where, "%s:%u", s->path, ls[i].no);
+		if (setjmp(rd->trap)) {
+			if (rd->it) {
+				free_item(rd->it);
+			}
+			fault_at(e, "%s", rd->msg);
+			r = -1;
+			break;
 		}
-		n = split_words(l, w, WORDS_MAX);
-		r = n > WORDS_MAX ? -1 : 1;
-		if (n && n <= WORDS_MAX) {
-			r = scene_line(s, w, n, &it);
-		}
-		if (r < 0) {
-			fault_at(e, "%s:%zu: bad line", s->path, line);
-			return -1;
-		}
-		if (r == 0) {
-			it.line = line;
-			PUSH(s->it, s->nit, s->capit, it);
-		}
+		r = read_line(rd, s, ls[i].text, ls[i].no, e);
 	}
-	return 0;
+	if (r == 0 && rd->unit != NONE) {
+		fault_at(e, "%s: unit %s has no end", s->path,
+			 s->it[rd->unit].name);
+		r = -1;
+	}
+	free_source_lines(ls, n);
+	free_names(&rd->nm);
+	free(rd);
+	return r;
 }
 
 int scene_read(struct scene *s, const char *path, struct fault *e)
@@ -515,8 +786,10 @@ int scene_read(struct scene *s, const char *path, struct fault *e)
 
 	memset(s, 0, sizeof(*s));
 	s->path = path;
+	s->level = 1;
+	s->picked = NONE;
 	s->cam.sz = (struct size){ WIN_W, WIN_H };
-	s->back[0] = s->back[1] = s->back[2] = (float)BACK_GREY;
+	s->back[0] = s->back[1] = s->back[2] = (float)BACK_GRAY;
 	cam_view(&s->cam, "iso");
 	text = slurp(path, &size, e);
 	if (!text) {
@@ -538,7 +811,8 @@ int scene_read(struct scene *s, const char *path, struct fault *e)
 		}
 		add_parts(s, p, n);
 	}
-	s->drag = xcalloc(s->nit + 1, sizeof(double));
+	s->drag = xcalloc(s->nit + 1, sizeof(*s->drag));
+	scene_sequence(s);
 	scene_place(s);
 	scene_history_reset(s);
 	if (s->view) {
@@ -782,6 +1056,54 @@ static double hit(struct line3 r, const float *t, double *b)
 	return dot(e2, q) / det;
 }
 
+// Whether the ray r meets triangle t of p nearer than *best, which it
+// then sets; a clear pixel of a picture does not count.
+static int pick_tri(const struct part *p, struct line3 r, size_t t,
+		    double *best)
+{
+	double b[3] = { 0, 0, 0 };
+	double d = hit(r, &p->pos[TRI_FLOATS * t], b);
+
+	if (d < HUGE_VAL && p->uv &&
+	    !pic_at(p, &p->uv[PIC_CORNERS * t], b)[3]) {
+		return 0;
+	}
+	if (d >= 0 && d < *best) {
+		*best = d;
+		return 1;
+	}
+	return 0;
+}
+
+// Whether the ray r meets part p nearer than *best, which it then sets:
+// the ray goes down the tree of the triangles of p, into the boxes it
+// meets nearer than *best.
+static int pick_part(const struct part *p, struct line3 r, double *best)
+{
+	size_t stack[PICK_DEPTH];
+	size_t top = 0;
+	int found = 0;
+
+	stack[top++] = 0;
+	while (top) {
+		const struct bvh_node *n = &p->bvh.n[stack[--top]];
+
+		if (!(ray_box(r, n->b, *best) < HUGE_VAL)) {
+			continue;
+		}
+		if (!n->left || top + 2 > PICK_DEPTH) {
+			for (size_t i = n->lo; i < n->hi; i++) {
+				found = pick_tri(p, r, p->bvh.idx[i], best) ||
+					found;
+			}
+			continue;
+		}
+		stack[top++] = n->left;
+		stack[top++] = n->left + 1;
+	}
+	return found;
+}
+
 size_t scene_pick(const struct scene *s, struct px at)
 {
 	const struct cam *c = &s->cam;
@@ -793,33 +1115,27 @@ size_t scene_pick(const struct scene *s, struct px at)
 
 	for (size_t i = 0; i < s->np; i++) {
 		const struct part *p = &s->p[i];
-		struct line3 home = { sub(ray.o, p->off), ray.d };
+		struct rigid back = rig_inv(p->mot);
+		struct line3 home;
 
-		for (size_t t = 0; p->shown && t < p->nt; t++) {
-			double b[3] = { 0, 0, 0 };
-			double d = hit(home, &p->pos[TRI_FLOATS * t], b);
+		home.o = rig_pt(back, ray.o);
+		home.d = rig_dir(back, ray.d);
 
-			if (d < HUGE_VAL && p->uv &&
-			    !pic_at(p, &p->uv[PIC_CORNERS * t], b)[3]) {
-				continue;
-			}
-			if (d >= 0 && d < best) {
-				best = d;
-				pick = i;
-			}
+		if (p->shown && p->nt && pick_part(p, home, &best)) {
+			pick = i;
 		}
 	}
 	return pick;
 }
 
-// Shows the parts that match pat, or all if pat is NULL, as how says:
+// Shows the parts that name pat, or all if pat is NULL, as how says:
 // 1 show, 0 hide, 2 show only them, 3 solid, 4 see-through.
 static size_t show(struct scene *s, const char *pat, int how)
 {
 	size_t n = 0;
 
 	for (size_t i = 0; i < s->np; i++) {
-		int match = !pat || glob(pat, s->p[i].name);
+		int match = !pat || scene_in_unit(pat, s->p[i].name);
 
 		n += (size_t)match;
 		if (how == 2) {
@@ -836,7 +1152,7 @@ static size_t show(struct scene *s, const char *pat, int how)
 // Reads the numbers of words w[1 .. n - 1] into x and checks them.
 static int args(char **w, size_t n, double *x, size_t want)
 {
-	return n == want + 1 && numbers(w + 1, x, want) == 0 ? 0 : -1;
+	return n == want + 1 && command_numbers(w + 1, x, want) == 0 ? 0 : -1;
 }
 
 // Runs a command of the camera into r; returns 1 if it is none.
@@ -846,6 +1162,10 @@ static int cam_command(struct scene *s, char **w, size_t n, struct cmd *r)
 	struct cam *c = &s->cam;
 
 	r->ask = CMD_DRAW;
+	if (!strcmp(w[0], "center") && n == 1) {
+		scene_center(s);
+		return 0;
+	}
 	if ((!strcmp(w[0], "view") && n == 2 && cam_view(c, w[1]) == 0) ||
 	    (!strcmp(w[0], "fit") && n == 1)) {
 		cam_fit(c, s);
@@ -855,12 +1175,119 @@ static int cam_command(struct scene *s, char **w, size_t n, struct cmd *r)
 		cam_zoom(c, x[0],
 			 (struct px){ (double)c->sz.w / 2,
 				      (double)c->sz.h / 2 });
-	} else if (!strcmp(w[0], "size") && !args(w, n, x, 2) && x[0] >= 1 &&
-		   x[1] >= 1 && x[0] <= WIN_MAX && x[1] <= WIN_MAX) {
-		c->sz = (struct size){ (int)x[0], (int)x[1] };
-		r->ask |= CMD_SIZE;
+	} else if (!strcmp(w[0], "select") && n <= 2) {
+		scene_select_name(s, n == 2 ? w[1] : NULL);
+		return 0;
 	} else {
 		r->ask = 0;
+		return 1;
+	}
+	scene_cam_moved(s);
+	return 0;
+}
+
+void scene_select(struct scene *s, size_t i)
+{
+	s->picked = i < s->np ? i : NONE;
+	s->centered = 0;
+}
+
+void scene_select_name(struct scene *s, const char *name)
+{
+	size_t k = NONE;
+
+	for (size_t i = 0; name && i < s->np && k == NONE; i++) {
+		if (!strcmp(s->p[i].name, name)) {
+			k = i;
+		}
+	}
+	for (size_t i = 0; name && i < s->np && k == NONE; i++) {
+		if (scene_in_unit(name, s->p[i].name)) {
+			k = i;
+		}
+	}
+	scene_select(s, k);
+}
+
+void scene_center(struct scene *s)
+{
+	if (s->picked >= s->np) {
+		return;
+	}
+	if (s->centered) {
+		cam_zoom(&s->cam, 1 / CENTER_ZOOM,
+			 (struct px){ (double)s->cam.sz.w / 2,
+				      (double)s->cam.sz.h / 2 });
+	} else {
+		struct box b = part_box_at(&s->p[s->picked]);
+
+		s->cam.c = mul(add(b.lo, b.hi), 1.0 / 2);
+		s->centered = 1;
+	}
+	s->touched = 1;
+}
+
+void scene_cam_moved(struct scene *s)
+{
+	s->centered = 0;
+	s->touched = 1;
+}
+
+void scene_resize(struct scene *s, struct size sz)
+{
+	s->cam.sz = sz;
+	if (!s->touched) {
+		cam_fit(&s->cam, s);
+	}
+}
+
+// Prints each part, its triangles, whether it shows, whether
+// see-through, and the middle of its box where it stands.
+static void print_list(const struct scene *s)
+{
+	for (size_t i = 0; i < s->np; i++) {
+		struct box b = part_box_at(&s->p[i]);
+		struct vec m = mul(add(b.lo, b.hi), 1.0 / 2);
+
+		printf("%s %zu %s %s at %.3f %.3f %.3f\n", s->p[i].name,
+		       s->p[i].nt, s->p[i].shown ? "shown" : "hidden",
+		       s->p[i].see ? "see" : "solid", m.x + 0.0, m.y + 0.0,
+		       m.z + 0.0);
+	}
+}
+
+// Prints the name of the part at the pixel at, with its unit in
+// brackets if label, or - for none.
+static void print_pick(const struct scene *s, struct px at, int label)
+{
+	size_t i = scene_pick(s, at);
+	char *l = NULL;
+
+	if (i == NONE) {
+		printf("-\n");
+		return;
+	}
+	l = label ? scene_label(s, i) : xstrdup(s->p[i].name);
+	printf("%s\n", l);
+	free(l);
+}
+
+// Reads a command that asks the program that draws into r; returns 1 if
+// it is none.
+static int ask_command(char **w, size_t n, struct cmd *r)
+{
+	double x[1];
+
+	if (!strcmp(w[0], "shot") && n == 2) {
+		r->file = w[1];
+		r->ask = CMD_SHOT;
+	} else if (!strcmp(w[0], "spin") && !args(w, n, x, 1) && x[0] >= 1 &&
+		   x[0] <= FRAMES_MAX) {
+		r->frames = lround(x[0]);
+		r->ask = CMD_SPIN;
+	} else if (!strcmp(w[0], "quit") && n == 1) {
+		r->ask = CMD_QUIT;
+	} else {
 		return 1;
 	}
 	return 0;
@@ -872,34 +1299,16 @@ static int out_command(const struct scene *s, char **w, size_t n, struct cmd *r)
 {
 	double x[2];
 
-	if (!strcmp(w[0], "pick") && !args(w, n, x, 2)) {
-		size_t i = scene_pick(s, (struct px){ x[0], x[1] });
-
-		printf("%s\n", i == NONE ? "-" : s->p[i].name);
+	if ((!strcmp(w[0], "pick") || !strcmp(w[0], "label")) &&
+	    !args(w, n, x, 2)) {
+		print_pick(s, (struct px){ x[0], x[1] }, w[0][0] == 'l');
 	} else if (!strcmp(w[0], "help") && n == 1) {
 		for (size_t i = 0; view_help[i]; i++) {
 			printf("%s\n", view_help[i]);
 		}
 	} else if (!strcmp(w[0], "list") && n == 1) {
-		for (size_t i = 0; i < s->np; i++) {
-			struct box b = part_box_at(&s->p[i]);
-			struct vec m = mul(add(b.lo, b.hi), 1.0 / 2);
-
-			printf("%s %zu %s %s at %.3f %.3f %.3f\n", s->p[i].name,
-			       s->p[i].nt, s->p[i].shown ? "shown" : "hidden",
-			       s->p[i].see ? "see" : "solid", m.x + 0.0,
-			       m.y + 0.0, m.z + 0.0);
-		}
-	} else if (!strcmp(w[0], "shot") && n == 2) {
-		r->file = w[1];
-		r->ask = CMD_SHOT;
-	} else if (!strcmp(w[0], "spin") && !args(w, n, x, 1) && x[0] >= 1 &&
-		   x[0] <= FRAMES_MAX) {
-		r->frames = lround(x[0]);
-		r->ask = CMD_SPIN;
-	} else if (!strcmp(w[0], "quit") && n == 1) {
-		r->ask = CMD_QUIT;
-	} else {
+		print_list(s);
+	} else if (ask_command(w, n, r)) {
 		return 1;
 	}
 	(void)fflush(stdout);
@@ -932,62 +1341,148 @@ static int show_command(struct scene *s, char **w, size_t n, struct cmd *r)
 	return 1;
 }
 
+char *scene_unit(const struct scene *s, size_t i)
+{
+	const char *name = s->p[i].name;
+	size_t n = strlen(name);
+	const char *first = strchr(name, '/');
+
+	for (int k = 0; k < s->level && first; k++) {
+		const char *sl = name + n - 1;
+
+		while (sl > first && *sl != '/') {
+			sl--;
+		}
+		n = (size_t)(sl - name);
+		if (sl == first) {
+			break;
+		}
+	}
+	{
+		char *u = xmalloc(n + 1);
+
+		memcpy(u, name, n);
+		u[n] = 0;
+		return u;
+	}
+}
+
+char *scene_label(const struct scene *s, size_t i)
+{
+	const char *name = s->p[i].name;
+	char *u = scene_unit(s, i);
+	size_t n = strlen(u);
+	size_t a = n;
+	char *l = xmalloc(strlen(name) + 3);
+
+	while (a > 0 && u[a - 1] != '/') {
+		a--;
+	}
+	memcpy(l, name, a);
+	l[a] = '[';
+	memcpy(l + a + 1, name + a, n - a);
+	l[n + 1] = ']';
+	memcpy(l + n + 2, name + n, strlen(name + n) + 1);
+	free(u);
+	return l;
+}
+
+// Whether the parts that show are those of unit u, all of them.
+static int alone(const struct scene *s, const char *u)
+{
+	for (size_t i = 0; i < s->np; i++) {
+		if (!s->p[i].shown != !scene_in_unit(u, s->p[i].name)) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+// Shows every part again, as they are, if one part alone shows, or with
+// up, one unit alone; returns whether it did.
+static int all_again(struct scene *s, int up)
+{
+	size_t shown = 0;
+	size_t first = NONE;
+	char *v = NULL;
+	int all = 0;
+
+	for (size_t i = 0; i < s->np; i++) {
+		shown += (size_t)(s->p[i].shown != 0);
+		if (first == NONE && s->p[i].shown) {
+			first = i;
+		}
+	}
+	if (first == NONE) {
+		return 0;
+	}
+	v = up ? scene_unit(s, first) : NULL;
+	all = up ? alone(s, v) : shown == 1;
+	free(v);
+	for (size_t i = 0; all && i < s->np; i++) {
+		s->p[i].shown = 1;
+	}
+	return all;
+}
+
 int scene_show_at(struct scene *s, int key, struct px at)
 {
-	size_t k = scene_pick(s, at);
+	size_t k = NONE;
+	int up = key == 'H' || key == 'O' || key == 'S';
+	int low = up ? key - 'A' + 'a' : key;
+	char *u = NULL;
+	int see = 0;
 
+	// Out of the view of one part or unit, o shows all again.
+	if (low == 'o' && all_again(s, up)) {
+		scene_commit(s);
+		return 0;
+	}
+	k = scene_pick(s, at);
 	if (k == NONE) {
 		return -1;
 	}
-	if (key == 's') {
-		s->p[k].see = !s->p[k].see;
-	}
-	for (size_t i = 0; i < s->np && key != 's'; i++) {
-		if (key == 'o' || i == k) {
-			s->p[i].shown = key == 'o' && i == k;
+	u = up ? scene_unit(s, k) : xstrdup(s->p[k].name);
+	see = !s->p[k].see;
+	for (size_t i = 0; i < s->np; i++) {
+		int in = up ? scene_in_unit(u, s->p[i].name) : i == k;
+
+		if (low == 's' && in) {
+			s->p[i].see = see;
+		} else if (low == 'o' || (low == 'h' && in)) {
+			s->p[i].shown = low == 'o' && in;
 		}
 	}
+	free(u);
 	scene_commit(s);
 	return 0;
 }
 
-// The item of the part or item named name, or NONE.
-static size_t item_named(const struct scene *s, const char *name)
-{
-	for (size_t i = 0; i < s->nit; i++) {
-		if (!strcmp(s->it[i].name, name)) {
-			return i;
-		}
-	}
-	for (size_t i = 0; i < s->np; i++) {
-		if (!strcmp(s->p[i].name, name)) {
-			return s->p[i].item;
-		}
-	}
-	return NONE;
-}
-
-// Runs a command of the explode, the drags or the history into r;
+// Runs a command of the sequence, the moves or the history into r;
 // returns 1 if it is none.
 static int arrange_command(struct scene *s, char **w, size_t n, struct cmd *r)
 {
 	double x[1];
 	double y[2];
+	double d[3];
 
 	r->ask = CMD_DRAW;
-	if (!strcmp(w[0], "explode") && !args(w, n, x, 1) && x[0] >= 0 &&
-	    x[0] <= EXPLODE_MAX) {
-		scene_explode(s, x[0]);
+	if (!strcmp(w[0], "play") && !args(w, n, x, 1) && x[0] >= 0 &&
+	    x[0] <= (double)s->nseq) {
+		scene_play(s, x[0]);
 		scene_commit(s);
-	} else if (!strcmp(w[0], "drag") && n == 3 && !numbers(w + 2, x, 1) &&
-		   item_named(s, w[1]) != NONE) {
-		scene_drag(s, item_named(s, w[1]), x[0]);
+	} else if (!strcmp(w[0], "move") && n == MOVE_WORDS + 1 &&
+		   !command_numbers(w + 2, d, 3) &&
+		   scene_move(s, w[1], v3(d[0], d[1], d[2]))) {
 		scene_commit(s);
+	} else if (!strcmp(w[0], "level") && !args(w, n, x, 1) && x[0] >= 1 &&
+		   x[0] <= LEVEL_MAX) {
+		s->level = (int)lround(x[0]);
 	} else if (!strcmp(w[0], "home") && n == 1) {
 		scene_home(s);
 		scene_commit(s);
 	} else if (!strcmp(w[0], "key") && n == 4 && w[1][0] && !w[1][1] &&
-		   strchr("hos", w[1][0]) && !numbers(w + 2, y, 2)) {
+		   strchr("hosHOS", w[1][0]) && !command_numbers(w + 2, y, 2)) {
 		(void)scene_show_at(s, w[1][0], (struct px){ y[0], y[1] });
 	} else if (!strcmp(w[0], "reset") && n == 1) {
 		scene_reset(s);
@@ -1047,11 +1542,11 @@ static float shade(struct vec n)
 }
 
 // A triangle on the screen: its corners in pixels and depth, and its
-// colour, or its picture and the texture coordinates of its corners.
+// color, or its picture and the texture coordinates of its corners.
 struct stri {
 	double x[3], y[3], z[3];
 	unsigned char rgb[3];
-	unsigned alpha; // The opacity of a colour, 0 to BYTE.
+	unsigned alpha; // The opacity of a color, 0 to BYTE.
 	const struct part *p;
 	const float *uv;
 };
@@ -1063,7 +1558,7 @@ struct frame {
 	struct size sz;
 };
 
-// Lays the colour rgb over out by its opacity a, 0 to BYTE.
+// Lays the color rgb over out by its opacity a, 0 to BYTE.
 static void mix(const unsigned char *rgb, unsigned a, unsigned char *out)
 {
 	for (size_t k = 0; k < 3; k++) {
@@ -1143,20 +1638,23 @@ static struct stri on_screen(const struct cam *c, const struct part *p,
 
 	memset(&t, 0, sizeof(t));
 	for (size_t i = 0; i < 3; i++) {
-		struct vec d = sub(
-			add(get3(&p->pos[(TRI_FLOATS * k) + (3 * i)]), p->off),
-			c->c);
+		struct vec d =
+			sub(rig_pt(p->mot,
+				   get3(&p->pos[(TRI_FLOATS * k) + (3 * i)])),
+			    c->c);
 
 		t.x[i] = ((double)c->sz.w / 2) + (dot(d, c->r[0]) * px);
 		t.y[i] = ((double)c->sz.h / 2) - (dot(d, c->r[1]) * px);
 		t.z[i] = dot(d, c->r[2]);
 		n = add(n, get3(&p->nrm[(TRI_FLOATS * k) + (3 * i)]));
 	}
+	n = rig_dir(p->mot, n);
 	light = len(n) > 0 ? shade(v3(dot(n, c->r[0]), dot(n, c->r[1]),
 				      dot(n, c->r[2]))) :
 			     AMBIENT;
 	for (int i = 0; i < 3; i++) {
-		double v = (double)(p->rgb[i] * (p->uv ? 1 : light));
+		float base = p->col ? p->col[(3 * k) + (size_t)i] : p->rgb[i];
+		double v = (double)(base * (p->uv ? 1 : light));
 
 		t.rgb[i] = (unsigned char)lround(fmin(fmax(v, 0), 1) *
 						 (double)BYTE);

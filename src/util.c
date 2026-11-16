@@ -8,6 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The library of the tree of the build, if the build gives none.
+#ifndef PLICAD_LIB
+#define PLICAD_LIB "lib"
+#endif
+
 void close_stdout(void)
 {
 	if (fflush(stdout) != 0 || ferror(stdout)) {
@@ -176,6 +181,55 @@ char *base_name(const char *path)
 	return s;
 }
 
+char *lib_file(const char *dir, const char *name)
+{
+	const char *root = getenv("PLICAD");
+	const char *lib = root ? "/lib/" : "";
+	size_t n = 0;
+	char *out = NULL;
+
+	if (!root) {
+		root = PLICAD_LIB;
+		lib = "/";
+	}
+	n = strlen(root) + strlen(lib) + strlen(dir) + strlen(name) + 2;
+	out = xmalloc(n);
+	(void)snprintf(out, n, "%s%s%s%s%s", root, lib, dir, *dir ? "/" : "",
+		       name);
+	return out;
+}
+
+char *lib_path(struct sibling s, const char *dir)
+{
+	char *p = sibling_path(s);
+	FILE *f = fopen(p, "r");
+
+	if (f || s.name[0] == '/') {
+		if (f) {
+			(void)fclose(f);
+		}
+		return p;
+	}
+	free(p);
+	return lib_file(dir, s.name);
+}
+
+char *join_names(const char *a, const char *b)
+{
+	size_t na = strlen(a);
+	size_t nb = strlen(b);
+	char *s = xmalloc(na + nb + 2);
+
+	for (size_t i = 0; i < na; i++) {
+		s[i] = a[i];
+	}
+	s[na] = '/';
+	for (size_t i = 0; i <= nb; i++) {
+		s[na + 1 + i] = b[i];
+	}
+	return s;
+}
+
 char *sibling_path(struct sibling s)
 {
 	const char *path = s.of;
@@ -221,30 +275,4 @@ void sort_doubles(double *v, size_t n)
 			v[j] = x;
 		}
 	}
-}
-
-// Whether the name matches the pattern, a * for any run of characters.
-int glob(const char *pat, const char *name)
-{
-	const char *star = NULL;
-	const char *back = NULL;
-
-	while (*name) {
-		if (*pat == '*') {
-			star = pat++;
-			back = name;
-		} else if (*pat == *name) {
-			pat++;
-			name++;
-		} else if (star) {
-			pat = star + 1;
-			name = ++back;
-		} else {
-			return 0;
-		}
-	}
-	while (*pat == '*') {
-		pat++;
-	}
-	return !*pat;
 }

@@ -2,8 +2,8 @@
 # bad_cross.part -- Two cylinders at right angles, which meet on a quartic
 # Copyright (c) 2026 Jakob Kastelic
 
-circle a along z 0 0 10
-circle b along x 0 0 8
+circle a 10 0 0 along z
+circle b 8 0 0 along x
 extrude pa from -10 to 10 a
 extrude pb from -10 to 10 b
 union u pa pb

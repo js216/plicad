@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# block.part -- A machined block with two holes for M3 taps, for drawings
+# Copyright (c) 2026 Jakob Kastelic
+
+# A block 50 by 30 by 20 with the edges of its top round by 2, and two
+# tap drills of 2.5 down into it from the top: one 15 deep, blind, and
+# one through.
+profile p along z 0 0 0 50 0 0 50 30 0 0 30 0
+extrude blk from 0 to 20 p
+circle t1 2.5 10 15 along z
+circle t2 2.5 40 15 along z
+extrude h1 from 5 to 21 t1
+extrude h2 from -1 to 21 t2
+subtract block blk h1 h2
+round 2 blk.end blk.side

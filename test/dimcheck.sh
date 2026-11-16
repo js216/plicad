@@ -3,7 +3,7 @@
 # dimcheck.sh -- Check the dimensions of the views of a part by measure
 # Copyright (c) 2026 Jakob Kastelic
 
-# Usage: test/dimcheck.sh DIR part.fold VIEW...
+# Usage: test/dimcheck.sh DIR part.st VIEW...
 # The programs come from DIR.  For each VIEW of top, front, right and
 # flat, every dimension that smdim prints must say what measure says
 # of the part, in inches to three decimals without the zero:
@@ -14,7 +14,8 @@
 #   ordinate at its place on both axes, but for the holes inside a row,
 #   whose callout must give the pitch of the row;
 # - each size of those holes has one callout, with the diameter and the
-#   count of measure;
+#   count of measure, but for the holes of inserts, which the callouts
+#   of the inserts count;
 # - the text of each radius and linear dimension is its own size.
 # - no leader is longer than smdim means it to be.
 # It prints the first dimension that fails, and exits with 1.
@@ -82,6 +83,7 @@ for view in "$@"; do
 		if (got != want && $5 != "%%c" inch($3))
 			bad("hole of " $3 " mm says " got)
 	}
+	$1 == "dim" && $2 == "insert" { inserted += $3 }
 	$1 == "dim" && $2 == "pitch" {
 		if (($3 > 0 && !index($0, " " inch($3))) ||
 			($4 > 0 && !index($0, " " inch($4))))
@@ -113,10 +115,16 @@ for view in "$@"; do
 			if (!rows && !(has("x", hu[k]) && has("y", hv[k])))
 				bad("no ordinates for the hole at " hu[k] \
 					" " hv[k] " mm")
-		for (d in count)
-			if (called[d + 0] != count[d])
+		# The holes of inserts have the callouts of the inserts.
+		for (d in count) {
+			if (called[d + 0] > count[d])
 				bad(count[d] " holes of " d " mm, but the " \
 					"callout counts " called[d + 0])
+			bare += count[d] - called[d + 0]
+		}
+		if (view != "flat" && bare != inserted)
+			bad(bare " holes have no callout, but the inserts " \
+				"count " inserted + 0)
 		exit failed
 	}' "$out.measure" "$out.dim" || exit 1
 done

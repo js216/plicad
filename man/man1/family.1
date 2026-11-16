@@ -1,0 +1,45 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" family.1 -- Manual page of family
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH FAMILY 1
+.SH NAME
+family \- write the part source of a member of a family of the library
+.SH SYNOPSIS
+.B family screws
+.I size style length
+.br
+.B family packages
+.I name
+.br
+.B family inserts
+.I name
+.SH DESCRIPTION
+.I Family
+writes on the standard output the source
+.RI ( part (5))
+of a plain exact solid, named body, for a row of a table of the library
+.RI ( plicad-lib (7)):
+.TP 10
+.B screws
+a head and a shank of the size and style, the shank
+.I length
+long down from z = 0; a flat head is a cone of its angle down from
+z = 0, flush there, the others a cylinder up from z = 0;
+.TP
+.B packages
+a box of the length along x and the width, centered on the z axis,
+its height up from z = 0;
+.TP
+.B inserts
+the body of the hardware, a cylinder up from z = 0.
+.PP
+A table of the name in the current directory adds its rows to those of
+the library, before them: a row it lacks comes from the library.
+.SH EXAMPLES
+family screws M3 pan 10 | extrude \- | bool \- >screw.st
+.br
+family packages soic\-8 | extrude \- >soic8.st
+.SH SEE ALSO
+plicad-lib(7), part(5), extrude(1), place(1)
+.SH DIAGNOSTICS
+A row that the table lacks, or that is short, is refused.

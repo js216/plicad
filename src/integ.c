@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// integ.c -- Volume, area and centre of exact solids, by quadrature
+// integ.c -- Volume, area and center of exact solids, by quadrature
 // Copyright (c) 2026 Jakob Kastelic
 
 // The divergence theorem turns the volume into a sum over the faces of
@@ -60,6 +60,18 @@ static void integrands(const struct surf *s, struct uv q, double *g)
 		nn = add(mul(e, cos(q.v)), mul(s->n, sin(q.v)));
 		w = s->r * s->r * cos(q.v);
 		break;
+	case SF_PIPE: {
+		// |r_u| is the speed of the ellipse, sqrt(w2), times 1 + rt
+		// cos v k for its curvature k = a b / w2^(3/2).
+		struct line3 c = pipe_ring(s, q.u);
+		double su = sin(q.u);
+		double cu = cos(q.u);
+		double w2 = (s->r * s->r * su * su) + (s->r3 * s->r3 * cu * cu);
+
+		nn = add(mul(c.d, cos(q.v)), mul(s->n, sin(q.v)));
+		w = (sqrt(w2) + (s->r2 * cos(q.v) * s->r * s->r3 / w2)) * s->r2;
+		break;
+	}
 	default:
 		nn = add(mul(e, cos(q.v)), mul(s->n, sin(q.v)));
 		w = (s->r + (s->r2 * cos(q.v))) * s->r2;

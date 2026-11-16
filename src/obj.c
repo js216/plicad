@@ -64,6 +64,8 @@ static void obj_part_free(struct obj_part *p)
 	free(p->name);
 	free(p->pos);
 	free(p->nrm);
+	free(p->col);
+	free(p->grade);
 	memset(p, 0, sizeof(*p));
 }
 
@@ -101,6 +103,9 @@ struct reader {
 	struct floats v, vn;
 	struct obj_file *f;
 	struct fault *e;
+	int group; // Whether a usemtl group of the part is open.
+	float grgb[3]; // Its color, or below 0 for that of the part.
+	float grade; // The grade of its texture, or below 0 for none.
 };
 
 static void new_part(struct reader *r, const char *name)
@@ -228,6 +233,32 @@ static void add_tri(struct reader *r, const struct corner *c)
 		p->cap = p->cap ? 2 * p->cap : TRIS_START;
 		p->pos = xrealloc(p->pos, p->cap * TRI_FLOATS * sizeof(float));
 		p->nrm = xrealloc(p->nrm, p->cap * TRI_FLOATS * sizeof(float));
+		if (p->col) {
+			p->col = xrealloc(p->col, p->cap * 3 * sizeof(float));
+		}
+		if (p->grade) {
+			p->grade = xrealloc(p->grade, p->cap * sizeof(float));
+		}
+	}
+	if (r->group && r->grade >= 0 && !p->grade) {
+		p->grade = xmalloc(p->cap * sizeof(float));
+		for (size_t i = 0; i < p->nt; i++) {
+			p->grade[i] = -1;
+		}
+	}
+	if (p->grade) {
+		p->grade[p->nt] = r->group ? r->grade : -1;
+	}
+	if (r->group && r->grgb[0] >= 0 && !p->col) {
+		p->col = xmalloc(p->cap * 3 * sizeof(float));
+		for (size_t i = 0; i < 3 * p->nt; i++) {
+			p->col[i] = -1;
+		}
+	}
+	if (p->col) {
+		for (size_t k = 0; k < 3; k++) {
+			p->col[(3 * p->nt) + k] = r->group ? r->grgb[k] : -1;
+		}
 	}
 	for (size_t k = 0; k < 3; k++) {
 		struct vec m = c[k].n >= 0 ? point(&r->vn, c[k].n) : n;
@@ -289,25 +320,39 @@ static int face(struct reader *r, char *s)
 	return 0;
 }
 
-// Sets the colour of the last part from the comment at s, if it is one.
-static void colour(struct reader *r, char *s)
+// Sets the color of the last part from the comment at s, if it is one,
+// or the grade of the texture of the group.
+static void color(struct reader *r, char *s)
 {
 	double x[3];
 	struct obj_part *p = NULL;
 
 	s = skip_blank(s + 1);
-	if (strncmp(s, "colour", strlen("colour")) != 0 || !r->f->n) {
+	if (!strncmp(s, "texture", strlen("texture")) && r->group) {
+		s += strlen("texture");
+		if (numbers(r, &s, x, 1) == 0) {
+			r->grade = (float)fmax(x[0], 0);
+		}
 		return;
 	}
-	s += strlen("colour");
+	if (strncmp(s, "color", strlen("color")) != 0 || !r->f->n) {
+		return;
+	}
+	s += strlen("color");
 	if (numbers(r, &s, x, 3) < 0) {
 		return;
 	}
 	p = &r->f->p[r->f->n - 1];
-	p->has_rgb = 1;
 	for (int k = 0; k < 3; k++) {
-		p->rgb[k] = (float)fmin(fmax(x[k], 0), 1);
+		float v = (float)fmin(fmax(x[k], 0), 1);
+
+		if (r->group) {
+			r->grgb[k] = v;
+		} else {
+			p->rgb[k] = v;
+		}
 	}
+	p->has_rgb = p->has_rgb || !r->group;
 }
 
 // Reads one line.
@@ -319,7 +364,7 @@ static int statement(struct reader *r, char *s)
 	char *rest = w + n;
 
 	if (*w == '#') {
-		colour(r, w);
+		color(r, w);
 		return 0;
 	}
 	if (n == 1 && *w == 'v') {
@@ -334,10 +379,15 @@ static int statement(struct reader *r, char *s)
 		push3(&r->vn, x);
 	} else if (n == 1 && *w == 'f') {
 		return face(r, rest);
+	} else if (n == strlen("usemtl") && !strncmp(w, "usemtl", n)) {
+		r->group = 1;
+		r->grgb[0] = r->grgb[1] = r->grgb[2] = -1;
+		r->grade = -1;
 	} else if (n == 1 && (*w == 'o' || *w == 'g')) {
 		char *name = skip_blank(rest);
 		size_t k = strlen(name);
 
+		r->group = 0;
 		while (k && (name[k - 1] == ' ' || name[k - 1] == '\t')) {
 			name[--k] = 0;
 		}

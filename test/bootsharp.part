@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# bootsharp.part -- A moulded boot over a chassis end, before its rounds
+# bootsharp.part -- A molded boot over a chassis end, before its rounds
 # Copyright (c) 2026 Jakob Kastelic
 
 # The boot over either end of the chassis, before its rounds: x across,
@@ -114,10 +114,10 @@ union bumped raw bump0 bump1 bump2 bump3 bump4 bump5
 # counterbore for the head.
 ZS0 = H/2-SCREW_DZ
 ZS1 = H/2+SCREW_DZ
-circle side0 along x SCREW_Y ZS0 SLEEVE
-circle side1 along x SCREW_Y ZS1 SLEEVE
-circle head0 along x SCREW_Y ZS0 HEAD
-circle head1 along x SCREW_Y ZS1 HEAD
+circle side0 SLEEVE SCREW_Y ZS0 along x
+circle side1 SLEEVE SCREW_Y ZS1 along x
+circle head0 HEAD SCREW_Y ZS0 along x
+circle head1 HEAD SCREW_Y ZS1 along x
 extrude hl0 from X0 to 0 side0
 extrude hl1 from X0 to 0 side1
 extrude hr0 from W to X1 side0
@@ -126,14 +126,14 @@ extrude cl0 from X0 to X0+HEAD_D head0
 extrude cl1 from X0 to X0+HEAD_D head1
 extrude cr0 from X1-HEAD_D to X1 head0
 extrude cr1 from X1-HEAD_D to X1 head1
-circle top0 along z BAND_X SCREW_Y SLEEVE
-circle top1 along z W-BAND_X SCREW_Y SLEEVE
-circle tophead0 along z BAND_X SCREW_Y HEAD
-circle tophead1 along z W-BAND_X SCREW_Y HEAD
-circle bot0 along z BAND_XB SCREW_Y SLEEVE
-circle bot1 along z W-BAND_XB SCREW_Y SLEEVE
-circle bothead0 along z BAND_XB SCREW_Y HEAD
-circle bothead1 along z W-BAND_XB SCREW_Y HEAD
+circle top0 SLEEVE BAND_X SCREW_Y along z
+circle top1 SLEEVE W-BAND_X SCREW_Y along z
+circle tophead0 HEAD BAND_X SCREW_Y along z
+circle tophead1 HEAD W-BAND_X SCREW_Y along z
+circle bot0 SLEEVE BAND_XB SCREW_Y along z
+circle bot1 SLEEVE W-BAND_XB SCREW_Y along z
+circle bothead0 HEAD BAND_XB SCREW_Y along z
+circle bothead1 HEAD W-BAND_XB SCREW_Y along z
 extrude ht0 from H to Z1 top0
 extrude ht1 from H to Z1 top1
 extrude ct0 from Z1-HEAD_D to Z1 tophead0
@@ -142,4 +142,5 @@ extrude hb0 from Z0 to 0 bot0
 extrude hb1 from Z0 to 0 bot1
 extrude cb0 from Z0 to Z0+HEAD_D bothead0
 extrude cb1 from Z0 to Z0+HEAD_D bothead1
-cut boot bumped hl0 hl1 hr0 hr1 cl0 cl1 cr0 cr1 ht0 ht1 ct0 ct1 hb0 hb1 cb0 cb1
+subtract boot bumped hl0 hl1 hr0 hr1 cl0 cl1 cr0 cr1 ht0 ht1 ct0 ct1 \
+	hb0 hb1 cb0 cb1

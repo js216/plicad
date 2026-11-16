@@ -36,17 +36,30 @@ int curve_on_surf(const struct cpiece *p, const struct surf *s);
 enum { SS_NONE, SS_CURVES, SS_SAME, SS_NOT };
 // The curves where surfaces a and b meet, into out (two at most), and
 // SS_CURVES; or SS_NONE, SS_SAME for one surface, or SS_NOT where the
-// curve is none that surf_surf knows: lines, circles, and the ellipses
-// of a plane at a slant to a cylinder and of two cylinders of one
-// radius.
+// curve is none that surf_surf knows: lines, circles, the ellipses of a
+// plane at a slant to a cylinder and of two cylinders of one radius,
+// and the ring of a pipe in a plane square to its ellipse.
 int surf_surf(const struct surf *a, const struct surf *b, struct curve *out,
 	      size_t *n);
 
-// A face and the angles about its axis: u near ref.u, v near ref.v.
+// The uses of the edges of a face in bins by their spans along the
+// normal n of its iso-planes: the uses of bin b, from height lo + b step,
+// are uses[start[b] .. start[b + 1]].
+struct face_index {
+	struct vec n;
+	double lo, step;
+	size_t nb;
+	size_t *start, *uses;
+};
+
+// A face and the angles about its axis: u near ref.u, v near ref.v;
+// with the boxes of the edges, the tests skip the edges far off.
 struct facemap {
 	const struct shape *sh;
 	size_t f;
 	struct uv ref;
+	const struct box *ebox; // The boxes of the edges of sh, or NULL.
+	const struct face_index *index; // Its index (shape_cache), or NULL.
 };
 
 void facemap_init(struct facemap *m, const struct shape *sh, size_t f);
@@ -69,6 +82,53 @@ int face_has(const struct shape *sh, size_t f, struct vec p);
 int face_on(const struct shape *sh, size_t f, struct vec p);
 // Whether p lies inside the solid sh; p must lie on none of its faces.
 int solid_has(const struct shape *sh, struct vec p);
+
+// What the tests of the faces of a solid keep: the facemap and the index
+// of each face, and the boxes of its edges and its faces (face_box); and
+// a quick test that face_has_c tries first, if set: whether p lies in
+// face f, 1 or 0, or -1 if it cannot tell.
+struct shape_cache {
+	const struct shape *sh;
+	struct facemap *fm;
+	struct face_index *index;
+	struct box *ebox, *fbox;
+	int (*quick)(const void *ctx, size_t f, struct vec p);
+	const void *qctx;
+};
+void shape_cache_init(struct shape_cache *c, const struct shape *sh);
+void shape_cache_free(struct shape_cache *c);
+// As face_has and face_on, by the cache of the solid.
+int face_has_c(const struct shape_cache *c, size_t f, struct vec p);
+int face_on_c(const struct shape_cache *c, size_t f, struct vec p);
+
+// A list of faces.
+struct face_list {
+	size_t *f;
+	size_t n, cap;
+};
+// A ray from l.o along l.d, up to the parameter tmax.
+struct ray_seg {
+	struct line3 l;
+	double tmax;
+};
+// A way to find the faces a ray may cross: fn adds to the list those
+// faces of the solid whose boxes the ray meets, at least, and the cache
+// of the solid.
+struct ray_faces {
+	void (*fn)(const void *ctx, struct line3 ray, double tmax,
+		   struct face_list *out);
+	const void *ctx;
+	const struct shape_cache *cache;
+};
+// As solid_has, for a solid in the box x, with the faces each ray may
+// cross from rf, or all of them if rf is NULL.
+int solid_has_with(const struct shape *sh, struct vec p, struct box x,
+		   const struct ray_faces *rf);
+// The parameters t of the ray where it crosses face f of the solid of
+// c, into t (ROOTS_MAX at most); returns their count, and sets *unsafe
+// where a crossing is a touch or lies near an edge.
+size_t ray_face_hits(const struct shape_cache *c, size_t f, struct ray_seg rs,
+		     double *t, int *unsafe);
 // The box of face f of sh, grown by SH_EPS.
 struct box face_box(const struct shape *sh, size_t f);
 // The box of an edge.

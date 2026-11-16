@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# rounded.txt -- Copies of test/rounded.part, one through another
+# Copyright (c) 2026 Jakob Kastelic
+
+# Into reaches into the block of base from below, boss first; over
+# stands on the flat top of the boss of base, touching it; apart stands
+# off.
+part base ../build/part_rounded.st
+part into ../build/part_rounded.st move 5 3 -3
+part over ../build/part_rounded.st move 0 0 8
+part apart ../build/part_rounded.st move 100 0 0

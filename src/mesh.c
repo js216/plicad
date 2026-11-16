@@ -33,7 +33,7 @@
 #define POLE_NEAR 0.9 // A frame axis this near a pole takes another axis.
 #define SPLIT_MIN 0.1 // The least share of a split direction off the axis.
 // The direction of the splits of full circles, and the one they take when
-// it lies near their axis: any two that no part favours.
+// it lies near their axis: any two that no part favors.
 #define SPLIT_1 0.6
 #define SPLIT_2 0.48
 #define SPLIT_3 0.64
@@ -47,7 +47,8 @@ enum {
 	NO_TAG = -1, // A point that lies on no line of a face.
 	HASH_MIN = 64, // The least room of the table of grid corners.
 	NAME_LEN = 512, // Room for the name of a face.
-	HALF_PTS = 8 // The ends and middles of the four edges of a half face.
+	HALF_PTS = 8, // The ends and middles of the four edges of a half face.
+	NODAL_SPEED = 16 // Samples of a nodal section for its top speed.
 };
 
 void mesh_init(struct mesh *m)
@@ -92,7 +93,7 @@ struct line {
 struct fpar {
 	struct surf s;
 	int angle[2];
-	double centre[2];
+	double center[2];
 	double lo[2], hi[2];
 	double sign;
 	double *line[2];
@@ -177,7 +178,21 @@ static void base_points(const struct sedge *e, struct mesh_opts o,
 		r = e->c.a * e->c.a / (lo > 0 ? lo : 1);
 		r = fmax(r, e->c.b * e->c.b / fmax(e->c.a, ELLIPSE_MIN));
 	}
-	if (e->c.kind != CV_LINE) {
+	if (e->c.kind == CV_NODAL) {
+		// Its points run at most at speed v, round radii no less than
+		// a quarter of the tube.
+		double v = 0;
+
+		r = e->c.b / 4;
+		for (int i = 0; i <= NODAL_SPEED; i++) {
+			v = fmax(v,
+				 len(curve_tan(&e->c,
+					       e->t0 + ((e->t1 - e->t0) *
+							(double)i /
+							(double)NODAL_SPEED))));
+		}
+		n = pieces((e->t1 - e->t0) * v / r, step_of(r, o));
+	} else if (e->c.kind != CV_LINE) {
 		n = pieces(e->t1 - e->t0, step_of(r, o));
 	}
 	for (size_t i = 0; i <= n; i++) {
@@ -229,7 +244,7 @@ static struct vec ept(const struct sedge *e, double t)
 }
 
 // Sets the frame of a sphere so that the face, about the direction d
-// from its centre, lies about u = 0, v = 0, far from the poles.
+// from its center, lies about u = 0, v = 0, far from the poles.
 static void frame_sphere(struct surf *s, struct vec d)
 {
 	struct vec a = fabs(d.x) < POLE_NEAR ? v3(1, 0, 0) : v3(0, 1, 0);
@@ -238,7 +253,7 @@ static void frame_sphere(struct surf *s, struct vec d)
 	s->n = unit(cross(s->x, cross(a, s->x)));
 }
 
-// The direction from the centre of a sphere to the middle of the points
+// The direction from the center of a sphere to the middle of the points
 // of face f.
 static struct vec mid_dir(const struct shape *sh, size_t f,
 			  const struct ework *w)
@@ -287,6 +302,16 @@ static void radii(const struct fpar *fp, double *ru, double *rv)
 		*rv = s->r;
 	} else if (s->kind == SF_TORUS) {
 		*ru = s->r + s->r2;
+		*rv = s->r2;
+	} else if (s->kind == SF_PIPE) {
+		// A step of u turns the rings by no more than a circle of the
+		// radius a^2 (k + rt) / k^2 does, k the least radius of
+		// curvature of the ellipse, a its larger half axis.
+		double a = fmax(s->r, s->r3);
+		double k = pipe_bend(s);
+
+		*ru = a * a * (fmax(a * a / fmin(s->r, s->r3), k) + s->r2) /
+		      (k * k);
 		*rv = s->r2;
 	}
 }
@@ -434,12 +459,12 @@ static void mean_angles(const struct shape *sh, size_t f, const struct ework *w,
 			s[1] += sin(q.v);
 		}
 	}
-	fp->centre[0] = atan2(s[0], c[0]);
-	fp->centre[1] = atan2(s[1], c[1]);
+	fp->center[0] = atan2(s[0], c[0]);
+	fp->center[1] = atan2(s[1], c[1]);
 }
 
 // The frame, the range, the sign and the lines of face f.
-// Sets the angles of the uses of face f: each loop starts near the centre
+// Sets the angles of the uses of face f: each loop starts near the center
 // of the face and runs on from point to point, and each use keeps the
 // angles at its middle.
 static void use_refs(const struct shape *sh, size_t f, const struct ework *w,
@@ -447,13 +472,13 @@ static void use_refs(const struct shape *sh, size_t f, const struct ework *w,
 {
 	const struct sface *fc = &sh->f[f];
 	struct urange r = face_uses(sh, f);
-	struct uv centre = { fp->centre[0], fp->centre[1] };
+	struct uv center = { fp->center[0], fp->center[1] };
 
 	fp->first = r.first;
 	fp->ref = xmalloc((r.end - r.first + 1) * sizeof(*fp->ref));
 	for (size_t l = 0; l < fc->nloops; l++) {
 		const struct sloop *lp = &sh->l[fc->loop0 + l];
-		struct uv cur = centre;
+		struct uv cur = center;
 
 		for (size_t i = 0; i < lp->n; i++) {
 			const struct suse *u = &sh->u[lp->first + i];
@@ -495,7 +520,7 @@ static void face_param(const struct shape *sh, size_t f, const struct ework *w,
 		frame_sphere(&fp->s, mid_dir(sh, f, w));
 	}
 	fp->angle[0] = kind != SF_PLANE;
-	fp->angle[1] = kind == SF_TORUS;
+	fp->angle[1] = kind == SF_TORUS || kind == SF_PIPE;
 	mean_angles(sh, f, w, fp);
 	use_refs(sh, f, w, fp);
 	fp->lo[0] = fp->lo[1] = HUGE_VAL;
@@ -517,8 +542,8 @@ static void face_param(const struct shape *sh, size_t f, const struct ework *w,
 			fp->hi[1] = fmax(fp->hi[1], q.v);
 		}
 	}
-	fp->centre[0] = (fp->lo[0] + fp->hi[0]) / 2;
-	fp->centre[1] = (fp->lo[1] + fp->hi[1]) / 2;
+	fp->center[0] = (fp->lo[0] + fp->hi[0]) / 2;
+	fp->center[1] = (fp->lo[1] + fp->hi[1]) / 2;
 	fp->sign = turn_sign(fp, fc, p0);
 	radii(fp, &ru, &rv);
 	if (kind == SF_PLANE) {
@@ -1097,7 +1122,7 @@ static void add_tri(struct mesh *m, size_t a, size_t b, size_t c, size_t f)
 	}
 }
 
-// Whether vertex i of the ring, with its neighbours, is an ear: convex
+// Whether vertex i of the ring, with its neighbors, is an ear: convex
 // past min, and no other point inside.
 // A ring of the points of a loop, those left linked by prev and next,
 // and the least turn of an ear.
@@ -1441,12 +1466,86 @@ static int wraps(const struct brep *b, const struct bface *f)
 	return 1;
 }
 
+// Adds the loops of brep face bf to the last face of sh.
+static void face_loops_of(struct shape *sh, const struct brep *b,
+			  const struct bface *bf, const struct emap *em)
+{
+	for (size_t l = 0; l < bf->nloops; l++) {
+		const struct bloop *lp = &b->l[bf->loop0 + l];
+		size_t first = sh->nu;
+
+		for (size_t i = 0; i < lp->n; i++) {
+			const struct buse *u = &b->u[lp->first + i];
+
+			put_edge(sh, &em[u->e], u->fwd);
+		}
+		shape_end_loop(sh, first);
+	}
+}
+
 void part_shape(const struct part *p, struct shape *sh)
 {
+	part_shape_from(p, sh, NULL);
+}
+
+// The solid of solid part p, moved by its place, into sh.
+static void solid_shape(const struct part *p, struct shape *sh)
+{
+	shape_copy(sh, p->solid);
+	free(sh->name);
+	sh->name = xstrdup(p->name);
+	shape_move(sh, p->place);
+}
+
+// The surface of face bf of a blank.
+static struct surf bface_surf(const struct bface *bf)
+{
+	struct surf s;
+
+	memset(&s, 0, sizeof(s));
+	s.kind = SF_CONE;
+	if (bf->type == S_PLANE) {
+		s.kind = SF_PLANE;
+	} else if (bf->type == S_CYLINDER) {
+		s.kind = SF_CYL;
+	}
+	s.o = bf->o;
+	s.n = bf->n;
+	s.x = bf->x;
+	s.r = bf->r;
+	s.r2 = bf->r2;
+	return s;
+}
+
+// Adds the faces of face f of blank b to sh, named name, by the edges
+// em of the solid.
+static void add_bface(struct shape *sh, const struct brep *b, size_t f,
+		      const struct emap *em, const char *name)
+{
+	const struct bface *bf = &b->f[f];
+	struct surf s = bface_surf(bf);
+
+	if (wraps(b, bf)) {
+		wrap_face(sh, b, bf, em, s, name);
+	} else {
+		shape_face(sh, s, bf->sense, name);
+		face_loops_of(sh, b, bf, em);
+	}
+}
+
+void part_shape_from(const struct part *p, struct shape *sh,
+		     struct face_from **from)
+{
+	size_t capf = 0;
+	size_t nf = 0;
 	struct brep b;
 	struct emap *em = NULL;
 	char name[NAME_LEN];
 
+	if (p->solid) {
+		solid_shape(p, sh);
+		return;
+	}
 	memset(&b, 0, sizeof(b));
 	brep_build(p, &b);
 	shape_init(sh, p->name);
@@ -1456,36 +1555,13 @@ void part_shape(const struct part *p, struct shape *sh)
 	}
 	for (size_t f = 0; f < b.nf; f++) {
 		const struct bface *bf = &b.f[f];
-		struct surf s;
 
-		memset(&s, 0, sizeof(s));
-		s.kind = SF_CONE;
-		if (bf->type == S_PLANE) {
-			s.kind = SF_PLANE;
-		} else if (bf->type == S_CYLINDER) {
-			s.kind = SF_CYL;
-		}
-		s.o = bf->o;
-		s.n = bf->n;
-		s.x = bf->x;
-		s.r = bf->r;
-		s.r2 = bf->r2;
 		xsnprintf(name, "%s.%zu", p->name, f);
-		if (wraps(&b, bf)) {
-			wrap_face(sh, &b, bf, em, s, name);
-			continue;
-		}
-		shape_face(sh, s, bf->sense, name);
-		for (size_t l = 0; l < bf->nloops; l++) {
-			const struct bloop *lp = &b.l[bf->loop0 + l];
-			size_t first = sh->nu;
+		add_bface(sh, &b, f, em, name);
+		while (from && nf < sh->nf) {
+			struct face_from x = { bf->from, bf->idx };
 
-			for (size_t i = 0; i < lp->n; i++) {
-				const struct buse *u = &b.u[lp->first + i];
-
-				put_edge(sh, &em[u->e], u->fwd);
-			}
-			shape_end_loop(sh, first);
+			PUSH(*from, nf, capf, x);
 		}
 	}
 	free(em);

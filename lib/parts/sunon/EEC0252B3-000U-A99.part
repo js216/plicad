@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# EEC0252B3-000U-A99.part -- The axial fan Sunon EEC0252B3-000U-A99
+# Copyright (c) 2026 Jakob Kastelic
+
+# A 120 x 120 x 25.4 mm axial fan, as far as it matters for fit,
+# clearance, mounting and look: the square frame with its corner pads
+# and screw holes, the round wall between the pads, the hub, four
+# struts on the outlet face, and a plain disc for the blades, simplified
+# from the drawing of its maker.  The axis runs along y, the outlet face
+# at y = 0, the inlet face at y = H, centered on x = z = 0.
+
+W = 120
+H = 25.4
+PAD = 4                 # Corner pads, at each face
+WALL = 119              # The round wall between the pads
+BORE = 116              # The venturi
+HOLE = 4.3
+HP = 105                # Hole square
+HUB = 43.2
+BLADE = 112             # The disc for the blades
+B0 = 8
+B1 = 18
+S0 = 0.5                # The struts, behind the outlet face
+S1 = 2.5
+SW = 1.5                # Half the strut width
+SL = 41.7               # Half the strut length along a diagonal, 59 mm
+                        # of radius, into the corner pads
+A = 0.7071068
+
+profile sq along y -W/2 -W/2 0 W/2 -W/2 0 W/2 W/2 0 -W/2 W/2 0
+extrude pad_o from 0 to PAD sq
+extrude pad_i from H-PAD to H sq
+circle wallc WALL 0 0 along y
+extrude wall from PAD to H-PAD wallc
+union frame0 pad_o pad_i wall
+
+circle bore BORE 0 0 along y
+extrude bores from -1 to H+1 bore
+circle hole HOLE -HP/2 -HP/2 along y
+extrude holes from -1 to H+1 hole pattern +x 2 HP pattern +z 2 HP
+subtract frame frame0 bores holes
+
+circle hubc HUB 0 0 along y
+extrude hub from S0 to H-3 hubc
+circle bladec BLADE 0 0 along y
+extrude blades from B0 to B1 bladec
+
+# The struts along the two diagonals, through the hub to the pads.
+profile d1 along y SL+SW*A SL-SW*A 0 SL-SW*A SL+SW*A 0
+corner -SL-SW*A -SL+SW*A 0 -SL+SW*A -SL-SW*A 0
+profile d2 along y -SL+SW*A SL+SW*A 0 -SL-SW*A SL-SW*A 0
+corner SL-SW*A -SL-SW*A 0 SL+SW*A -SL+SW*A 0
+extrude strut1 from S0 to S1 d1
+extrude strut2 from S0 to S1 d2
+
+union fan frame hub blades strut1 strut2

@@ -9,4 +9,4 @@ profile p along z 0 0 4 20 0 0 20 20 0 0 20 0
 extrude blk from 0 to 10 p draft 5
 profile q along z -1 -1 0 2 -1 0 2 30 0 -1 30 0
 extrude box from 2 to 8 q
-cut u blk box
+subtract u blk box

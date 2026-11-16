@@ -2,6 +2,7 @@
 # bracket.draw -- The drawing of bracket.sm, with every kind of record
 # Copyright (c) 2026 Jakob Kastelic
 
+units in
 template plain_c.ps
 scale 1
 field Title BRACKET, L
@@ -11,22 +12,22 @@ field Drawn JK 11/13/26
 field Eng AB 11/13/26
 material 5052-H32 ALUMINUM ALLOY, %%t THICK.
 finish NONE.
-boxed PART MARKING: PART NUMBER AND REVISION LEVEL USING RUBBER STAMP,
-+ APPROXIMATELY WHERE SHOWN (A PAIR OF PARENTHESES AND A \ PASS).
+boxed PART MARKING: PART NUMBER AND REVISION LEVEL USING RUBBER STAMP, \
+    APPROXIMATELY WHERE SHOWN (A PAIR OF PARENTHESES AND A \ PASS).
 note REMOVE ALL BURRS AND SHARP EDGES.
 note INSIDE BEND RADIUS %%r.
 revision A 11/01/26 JK INITIAL RELEASE
 revision B 11/13/26 JK ADDED THE HOLES
 view top
- lin x 0 3.937 +.010 -.000
- lin y 0 .984
- drop y 1.969
- leader 1 1 MARK HERE, %%p.5
- flag 3 1.5 3 FARSIDE
- hatch 2.5 .2 3.8 1.2
- leader 3.2 .4 MASK PRIOR TO PAINT
+ lin x 0in 3.937in +.010in -.000in
+ lin y 0in .984in
+ drop base y
+ leader 1in 1in MARK HERE, %%p.5
+ flag 3in 1.5in 3 FARSIDE
+ hatch 2.5in .2in 3.8in 1.2in
+ leader 3.2in .4in MASK PRIOR TO PAINT
 view front hidden
- drop r .197
+ drop wall r
 view right scale 2
- drop d .157
+ drop pins d
 view flat sheet 2 title FLAT PATTERN

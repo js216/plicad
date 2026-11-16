@@ -2,4 +2,4 @@
 # bad_huge.txt -- A part placed far beyond any assembly
 # Copyright (c) 2026 Jakob Kastelic
 
-a ../build/plate.fold at 0 0 1e300*1e300
+part a ../build/plate.st move 0 0 1e300*1e300

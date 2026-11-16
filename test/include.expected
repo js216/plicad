@@ -1,0 +1,6 @@
+part plate
+volume 3750.0000
+area 5375.0000
+center 50.0000 12.5000 0.7500
+bbox 0.0000 0.0000 0.0000 100.0000 25.0000 1.5000
+faces 6 plane 6 cylinder 0 cone 0 sphere 0 torus 0

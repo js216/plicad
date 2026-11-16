@@ -2,10 +2,10 @@
 // measure.c -- Print the volume, area, box, holes and flat size of parts
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: measure part.fold
-//        measure STREAM|-
+// Usage: measure STREAM|-
 //
-// For each part it prints one item per line:
+// For each folded part of a stream (stream.h) it prints one item per
+// line:
 //   part NAME
 //   volume V
 //   area A
@@ -13,15 +13,25 @@
 //   faces N plane P cylinder C [cone K]
 //   hole X Y Z d D axis AX AY AZ      (axis components without sign)
 //   flat W H area A holes N bends B  (W >= H, the box of the blank)
-// The faces line counts the cones only if there are any.  For each solid
-// of a stream (stream.h), the lines are
+//   mass M                            (in g, of a part with a material)
+//   center X Y Z                      (of its mass)
+// The faces line counts the cones only if there are any.  After the
+// parts, for each unit of parts with a material, the parts named
+// UNIT/..., a subassembly or a file of several parts (place(1)), outer
+// units first, a line
+//   unit UNIT mass M center X Y Z
+// and if any part has a material, a line
+//   total mass M center X Y Z
+// give the mass and the center of mass of those that have one.  For
+// each solid part, the lines are
 //   part NAME
 //   volume V
 //   area A
-//   centre X Y Z                      of the volume
+//   center X Y Z                      of the volume
 //   bbox XMIN YMIN ZMIN XMAX YMAX ZMAX
 //   faces N plane P cylinder C cone K sphere S torus T
-// without the centre and the box for a solid of no faces, as a common
+//   mass M                            (of a part with a material)
+// without the center and the box for a solid of no faces, as a common
 // part of solids apart leaves.
 
 #include "brep.h"
@@ -30,6 +40,7 @@
 #include "geom.h"
 #include "integ.h"
 #include "isect.h"
+#include "mesh.h"
 #include "shape.h"
 #include "stream.h"
 #include "util.h"
@@ -38,10 +49,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-// The keys of a hole: its axis, diameter and centre.
+// The keys of a hole: its axis, diameter and center.
 enum { K_AX, K_AY, K_AZ, K_D, K_CX, K_CY, K_CZ, K_N };
 #define ROUND_TO 1000.0 // Holes sort by keys rounded to 1 / ROUND_TO.
 #define ALONG 1e-9 // Sine below which a side runs along a bend axis.
+#define MM3_PER_CM3 1000.0
 
 enum { STEPS = 256 }; // Points of a curve other than a circle, for its box.
 
@@ -54,7 +66,7 @@ static double r3(double x)
 	return floor((x * ROUND_TO) + MID) / ROUND_TO;
 }
 
-// Orders holes by axis, diameter and centre, each rounded to 0.001.
+// Orders holes by axis, diameter and center, each rounded to 0.001.
 static int cmp_hole(const void *lhs, const void *rhs)
 {
 	const struct hole_out *x = lhs;
@@ -112,8 +124,9 @@ static void face_size(const struct part *p, size_t f, struct solid_size *sz)
 }
 
 // Adds the area of the side along outline edge e.  On a bend face, a
-// side across the bend is an end cap of the bend, and a side along its
-// axis is a flat strip, a free edge of the zone.
+// side across the bend is an end cap of the bend, or of the share of
+// it that the edge spans (an edge breaks where its feature changes),
+// and a side along its axis is a flat strip, a free edge of the zone.
 static void side_size(const struct part *p, const struct edge *e, double *area)
 {
 	size_t f = e->lf != NONE ? e->lf : e->rf;
@@ -127,18 +140,27 @@ static void side_size(const struct part *p, const struct edge *e, double *area)
 	    fabs(((b.x - a.x) * m->my) - ((b.y - a.y) * m->mx)) > ALONG * l) {
 		*area += l * p->t;
 	} else {
-		*area += fabs(m->ang) * DEG / 2 * (r1 * r1 - m->r * m->r);
+		*area += fabs(m->ang) * DEG / 2 * (r1 * r1 - m->r * m->r) *
+			 fmin(1, l / m->ba);
 	}
 }
 
 // Adds the wall area of hole h, and takes off what its countersink adds
-// to the hole: the volume beyond the cylinder, and the ring of the face.
+// to the hole: the volume beyond the cylinder, and the ring of the face;
+// or for a blind hole, whose disk the faces keep, its bore.
 static void hole_size(const struct part *p, const struct hole *h,
 		      struct solid_size *sz)
 {
 	double r = h->r;
 	double rc = h->rc;
 
+	if (h->blind > 0) {
+		// The faces keep their disk: its floor takes the place of the
+		// mouth, and the hole takes its bore.
+		sz->area += 2 * PI * r * h->blind;
+		sz->vol -= PI * r * r * h->blind;
+		return;
+	}
 	if (!h->side) {
 		sz->area += 2 * PI * r * p->t;
 		return;
@@ -259,14 +281,49 @@ static void print_flat(const struct part *p)
 
 // Grows x by the points of edge e: its ends and the points of a conic
 // that lie furthest along an axis.
+// The mass of parts, in g, its moment about the origin, and the parts.
+struct mass_sum {
+	double mass;
+	struct vec moment;
+	size_t parts;
+};
+
+// Prints the mass of part p if it has a material, and the center of its
+// mass for a folded part (measure prints that of a solid with its
+// volume), and adds them to t.
+static void print_mass(const struct part *p, struct mass_sum *t)
+{
+	struct shape sh;
+	struct solid_mass m;
+	double g = 0;
+	struct vec c;
+
+	if (!p->base) {
+		return;
+	}
+	part_shape(p, &sh);
+	m = shape_mass(&sh);
+	shape_free(&sh);
+	g = m.volume * p->density / MM3_PER_CM3;
+	c = mul(m.moment, 1 / m.volume);
+	printf("mass %.4f\n", g);
+	if (!p->solid) {
+		printf("center %.4f %.4f %.4f\n", c.x + 0.0, c.y + 0.0,
+		       c.z + 0.0);
+	}
+	t->mass += g;
+	t->moment = add(t->moment, mul(c, g));
+	t->parts++;
+}
+
 static void print_shape(const struct shape *sh)
 {
 	static const char *const names[SF_KINDS] = { "plane", "cylinder",
-						     "cone", "sphere",
-						     "torus" };
+						     "cone",  "sphere",
+						     "torus", "pipe" };
 	struct solid_mass m = shape_mass(sh);
 	struct box x = box_empty();
-	size_t count[SF_KINDS] = { 0, 0, 0, 0, 0 };
+	size_t count[SF_KINDS] = { 0, 0, 0, 0, 0, 0 };
 	struct vec c = mul(m.moment, 1 / m.volume);
 
 	for (size_t i = 0; i < sh->ne; i++) {
@@ -280,7 +337,7 @@ static void print_shape(const struct shape *sh)
 	}
 	printf("part %s\nvolume %.4f\narea %.4f\n", sh->name, m.volume, m.area);
 	if (sh->nf) {
-		printf("centre %.4f %.4f %.4f\n", c.x + 0.0, c.y + 0.0,
+		printf("center %.4f %.4f %.4f\n", c.x + 0.0, c.y + 0.0,
 		       c.z + 0.0);
 		printf("bbox %.4f %.4f %.4f %.4f %.4f %.4f\n", x.lo.x + 0.0,
 		       x.lo.y + 0.0, x.lo.z + 0.0, x.hi.x + 0.0, x.hi.y + 0.0,
@@ -288,38 +345,103 @@ static void print_shape(const struct shape *sh)
 	}
 	printf("faces %zu", sh->nf);
 	for (int k = 0; k < SF_KINDS; k++) {
-		printf(" %s %zu", names[k], count[k]);
+		if (k != SF_PIPE || count[k]) {
+			printf(" %s %zu", names[k], count[k]);
+		}
 	}
 	printf("\n");
+}
+
+// Prints the mass line of sum t, after the words head.
+static void print_sum(const char *head, struct mass_sum t)
+{
+	struct vec c = t.mass > 0 ? mul(t.moment, 1 / t.mass) : v3(0, 0, 0);
+
+	printf("%s mass %.4f center %.4f %.4f %.4f\n", head, t.mass, c.x + 0.0,
+	       c.y + 0.0, c.z + 0.0);
+}
+
+// Whether the name of part p lies in the unit of the first k characters
+// of the name u.
+static int in_unit(const struct part *p, const char *u, size_t k)
+{
+	return strncmp(p->name, u, k) == 0 && p->name[k] == '/';
+}
+
+// Prints the unit lines of the n parts ps, whose masses are in m.
+static void print_units(const struct part *ps, const struct mass_sum *m,
+			size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		const char *u = ps[i].name;
+
+		for (const char *sl = strchr(u, '/'); sl;
+		     sl = strchr(sl + 1, '/')) {
+			size_t k = (size_t)(sl - u);
+			struct mass_sum t = { 0, v3(0, 0, 0), 0 };
+			int first = 1;
+			char *head = NULL;
+
+			for (size_t j = 0; j < i && first; j++) {
+				first = !in_unit(&ps[j], u, k);
+			}
+			for (size_t j = i; first && j < n; j++) {
+				if (in_unit(&ps[j], u, k)) {
+					t.mass += m[j].mass;
+					t.moment = add(t.moment, m[j].moment);
+					t.parts += m[j].parts;
+				}
+			}
+			if (!first || !t.parts) {
+				continue;
+			}
+			head = xmalloc(k + sizeof("unit "));
+			memcpy(head, "unit ", sizeof("unit ") - 1);
+			memcpy(head + sizeof("unit ") - 1, u, k);
+			head[k + sizeof("unit ") - 1] = 0;
+			print_sum(head, t);
+			free(head);
+		}
+	}
 }
 
 int main(int argc, char **argv)
 {
 	struct part *ps = NULL;
 	size_t n = 0;
+	struct mass_sum total = { 0, v3(0, 0, 0), 0 };
+	struct mass_sum *m = NULL;
 
 	if (argc != 2) {
-		die("usage: measure part.fold|STREAM|-");
+		die("usage: measure STREAM|-");
 	}
-	if (stream_file(argv[1])) {
-		struct stream st;
-
-		stream_read(&st, argv[1]);
-		for (size_t i = 0; i < st.nsh; i++) {
-			print_shape(&st.sh[i]);
-		}
-		stream_free(&st);
-		close_stdout();
-		return 0;
-	}
-	n = read_fold(argv[1], &ps);
+	n = read_parts(argv[1], &ps);
+	m = xmalloc((n + 1) * sizeof(*m));
 	for (size_t i = 0; i < n; i++) {
-		printf("part %s\n", ps[i].name);
-		print_size(&ps[i]);
-		print_box(&ps[i]);
-		print_holes(&ps[i]);
-		print_flat(&ps[i]);
+		m[i] = (struct mass_sum){ 0, v3(0, 0, 0), 0 };
+		if (ps[i].solid) {
+			struct shape sh;
+
+			part_shape(&ps[i], &sh);
+			print_shape(&sh);
+			shape_free(&sh);
+		} else {
+			printf("part %s\n", ps[i].name);
+			print_size(&ps[i]);
+			print_box(&ps[i]);
+			print_holes(&ps[i]);
+			print_flat(&ps[i]);
+		}
+		print_mass(&ps[i], &m[i]);
+		total.mass += m[i].mass;
+		total.moment = add(total.moment, m[i].moment);
+		total.parts += m[i].parts;
 	}
+	print_units(ps, m, n);
+	if (total.parts) {
+		print_sum("total", total);
+	}
+	free(m);
 	free_parts(ps, n);
 	close_stdout();
 	return 0;

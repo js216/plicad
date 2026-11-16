@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# molded.draw -- The drawing of textured.part, a molding with a texture
+# Copyright (c) 2026 Jakob Kastelic
+
+units mm
+template plain_c.ps
+scale 1
+field Title MOLDED BLOCK
+material ABS.
+finish SEE TEXTURE.
+view top
+view front

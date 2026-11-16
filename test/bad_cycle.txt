@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_cycle.txt -- An assembly that holds itself through test/cycle.txt
+# Copyright (c) 2026 Jakob Kastelic
+
+part loop cycle.txt

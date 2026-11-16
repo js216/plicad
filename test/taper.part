@@ -6,4 +6,4 @@ profile r along z 0 0 0 20 0 0 20 10 0 0 10 0
 extrude blk from 0 to 5 r
 profile q along y 5 0 0 15 0 0 15 5 0 5 5 0
 extrude sl from -1 to 11 q draft 10
-cut u blk sl
+subtract u blk sl

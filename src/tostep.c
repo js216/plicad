@@ -1,24 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// tostep.c -- Write parts as a STEP AP214 file of planes, cylinders and tori
+// tostep.c -- Write parts as a STEP AP214 file of exact solids
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: tostep part.fold > part.step
-//        tostep STREAM|- > part.step
+// Usage: tostep STREAM|- > part.step
 //
-// Every part becomes a manifold solid in one shape representation.  Each
+// Every part of the stream (stream.h) becomes a manifold solid in one
+// shape representation, one solid for each shell; a shell that is a void
+// is refused, and so is any source line no tool of a pipe took.  Each
 // part is in world coordinates, in mm, at its place.  A part with a
-// colour gets an AP214 surface style in that colour.  From a stream
-// (stream.h), the last tool of a pipe, it writes each solid, one solid
-// for each shell, and refuses any source line no tool took, and a shell
-// that is a void.  The faces are planes, cylinders, cones, spheres and
-// tori.  An ellipse, and an arc of a circle on a sphere, go out as
-// several edges on the one curve (pieces_of).
+// material gets an AP214 surface style in its color.  The faces are
+// planes, cylinders, cones, spheres and tori, and pipes, which no STEP
+// surface is: each goes out as a rational B-spline surface that is the
+// pipe over its face, exactly (pipe_surf).  An ellipse, and an arc of
+// a circle on a sphere, go out as several edges on the one curve
+// (pieces_of).  A nodal section of a torus, which no STEP curve is, goes
+// out as edges on cubic B-splines, which meet the curve and its tangents
+// at their ends and keep within about 1e-10 mm of it between: their
+// misfit grows with the tube of the torus and the fourth power of the
+// piece, which is NODAL_PIECE over the fourth root of the tube in mm.
+// Its faces stay exact.
 
 #include "brep.h"
 #include "bsolid.h"
 #include "fold.h"
 #include "geom.h"
 #include "integ.h"
+#include "isect.h"
+#include "mesh.h"
 #include "shape.h"
 #include "stream.h"
 #include "util.h"
@@ -33,6 +41,7 @@ enum {
 };
 #define ZERO 1e-13 // Reals closer to 0 than this are 0.
 #define ARC_MAX (PI / 16) // The longest piece of an edge OCCT must fit.
+#define NODAL_PIECE (PI / 256) // A piece of a nodal section of a 1 mm tube.
 
 // Prints a STEP real, which always has a decimal point.
 static void real(double x)
@@ -243,6 +252,9 @@ static unsigned long shell_solid(unsigned long *id, const struct face_ids *fs,
 	return *id;
 }
 
+static void shape_solid(unsigned long *id, const struct shape *sh,
+			struct solids *sd, size_t part);
+
 // Prints part i of ps as one solid for each of its pieces, and adds them
 // to sd.
 static void solid(unsigned long *id, const struct part *ps, size_t i,
@@ -255,6 +267,14 @@ static void solid(unsigned long *id, const struct part *ps, size_t i,
 	size_t n = 0;
 	struct face_ids fs;
 
+	if (ps[i].solid) {
+		struct shape sh;
+
+		part_shape(&ps[i], &sh);
+		shape_solid(id, &sh, sd, i);
+		shape_free(&sh);
+		return;
+	}
 	brep_build(&ps[i], &b);
 	eid = xmalloc((b.ne + 1) * sizeof(*eid));
 	fid = xmalloc((b.nf + 1) * sizeof(*fid));
@@ -283,13 +303,13 @@ static void solid(unsigned long *id, const struct part *ps, size_t i,
 	brep_free(&b);
 }
 
-// Prints the AP214 style of solid s in the colour of part p, and returns
+// Prints the AP214 style of solid s in the color of part p, and returns
 // the id of its STYLED_ITEM.
 static unsigned long style(unsigned long *id, const struct part *p,
 			   unsigned long s)
 {
 	printf("#%lu=COLOUR_RGB(", ++*id);
-	string(p->colour);
+	string(p->base);
 	for (int i = 0; i < 3; i++) {
 		printf(",");
 		real(p->rgb[i]);
@@ -344,7 +364,7 @@ static void header(unsigned long *id, const char *name)
 	*id = HEAD_IDS;
 }
 
-// Prints the colours of the parts that have one, as one presentation.
+// Prints the colors of the parts that have one, as one presentation.
 static void styles(unsigned long *id, const struct part *ps,
 		   const struct solids *sd)
 {
@@ -354,7 +374,7 @@ static void styles(unsigned long *id, const struct part *ps,
 	for (size_t i = 0; i < sd->n; i++) {
 		const struct part *p = &ps[sd->s[i].part];
 
-		if (p->colour) {
+		if (p->base) {
 			items[k++] = style(id, p, sd->s[i].id);
 		}
 	}
@@ -401,10 +421,12 @@ static unsigned long shape_curve(unsigned long *id, const struct curve *c)
 // narrows along its axis turns round, for a positive half angle.
 static unsigned long shape_surf(unsigned long *id, const struct surf *s)
 {
-	static const char *const names[SF_KINDS] = {
-		"PLANE", "CYLINDRICAL_SURFACE", "CONICAL_SURFACE",
-		"SPHERICAL_SURFACE", "TOROIDAL_SURFACE"
-	};
+	static const char *const names[SF_KINDS] = { "PLANE",
+						     "CYLINDRICAL_SURFACE",
+						     "CONICAL_SURFACE",
+						     "SPHERICAL_SURFACE",
+						     "TOROIDAL_SURFACE",
+						     "" };
 	struct axes pl = { s->o, s->n, s->x };
 	unsigned long ax = 0;
 
@@ -425,6 +447,438 @@ static unsigned long shape_surf(unsigned long *id, const struct surf *s)
 		real(s->r2);
 	}
 	printf(");\n");
+	return *id;
+}
+
+// A pipe goes out as a rational B-spline surface that holds its face
+// exactly.  Over a piece of the ellipse from u0 to u0 + du, a rational
+// quadratic Bezier curve is the ellipse, c(s) = N(s) / W(s), with the
+// weights 1, cos(du / 2), 1, and its tangent runs along the quadratic
+// D(s) = N' W - N W'.  The ring of radius rt about c(s) square to D is
+//   q(s, g) = ((g^2 - |D|^2) m + 2 g (m x D)) / (g^2 + |D|^2),
+// m the unit normal n of the ellipse or its opposite, which runs once
+// round the ring as g runs from -inf to inf, from m at both ends; the
+// angle f from -m toward m x D has g = |D| tan(f / 2).  So
+//   S(s, g) = (N (g^2 + |D|^2) + rt W ((g^2 - |D|^2) m + 2 g (m x D)))
+//             / (W (g^2 + |D|^2))
+// is of degree 6 in s and 2 in g, and the pieces of equal du join, as D
+// is the same at their ends.  m is the one whose end of g the face lies
+// farthest from, and g spans the face, with room to spare, from where
+// it is least to where it is greatest, split at 0 so that no weight
+// falls below 0.
+enum {
+	PIPE_DEG = 6, // The degree of a pipe in u.
+	PIPE_ROWS = PIPE_DEG + 1,
+	PIPE_PTS = 32, // The points of each edge of a face of a pipe.
+	PIPE_PIECES = 64, // The most pieces of a pipe along its ellipse.
+	NET_ROWS = (PIPE_PIECES * PIPE_DEG) + 1, // The most rows of its net.
+	NET_COLS = 5 // The most columns: two pieces of degree 2.
+};
+#define PIPE_PIECE (PI / 4) // The longest piece of a pipe along u.
+#define PIPE_PAD 0.05 // The room along u past the face, in radians.
+#define RING_PAD 0.1 // The room round the ring past the face, in radians.
+#define SPEED_PAD 0.05 // The share of room on the speed of the pieces.
+
+static double binom(int n, int k)
+{
+	double c = 1;
+
+	for (int i = 1; i <= k; i++) {
+		c = c * (n - k + i) / i;
+	}
+	return c;
+}
+
+// The product of the Bernstein forms f, of degree m, and g, of degree n,
+// with dim numbers each, f a scalar if fdim is 1, into h of degree m + n.
+struct bern {
+	double c[PIPE_ROWS][4];
+	int deg, dim;
+};
+
+static struct bern bern_mul(const struct bern *f, const struct bern *g)
+{
+	struct bern h;
+	int dim = f->dim > g->dim ? f->dim : g->dim;
+
+	memset(&h, 0, sizeof(h));
+	h.deg = f->deg + g->deg;
+	h.dim = dim;
+	for (int i = 0; i <= f->deg; i++) {
+		for (int j = 0; j <= g->deg && i + j < PIPE_ROWS; j++) {
+			double w = binom(f->deg, i) * binom(g->deg, j) /
+				   binom(h.deg, i + j);
+
+			for (int k = 0; k < dim; k++) {
+				double a = f->c[i][f->dim == 1 ? 0 : k];
+				double b = g->c[j][g->dim == 1 ? 0 : k];
+
+				h.c[i + j][k] += w * a * b;
+			}
+		}
+	}
+	return h;
+}
+
+static struct bern bern_sum(const struct bern *f, const struct bern *g,
+			    double k)
+{
+	struct bern h = *f;
+
+	for (int i = 0; i <= f->deg; i++) {
+		for (int j = 0; j < f->dim; j++) {
+			h.c[i][j] += k * g->c[i][j];
+		}
+	}
+	return h;
+}
+
+// The Bernstein form of degree d, all of whose numbers are 1: a way to
+// raise the degree of another by d in a product.
+static struct bern bern_one(int d)
+{
+	struct bern h;
+
+	memset(&h, 0, sizeof(h));
+	h.deg = d;
+	h.dim = 1;
+	for (int i = 0; i <= d; i++) {
+		h.c[i][0] = 1;
+	}
+	return h;
+}
+
+static struct vec bvec(const struct bern *f, int i)
+{
+	return v3(f->c[i][0], f->c[i][1], f->c[i][2]);
+}
+
+static void set_bvec(struct bern *f, int i, struct vec v)
+{
+	f->c[i][0] = v.x;
+	f->c[i][1] = v.y;
+	f->c[i][2] = v.z;
+}
+
+// A piece of the ellipse of pipe s from u0 to u0 + du: N (with its
+// weight as the fourth number), W and D.
+struct spine {
+	struct bern n, w, d;
+};
+
+static struct spine spine_piece(const struct surf *s, double u0, double du)
+{
+	struct vec y = frame_y(s->n, s->x);
+	double h = cos(du / 2);
+	const double wt[3] = { 1, h, 1 };
+	const double ang[3] = { u0, u0 + (du / 2), u0 + du };
+	struct vec p[3];
+	struct spine sp;
+
+	memset(&sp, 0, sizeof(sp));
+	sp.n.deg = sp.w.deg = sp.d.deg = 2;
+	sp.n.dim = 4;
+	sp.w.dim = 1;
+	sp.d.dim = 3;
+	for (int k = 0; k < 3; k++) {
+		double r = k == 1 ? 1 / h : 1;
+
+		p[k] = add(s->o, add(mul(s->x, s->r * r * cos(ang[k])),
+				     mul(y, s->r3 * r * sin(ang[k]))));
+		set_bvec(&sp.n, k, mul(p[k], wt[k]));
+		sp.n.c[k][3] = wt[k];
+		sp.w.c[k][0] = wt[k];
+	}
+	set_bvec(&sp.d, 0, mul(sub(p[1], p[0]), 2 * wt[0] * wt[1]));
+	set_bvec(&sp.d, 1, mul(sub(p[2], p[0]), wt[0] * wt[2]));
+	set_bvec(&sp.d, 2, mul(sub(p[2], p[1]), 2 * wt[1] * wt[2]));
+	return sp;
+}
+
+// The value of the Bernstein form f at t, its first three numbers.
+static struct vec bern_at(const struct bern *f, double t)
+{
+	struct vec v = v3(0, 0, 0);
+
+	for (int i = 0; i <= f->deg; i++) {
+		double b =
+			binom(f->deg, i) * pow(t, i) * pow(1 - t, f->deg - i);
+
+		v = add(v, mul(bvec(f, i), b));
+	}
+	return v;
+}
+
+// The homogeneous points of the piece sp of pipe s, its ring from m,
+// for g from g0 to g1: row i of degree 6 in s, column j of degree 2.
+static void pipe_patch(const struct surf *s, const struct spine *sp,
+		       struct vec m, struct span g, struct bern *col)
+{
+	struct bern dd = bern_mul(&sp->d, &sp->d);
+	struct bern md;
+	struct bern one2 = bern_one(2);
+	const double g2[3] = { g.lo * g.lo, g.lo * g.hi, g.hi * g.hi };
+	const double g1[3] = { g.lo, (g.lo + g.hi) / 2, g.hi };
+
+	// dd = D . D: bern_mul gives the products of the numbers one by
+	// one; their sum is the dot.
+	for (int i = 0; i <= dd.deg; i++) {
+		dd.c[i][0] += dd.c[i][1] + dd.c[i][2];
+		dd.c[i][1] = dd.c[i][2] = 0;
+	}
+	dd.dim = 1;
+	md = sp->d;
+	for (int i = 0; i <= md.deg; i++) {
+		set_bvec(&md, i, cross(m, bvec(&sp->d, i)));
+	}
+	md = bern_mul(&md, &one2);
+	for (int j = 0; j < 3; j++) {
+		struct bern den;
+		struct bern num;
+		struct bern a;
+		struct bern b;
+
+		memset(&den, 0, sizeof(den));
+		memset(&num, 0, sizeof(num));
+		den.deg = num.deg = dd.deg;
+		den.dim = 1;
+		num.dim = 3;
+		for (int i = 0; i <= dd.deg; i++) {
+			den.c[i][0] = g2[j] + dd.c[i][0];
+			set_bvec(&num, i,
+				 add(mul(m, g2[j] - dd.c[i][0]),
+				     mul(bvec(&md, i), 2 * g1[j])));
+		}
+		a = bern_mul(&sp->n, &den); // N den, and W den last.
+		b = bern_mul(&sp->w, &num);
+		col[j] = bern_sum(&a, &b, s->r2);
+		col[j].dim = 4;
+	}
+}
+
+// The parameter u near ref and the angle f round the ring from -m of
+// the point p of pipe s, for m = sign n.
+static void ring_angle(const struct surf *s, struct vec p, double ref, int sign,
+		       double *u, double *f)
+{
+	struct vec y = frame_y(s->n, s->x);
+	struct line3 c;
+	struct vec t;
+	struct vec m = mul(s->n, sign);
+	struct vec q;
+
+	*u = angle_near(pipe_foot(s, p), ref);
+	c = pipe_ring(s, *u);
+	t = unit(add(mul(s->x, -s->r * sin(*u)), mul(y, s->r3 * cos(*u))));
+	q = sub(p, c.o);
+	*f = atan2(dot(q, cross(m, t)), -dot(q, m));
+}
+
+// The reach of face fi of pipe sh along u and round its ring, from
+// either end, at the points of its edges.
+struct pipe_reach {
+	struct span u, f[2];
+};
+
+static struct pipe_reach face_reach_pipe(const struct shape *sh, size_t fi)
+{
+	const struct surf *s = &sh->f[fi].s;
+	struct facemap fm;
+	struct urange r = face_uses(sh, fi);
+	struct pipe_reach x = { { HUGE_VAL, -HUGE_VAL },
+				{ { HUGE_VAL, -HUGE_VAL },
+				  { HUGE_VAL, -HUGE_VAL } } };
+
+	facemap_init(&fm, sh, fi);
+	for (size_t k = r.first; k < r.end; k++) {
+		const struct sedge *e = &sh->e[sh->u[k].e];
+
+		for (int i = 0; i <= PIPE_PTS; i++) {
+			struct vec p = edge_at(e, i / (double)PIPE_PTS);
+
+			for (int side = 0; side < 2; side++) {
+				double u = 0;
+				double f = 0;
+
+				ring_angle(s, p, fm.ref.u, side ? -1 : 1, &u,
+					   &f);
+				x.u.lo = fmin(x.u.lo, u);
+				x.u.hi = fmax(x.u.hi, u);
+				x.f[side].lo = fmin(x.f[side].lo, f);
+				x.f[side].hi = fmax(x.f[side].hi, f);
+			}
+		}
+	}
+	return x;
+}
+
+// Prints the control points of the net and returns the id of the first;
+// row i holds those of the s of point i, their weights in w.
+static unsigned long net_points(unsigned long *id, double (*net)[4],
+				size_t rows, size_t cols, double *w,
+				const char *name)
+{
+	unsigned long first = *id + 1;
+
+	for (size_t i = 0; i < rows; i++) {
+		for (size_t j = 0; j < cols; j++) {
+			const double *h = net[(j * NET_ROWS) + i];
+
+			w[(i * cols) + j] = h[3];
+			if (!(h[3] > 0)) {
+				die("tostep: the pipe of face %s has a weight "
+				    "not above 0",
+				    name);
+			}
+			(void)triple(id, "CARTESIAN_POINT",
+				     v3(h[0] / h[3], h[1] / h[3], h[2] / h[3]));
+		}
+	}
+	return first;
+}
+
+// Prints the list of n knots or multiplicities k.
+static void knot_list(const double *k, size_t n, int whole)
+{
+	printf("(");
+	for (size_t i = 0; i < n; i++) {
+		printf("%s", i ? "," : "");
+		if (whole) {
+			printf("%d", (int)k[i]);
+		} else {
+			real(k[i]);
+		}
+	}
+	printf(")");
+}
+
+// Prints the surface of face fi of sh, a pipe, as a rational B-spline
+// surface that holds the face, and returns its id; *same gets whether
+// its normal is the outward one of the face.  Its normal, s x g, runs
+// toward the center of the ring, against that of the pipe.
+static unsigned long pipe_surf(unsigned long *id, const struct shape *sh,
+			       size_t fi, int *same)
+{
+	const struct sface *fc = &sh->f[fi];
+	const struct surf *s = &fc->s;
+	struct pipe_reach x = face_reach_pipe(sh, fi);
+	int side = fmax(fabs(x.f[1].lo), fabs(x.f[1].hi)) <
+		   fmax(fabs(x.f[0].lo), fabs(x.f[0].hi));
+	struct span f = x.f[side];
+	struct span u = { x.u.lo - PIPE_PAD, x.u.hi + PIPE_PAD };
+	struct vec m = mul(s->n, side ? -1 : 1);
+	size_t np = 0;
+	double du = 0;
+	double lo = HUGE_VAL;
+	double hi = 0;
+	struct span g;
+	double cut = 0;
+	size_t ng = 0;
+	size_t rows = 0;
+	size_t cols = 0;
+	double(*net)[4] = NULL;
+	double *w = NULL;
+	unsigned long first = 0;
+	double uk[PIPE_PIECES + 1];
+	double um[PIPE_PIECES + 1];
+	double vk[3];
+	double vm[3];
+
+	if (fmax(fabs(f.lo), fabs(f.hi)) > PI - (2 * RING_PAD)) {
+		die("tostep: face %s of a pipe runs round its tube", fc->name);
+	}
+	if (u.hi - u.lo > 2 * PI) {
+		u.lo = ((x.u.lo + x.u.hi) / 2) - PI;
+		u.hi = u.lo + (2 * PI);
+	}
+	du = ceil((u.hi - u.lo) / PIPE_PIECE);
+	np = du < 1 ? 1 : du > PIPE_PIECES ? PIPE_PIECES : (size_t)du;
+	du = (u.hi - u.lo) / (double)np;
+	for (size_t i = 0; i < np; i++) {
+		struct spine sp = spine_piece(s, u.lo + (du * (double)i), du);
+
+		for (int k = 0; k <= PIPE_PTS; k++) {
+			double l = len(bern_at(&sp.d, k / (double)PIPE_PTS));
+
+			lo = fmin(lo, l);
+			hi = fmax(hi, l);
+		}
+	}
+	lo *= 1 - SPEED_PAD;
+	hi *= 1 + SPEED_PAD;
+	f.lo = fmax(f.lo - RING_PAD, -PI + RING_PAD);
+	f.hi = fmin(f.hi + RING_PAD, PI - RING_PAD);
+	g.lo = (f.lo < 0 ? hi : lo) * tan(f.lo / 2);
+	g.hi = (f.hi > 0 ? hi : lo) * tan(f.hi / 2);
+	ng = g.lo < 0 && g.hi > 0 ? 2 : 1;
+	cut = ng == 2 ? -g.lo / (g.hi - g.lo) : 1;
+	rows = (PIPE_DEG * np) + 1;
+	cols = (2 * ng) + 1;
+	net = xcalloc(NET_ROWS * NET_COLS, sizeof(*net));
+	w = xmalloc((rows * cols + 1) * sizeof(*w));
+	for (size_t i = 0; i < np; i++) {
+		struct spine sp = spine_piece(s, u.lo + (du * (double)i), du);
+
+		for (size_t k = 0; k < ng; k++) {
+			struct span gk = { k ? 0 : g.lo,
+					   ng == 2 && !k ? 0 : g.hi };
+			struct bern col[3];
+
+			pipe_patch(s, &sp, m, gk, col);
+			for (int j = 0; j < 3; j++) {
+				for (int r = 0; r <= PIPE_DEG; r++) {
+					size_t at = (((2 * k) + (size_t)j) *
+						     NET_ROWS) +
+						    (PIPE_DEG * i) + (size_t)r;
+
+					memcpy(net[at], col[j].c[r],
+					       sizeof(net[at]));
+				}
+			}
+		}
+	}
+	first = net_points(id, net, rows, cols, w, fc->name);
+	for (size_t i = 0; i <= np; i++) {
+		uk[i] = (double)i;
+		um[i] = i == 0 || i == np ? PIPE_DEG + 1 : PIPE_DEG;
+	}
+	vk[0] = 0;
+	vk[1] = ng == 2 ? cut : 1;
+	vk[2] = 1;
+	vm[0] = 3;
+	vm[1] = ng == 2 ? 2 : 3;
+	vm[2] = 3;
+	printf("#%lu=(BOUNDED_SURFACE()B_SPLINE_SURFACE(%d,2,(", ++*id,
+	       PIPE_DEG);
+	for (size_t i = 0; i < rows; i++) {
+		printf("%s(", i ? "," : "");
+		for (size_t j = 0; j < cols; j++) {
+			printf("%s#%lu", j ? "," : "", first + (i * cols) + j);
+		}
+		printf(")");
+	}
+	printf("),.UNSPECIFIED.,.F.,.F.,.F.)B_SPLINE_SURFACE_WITH_KNOTS(");
+	knot_list(um, np + 1, 1);
+	printf(",");
+	knot_list(vm, ng + 1, 1);
+	printf(",");
+	knot_list(uk, np + 1, 0);
+	printf(",");
+	knot_list(vk, ng == 2 ? 3 : 2, 0);
+	printf(",.UNSPECIFIED.)GEOMETRIC_REPRESENTATION_ITEM()"
+	       "RATIONAL_B_SPLINE_SURFACE((");
+	for (size_t i = 0; i < rows; i++) {
+		printf("%s(", i ? "," : "");
+		for (size_t j = 0; j < cols; j++) {
+			printf("%s", j ? "," : "");
+			real(w[(i * cols) + j]);
+		}
+		printf(")");
+	}
+	printf("))REPRESENTATION_ITEM('')SURFACE());\n");
+	*same = fc->sense < 0;
+	free(net);
+	free(w);
 	return *id;
 }
 
@@ -454,7 +908,34 @@ static unsigned long pieces_of(const struct shape *sh, size_t e,
 	    (ed->c.kind == CV_CIRCLE && on_sphere[e])) {
 		n = ceil((ed->t1 - ed->t0) / ARC_MAX);
 	}
+	if (ed->c.kind == CV_NODAL) {
+		n = ceil((ed->t1 - ed->t0) * sqrt(sqrt(fmax(1, ed->c.b))) /
+			 NODAL_PIECE);
+	}
 	return n < 1 ? 1 : (unsigned long)n;
+}
+
+// Prints the piece of nodal section c from t0 to t1 as a cubic Bezier
+// curve, a B-spline, and returns its id: its ends and the tangents there
+// are those of c.
+static unsigned long nodal_piece(unsigned long *id, const struct curve *c,
+				 double t0, double t1)
+{
+	double h = t1 - t0;
+	struct vec p[4];
+	unsigned long pid[4];
+
+	p[0] = curve_at(c, t0);
+	p[3] = curve_at(c, t1);
+	p[1] = add(p[0], mul(curve_tan(c, t0), h / 3));
+	p[2] = sub(p[3], mul(curve_tan(c, t1), h / 3));
+	for (int k = 0; k < 4; k++) {
+		pid[k] = triple(id, "CARTESIAN_POINT", p[k]);
+	}
+	printf("#%lu=B_SPLINE_CURVE_WITH_KNOTS('',3,(#%lu,#%lu,#%lu,#%lu),"
+	       ".UNSPECIFIED.,.F.,.F.,(4,4),(0.,1.),.UNSPECIFIED.);\n",
+	       ++*id, pid[0], pid[1], pid[2], pid[3]);
+	return *id;
 }
 
 // Prints edge e of sh as its pieces, with new vertices between them,
@@ -462,7 +943,8 @@ static unsigned long pieces_of(const struct shape *sh, size_t e,
 static struct edge_ids shape_edge_out(unsigned long *id, const struct sedge *ed,
 				      unsigned long n, const unsigned long *vid)
 {
-	unsigned long c = shape_curve(id, &ed->c);
+	unsigned long c = ed->c.kind == CV_NODAL ? 0 : shape_curve(id, &ed->c);
+	unsigned long *cid = xmalloc((n + 1) * sizeof(*cid));
 	unsigned long prev = vid[ed->v0];
 	struct edge_ids r = { 0, n };
 	unsigned long mid0 = *id + 1;
@@ -474,15 +956,22 @@ static struct edge_ids shape_edge_out(unsigned long *id, const struct sedge *ed,
 
 		printf("#%lu=VERTEX_POINT('',#%lu);\n", ++*id, pt);
 	}
+	for (unsigned long j = 0; j < n && ed->c.kind == CV_NODAL; j++) {
+		double h = (ed->t1 - ed->t0) / (double)n;
+
+		cid[j] = nodal_piece(id, &ed->c, ed->t0 + (h * (double)j),
+				     ed->t0 + (h * (double)(j + 1)));
+	}
 	r.first = *id + 1;
 	for (unsigned long j = 0; j < n; j++) {
 		unsigned long next = j + 1 < n ? mid0 + (2 * j) + 1 :
 						 vid[ed->v1];
 
 		printf("#%lu=EDGE_CURVE('',#%lu,#%lu,#%lu,.T.);\n", ++*id, prev,
-		       next, c);
+		       next, ed->c.kind == CV_NODAL ? cid[j] : c);
 		prev = next;
 	}
+	free(cid);
 	return r;
 }
 
@@ -492,6 +981,7 @@ static unsigned long shape_face_out(unsigned long *id, const struct shape *sh,
 	const struct sface *f = &sh->f[fi];
 	unsigned long *bounds = xmalloc((f->nloops + 1) * sizeof(*bounds));
 	unsigned long s = 0;
+	int same = f->sense > 0;
 
 	for (size_t l = 0; l < f->nloops; l++) {
 		const struct sloop *lp = &sh->l[f->loop0 + l];
@@ -517,14 +1007,18 @@ static unsigned long shape_face_out(unsigned long *id, const struct shape *sh,
 		printf("));\n#%lu=FACE_BOUND('',#%lu,.T.);\n", *id + 1, *id);
 		bounds[l] = ++*id;
 	}
-	s = shape_surf(id, &f->s);
+	if (f->s.kind == SF_PIPE) {
+		s = pipe_surf(id, sh, fi, &same);
+	} else {
+		s = shape_surf(id, &f->s);
+	}
 	printf("#%lu=ADVANCED_FACE(", ++*id);
 	string(f->name);
 	printf(",(");
 	for (size_t l = 0; l < f->nloops; l++) {
 		printf("%s#%lu", l ? "," : "", bounds[l]);
 	}
-	printf("),#%lu,.%c.);\n", s, f->sense > 0 ? 'T' : 'F');
+	printf("),#%lu,.%c.);\n", s, same ? 'T' : 'F');
 	free(bounds);
 	return *id;
 }
@@ -548,9 +1042,10 @@ static void refuse_voids(const struct shape *sh, const size_t *shell, size_t n)
 	free(vol);
 }
 
-// Prints solid sh, one STEP solid for each shell, and adds them to sd.
+// Prints solid sh, one STEP solid for each shell, and adds them to sd
+// as solids of part part.
 static void shape_solid(unsigned long *id, const struct shape *sh,
-			struct solids *sd)
+			struct solids *sd, size_t part)
 {
 	unsigned long *vid = xmalloc((sh->nv + 1) * sizeof(*vid));
 	struct edge_ids *eid = xmalloc((sh->ne + 1) * sizeof(*eid));
@@ -565,7 +1060,8 @@ static void shape_solid(unsigned long *id, const struct shape *sh,
 		struct urange r = face_uses(sh, f);
 
 		for (size_t i = r.first; i < r.end; i++) {
-			if (sh->f[f].s.kind == SF_SPHERE) {
+			if (sh->f[f].s.kind == SF_SPHERE ||
+			    sh->f[f].s.kind == SF_PIPE) {
 				on_sphere[sh->u[i].e] = 1;
 			}
 		}
@@ -585,7 +1081,7 @@ static void shape_solid(unsigned long *id, const struct shape *sh,
 	}
 	for (size_t k = 0; k < n; k++) {
 		unsigned long shl = shell_solid(id, &fs, k);
-		struct solid_ref r = { 0, 0 };
+		struct solid_ref r = { 0, part };
 
 		printf("#%lu=MANIFOLD_SOLID_BREP(", ++*id);
 		string(sh->name);
@@ -618,71 +1114,27 @@ static void representation(unsigned long *id, const char *name,
 	(*id)++;
 }
 
-// Writes the solids of a stream.
-static void stream_step(const char *path)
-{
-	struct stream st;
-	struct solids sd = { NULL, 0, 0 };
-	unsigned long id = 0;
-	char *name = NULL;
-
-	stream_read(&st, path);
-	stream_refuse_left(&st);
-	if (!st.nsh) {
-		die("%s: no solid", path);
-	}
-	name = base_name(st.src);
-	header(&id, name);
-	for (size_t i = 0; i < st.nsh; i++) {
-		shape_solid(&id, &st.sh[i], &sd);
-	}
-	representation(&id, name, &sd);
-	printf("ENDSEC;\nEND-ISO-10303-21;\n");
-	free(sd.s);
-	free(name);
-	stream_free(&st);
-}
-
 int main(int argc, char **argv)
 {
-	struct axes pl;
 	struct part *ps = NULL;
 	size_t n = 0;
 	char *name = NULL;
 	struct solids sd = { NULL, 0, 0 };
-	unsigned long origin = 0;
 	unsigned long id = 0;
 
 	if (argc != 2) {
-		die("usage: tostep part.fold|STREAM|- > part.step");
+		die("usage: tostep STREAM|- > part.step");
 	}
-	if (stream_file(argv[1])) {
-		stream_step(argv[1]);
-		close_stdout();
-		return 0;
-	}
-	n = read_fold(argv[1], &ps);
+	n = read_parts(argv[1], &ps);
 	if (!n) {
 		die("%s: no parts", argv[1]);
 	}
-	name = base_name(argv[1]);
+	name = base_name(strcmp(argv[1], "-") == 0 ? "stdin" : argv[1]);
 	header(&id, name);
 	for (size_t i = 0; i < n; i++) {
 		solid(&id, ps, i, &sd);
 	}
-	pl.o = v3(0, 0, 0);
-	pl.z = v3(0, 0, 1);
-	pl.x = v3(1, 0, 0);
-	origin = placement(&id, pl);
-	printf("#%lu=ADVANCED_BREP_SHAPE_REPRESENTATION(", ++id);
-	string(name);
-	printf(",(#%lu", origin);
-	for (size_t i = 0; i < sd.n; i++) {
-		printf(",#%lu", sd.s[i].id);
-	}
-	printf("),#13);\n#%lu=SHAPE_DEFINITION_REPRESENTATION(#8,#%lu);\n",
-	       id + 1, id);
-	id++;
+	representation(&id, name, &sd);
 	styles(&id, ps, &sd);
 	printf("ENDSEC;\nEND-ISO-10303-21;\n");
 	free(sd.s);

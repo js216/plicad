@@ -2,5 +2,5 @@
 # bad_asm.txt -- A part file without end, which place must reject
 # Copyright (c) 2026 Jakob Kastelic
 
-a bad_noend2.fold
-b bad_noend2.fold
+part a bad_noend2.st
+part b bad_noend2.st

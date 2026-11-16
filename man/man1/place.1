@@ -6,43 +6,53 @@
 place \- put parts together into an assembly
 .SH SYNOPSIS
 .B place
+[
+.B \-s
+.I meshdir
+]
 .I assembly.txt
 .SH DESCRIPTION
 .I Place
-reads an assembly file and writes the parts it names, renamed and
-placed, as one fold file on the standard output.
-Each line places one part:
+reads an assembly file
+.RI ( assembly (5))
+and writes the parts it names, renamed and placed, as one stream
+.RI ( stream (5))
+on the standard output: first the materials they use, once each, and
+then each part with its place, its material and the materials of its
+coats.
+A part file is a stream of a folded part or of solids, the output of
+.IR smfold (1)
+or
+.IR fillet (1),
+or another assembly file, a subassembly, whose parts take names under
+the name of its line, as front/knob/cap; a file that holds itself is
+refused with the chain of the files.
+The insertion path
+.RB ( path )
+and
+.B with
+are for the scene, and do not change the place, and the pictures go
+only into the scene.
 .PP
-.RS
-.I name file.fold
-[
-.B rot
-.I axis deg
-] ... [
-.B at
-.I x y z
-] [
-.B colour
-.I colour
-]
-.RE
-.PP
-Rotations are about the world axes through the origin, in order;
-then the part is moved by
-.RI ( x ,
-.IR y ,
-.IR z ).
-Numbers are expressions as in
-.IR sm (5).
-A line
-.B include
-.I file
-reads parameters, and
-.B colours
-.I file
-reads a table of colours, one per line
-.RI ( "name r g b roughness" ,
-each from 0 to 1), to which a part's colour refers by name.
-File names are relative to the assembly file; # starts a comment.
+With
+.BR \-s ,
+.I place
+writes instead a scene for
+.IR view (1)
+.RI ( scene (5)):
+a mesh line for each part line, of the file
+.IB meshdir / name .obj
+(the mesh of the part's file in its own frame, as
+.IR tomesh (1)
+writes it), with the color of its material, the steps of its place,
+and its insertion path, every turn with its point, or its
+.BR with ;
+and an image line for each picture.
+A subassembly becomes a unit: a unit line with the steps and the tail
+of its line, its own lines in its own frame and indented, their meshes
+.IB meshdir / name /...,
+and an end line.
+.I Meshdir
+is written as given, so it is relative to where the scene goes.
 .SH SEE ALSO
-interfere(1), fold(5), sm(5)
+interfere(1), view(1), assembly(5), scene(5), stream(5), sm(5)

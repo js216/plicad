@@ -39,7 +39,19 @@ void mesh_init(struct mesh *m);
 void mesh_free(struct mesh *m);
 // Adds the triangles of solid sh to m, its vertices after those there.
 void mesh_shape(const struct shape *sh, struct mesh_opts o, struct mesh *m);
-// The exact solid of a folded part, its full circles split in two.
+// The exact solid of a part in the world: of a folded part, its full
+// circles split in two; or the solid of a solid part, moved by its place.
 void part_shape(const struct part *p, struct shape *sh);
+// The origin of a face of the solid of a folded part, as brep.h has it:
+// the near or the far face of 2D face idx, the side along
+// 2D edge idx, or the wall of hole idx.
+struct face_from {
+	int from;
+	size_t idx;
+};
+// As part_shape, and for a folded part the origin of each face of sh in
+// (*from)[face], *from NULL before.
+void part_shape_from(const struct part *p, struct shape *sh,
+		     struct face_from **from);
 
 #endif

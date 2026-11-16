@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# crease.part -- Rounds of a slot across a crease of the face they meet
+# Copyright (c) 2026 Jakob Kastelic
+
+# A slab whose top is flat ahead of y = 15 and leans down 1 degree behind
+# it, and a slot along y through the crease, its walls drafted 1.5
+# degrees.  The rounds of the slot edges along the top meet in a miter
+# at the crease, which stays sharp; at the ends of the slot the rounds
+# meet those on the end faces, and there a piece of the plane of each
+# miter closes the gap between them.
+profile fr along y 0 -10 0 40 -10 0 40 0 0 0 0 0
+extrude front from 0 to 15 fr
+profile bk along y -100 -10 0 140 -10 0 140 0 0 -100 0 0
+extrude back from 15 to 30 bk draft 1
+union slab front back
+profile sl along y 15 -5 0 25 -5 0 25 1 0 15 1 0
+extrude slot from 35 to -5 sl draft 1.5
+subtract part slab slot
+round 0.3 slot front
+round 0.3 slot back

@@ -2,6 +2,6 @@
 # bad_biground.part -- A round too big for the face beside its edge
 # Copyright (c) 2026 Jakob Kastelic
 
-profile r along z 0 0 0 20 0 0 20 10 0 0 10 0
+profile r along z 0 0 0 side s0 20 0 0 20 10 0 0 10 0
 extrude blk from 0 to 5 r
-round 6 blk.end blk.r.0
+round 6 blk.end blk.s0

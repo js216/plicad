@@ -1,0 +1,418 @@
+part boot
+pull y
+wall thin 1.872 at -0.437 10.177 32.881
+wall thick 9.907 at 1.484 -4.825 80.471
+side plus faces 764 draft 1.000
+group plus rb faces 18 draft 2.000
+group plus cav1 faces 22 draft 1.000
+group plus recess faces 1 draft 90.000
+group plus tall faces 1 draft 90.000
+group plus ht0 faces 1 draft 90.000
+group plus ht1 faces 1 draft 90.000
+group plus hb0 faces 1 draft 90.000
+group plus hb1 faces 1 draft 90.000
+group plus cb0 faces 1 draft 90.000
+group plus cb1 faces 1 draft 90.000
+group plus kbl faces 16 draft 1.500
+group plus ktl faces 16 draft 1.500
+group plus kbr faces 16 draft 1.500
+group plus ktr faces 16 draft 1.500
+group plus ksl faces 16 draft 1.500
+group plus ksr faces 16 draft 1.500
+group plus wvo faces 40 draft 2.000
+group plus who faces 16 draft 2.000
+group plus gt faces 45 draft 1.500
+group plus gbl faces 15 draft 1.500
+group plus gbr faces 15 draft 1.500
+group plus mbl faces 6 draft 1.500
+group plus mtl faces 6 draft 1.500
+group plus mbr faces 6 draft 1.500
+group plus mtr faces 6 draft 1.500
+group plus msl faces 12 draft 1.500
+group plus msr faces 12 draft 1.500
+group plus mgt faces 54 draft 1.500
+group plus mgbl faces 18 draft 1.500
+group plus mgbr faces 18 draft 1.500
+group plus round faces 351 draft 1.000
+side minus faces 74 draft 90.000
+group minus wv faces 18 draft 90.000
+group minus wh faces 7 draft 90.000
+group minus ht0 faces 1 draft 90.000
+group minus ht1 faces 1 draft 90.000
+group minus ct0 faces 1 draft 90.000
+group minus ct1 faces 1 draft 90.000
+group minus hb0 faces 1 draft 90.000
+group minus hb1 faces 1 draft 90.000
+group minus cb0 faces 1 draft 90.000
+group minus cb1 faces 1 draft 90.000
+group minus round faces 41 draft 90.000
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side.s5
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side
+flat sleeve.side.s11
+flat recess.side
+flat recess.side
+flat recess.side
+flat recess.side
+flat recess.side
+flat recess.side
+flat recess.side
+flat recess.side
+flat recess.side
+flat tall.side
+flat tall.side
+flat tall.side
+flat tall.side
+flat tall.side
+flat tall.side
+flat tall.side
+flat tall.side
+flat tall.side
+flat tall.side
+flat tall.side
+rim wv.side
+rim wv.side
+flat wv.side
+flat wv.side
+rim wv.side
+rim wv.side
+rim wv.side
+rim wv.side
+flat wv.side
+flat wv.side
+rim wv.side
+rim wv.side
+rim wv.side
+rim wv.side
+flat wv.side
+flat wv.side
+rim wv.side
+rim wv.side
+rim wv.side
+rim wv.side
+flat wv.side
+flat wv.side
+rim wv.side
+rim wv.side
+rim wh.side
+rim wh.side
+flat wh.side
+flat wh.side
+rim wh.side
+rim wh.side
+rim wh.side
+rim wh.side
+flat wh.side
+flat wh.side
+rim wh.side
+rim wh.side
+turn hl0.side
+turn hl0.side
+turn hl1.side
+turn hl1.side
+turn hr0.side
+turn hr0.side
+turn hr1.side
+turn hr1.side
+turn cl0.side
+turn cl0.side
+flat cl0.end
+turn cl1.side
+turn cl1.side
+flat cl1.end
+turn cr0.side
+turn cr0.side
+flat cr0.start
+turn cr1.side
+turn cr1.side
+flat cr1.start
+rim ht0.side
+rim ht0.side
+rim ht1.side
+rim ht1.side
+rim ct0.side
+rim ct0.side
+flat ct0.start
+rim ct1.side
+rim ct1.side
+flat ct1.start
+rim hb0.side
+rim hb0.side
+rim hb1.side
+rim hb1.side
+rim cb0.side
+rim cb0.side
+flat cb0.end
+rim cb1.side
+rim cb1.side
+flat cb1.end
+rim sleeve.side+wv.side
+rim sleeve.side+wh.side
+flat sleeve.side+wh.side
+rim wh.side+sleeve.side
+rim sleeve.side+wh.side
+rim wv.side+sleeve.side
+rim sleeve.side+wv.side
+rim sleeve.side+wv.side
+flat sleeve.side+wv.side
+rim wv.side+sleeve.side
+rim sleeve.side+wv.side
+rim wv.side+sleeve.side
+flat sleeve.side+wv.side
+rim sleeve.side+wv.side
+rim sleeve.side+wv.side
+rim sleeve.side+wv.side
+flat sleeve.side+wv.side
+rim wv.side+sleeve.side
+rim sleeve.side+wv.side
+rim wv.side+sleeve.side
+flat sleeve.side+wv.side
+rim sleeve.side+wv.side
+rim sleeve.side+wv.side
+rim wv.side+sleeve.side
+rim sleeve.side+wv.side
+rim sleeve.side+wh.side
+flat sleeve.side+wh.side
+rim wh.side+sleeve.side
+rim sleeve.side+wh.side
+rim wh.side+sleeve.side
+flat sleeve.side+wh.side
+rim sleeve.side+wh.side
+rim sleeve.side+wv.side
+rim wv.side+sleeve.side
+rim sleeve.side+wv.side
+rim sleeve.side+wv.side
+flat sleeve.side+wv.side
+rim wv.side+sleeve.side
+rim sleeve.side+wv.side
+rim wv.side+sleeve.side
+flat sleeve.side+wv.side
+rim sleeve.side+wv.side
+rim sleeve.side+wv.side
+rim sleeve.side+wv.side
+flat sleeve.side+wv.side
+rim wv.side+sleeve.side
+rim sleeve.side+wv.side
+rim wv.side+sleeve.side
+flat sleeve.side+wv.side
+rim sleeve.side+wv.side
+rim sleeve.side+wv.side
+rim wv.side+sleeve.side
+rim sleeve.side+wh.side
+rim wh.side+sleeve.side
+flat sleeve.side+wh.side
+rim sleeve.side+wh.side
+rim sleeve.side+wv.side
+flat sleeve.side+sleeve.side.s11
+rim cb1.side+sleeve.side
+rim cb1.side+sleeve.side
+turn cr0.side+sleeve.side
+turn cr0.side+sleeve.side
+turn cr1.side+sleeve.side
+turn cr1.side+sleeve.side
+rim ct0.side+sleeve.side
+rim ct0.side+sleeve.side
+rim ct1.side+sleeve.side
+rim ct1.side+sleeve.side
+turn cl0.side+sleeve.side
+turn cl0.side+sleeve.side
+turn cl1.side+sleeve.side
+turn cl1.side+sleeve.side
+flat sleeve.side.s5+sleeve.side
+rim cb0.side+sleeve.side
+rim cb0.side+sleeve.side
+rim sleeve.side.s5+wh.side
+rim sleeve.side.s5+sleeve.side+wh.side
+rim hb0.side+sleeve.side
+rim hb0.side+sleeve.side
+turn hl0.side+sleeve.side
+turn hl0.side+sleeve.side
+turn hl1.side+sleeve.side
+turn hl1.side+sleeve.side
+rim ht0.side+sleeve.side
+rim ht0.side+sleeve.side
+rim ht1.side+sleeve.side
+rim ht1.side+sleeve.side
+turn hr1.side+sleeve.side
+turn hr1.side+sleeve.side
+turn hr0.side+sleeve.side
+turn hr0.side+sleeve.side
+rim hb1.side+sleeve.side
+rim hb1.side+sleeve.side
+rim sleeve.side.s11+sleeve.side+wh.side
+rim sleeve.side.s11+wh.side
+rim wh.side+tall.side
+rim tall.side+wv.side
+rim tall.side+wh.side
+flat tall.side+wh.side
+rim wh.side+tall.side
+rim tall.side+wh.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+flat tall.side+wv.side
+rim wv.side+tall.side
+rim tall.side+wv.side
+rim wv.side+tall.side
+flat tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+flat tall.side+wv.side
+rim wv.side+tall.side
+rim tall.side+wv.side
+rim wv.side+tall.side
+flat tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wh.side
+flat tall.side+wh.side
+rim wh.side+tall.side
+rim tall.side+wh.side
+rim wh.side+tall.side
+flat tall.side+wh.side
+rim tall.side+wh.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+flat tall.side+wv.side
+rim wv.side+tall.side
+rim tall.side+wv.side
+rim wv.side+tall.side
+flat tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+flat tall.side+wv.side
+rim wv.side+tall.side
+rim tall.side+wv.side
+rim wv.side+tall.side
+flat tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wv.side
+rim tall.side+wh.side
+rim wh.side+tall.side
+flat tall.side+wh.side
+rim tall.side+wh.side
+rim tall.side+wv.side
+rim wh.side+tall.side
+rim tall.side+tall.end
+rim tall.side+tall.end
+rim tall.side+tall.end
+rim tall.side+tall.end
+rim tall.side+tall.end
+rim tall.side+tall.end
+rim tall.side+tall.end
+rim tall.side+tall.end
+rim tall.side+tall.end
+rim tall.side+tall.end
+rim tall.side+tall.end
+pin hl0.side at -3.344 12.425 29.184
+pin hl0.side at -3.344 7.895 27.712
+pin hl1.side at -3.344 12.425 142.976
+pin hl1.side at -3.344 7.895 141.504
+pin hr0.side at 340.572 12.425 29.184
+pin hr0.side at 340.572 7.895 27.712
+pin hr1.side at 340.572 12.425 142.976
+pin hr1.side at 340.572 7.895 141.504
+pin cl0.side at -5.080 13.897 29.191
+pin cl0.side at -5.080 6.423 27.705
+pin cl0.end at -3.810 6.985 26.543
+pin cl1.side at -5.080 13.897 142.983
+pin cl1.side at -5.080 6.423 141.497
+pin cl1.end at -3.810 6.985 140.335
+pin cr0.side at 343.154 13.897 29.191
+pin cr0.side at 343.154 6.423 27.705
+pin cr0.start at 342.900 6.985 30.353
+pin cr1.side at 343.154 13.897 142.983
+pin cr1.side at 343.154 6.423 141.497
+pin cr1.start at 342.900 6.985 144.145
+pin ht0.side at 62.265 10.896 172.448
+pin ht0.side at 57.735 9.424 172.448
+pin ht1.side at 281.355 10.896 172.448
+pin ht1.side at 276.825 9.424 172.448
+pin ct0.side at 63.737 10.903 179.402
+pin ct0.side at 56.263 9.417 179.402
+pin ct0.start at 56.825 12.065 179.148
+pin ct1.side at 282.827 10.903 179.402
+pin ct1.side at 275.353 9.417 179.402
+pin ct1.start at 275.915 12.065 179.148
+pin hb0.side at 57.265 10.896 -8.756
+pin hb0.side at 52.735 9.424 -8.756
+pin hb1.side at 286.355 10.896 -8.756
+pin hb1.side at 281.825 9.424 -8.756
+pin cb0.side at 58.737 10.903 -10.730
+pin cb0.side at 51.263 9.417 -10.730
+pin cb0.end at 51.825 8.255 -9.460
+pin cb1.side at 287.827 10.903 -10.730
+pin cb1.side at 280.353 9.417 -10.730
+pin cb1.end at 280.915 8.255 -9.460
+pin cb1.side+sleeve.side at 279.596 10.952 -11.965
+pin cb1.side+sleeve.side at 288.584 9.368 -11.965
+pin cr0.side+sleeve.side at 345.405 14.654 29.240
+pin cr0.side+sleeve.side at 345.405 5.666 27.656
+pin cr1.side+sleeve.side at 345.405 14.654 143.032
+pin cr1.side+sleeve.side at 345.405 5.666 141.448
+pin ct0.side+sleeve.side at 64.494 10.952 181.653
+pin ct0.side+sleeve.side at 55.506 9.368 181.653
+pin ct1.side+sleeve.side at 283.584 10.952 181.653
+pin ct1.side+sleeve.side at 274.596 9.368 181.653
+pin cl0.side+sleeve.side at -6.315 5.666 29.240
+pin cl0.side+sleeve.side at -6.315 14.654 27.656
+pin cl1.side+sleeve.side at -6.315 5.666 143.032
+pin cl1.side+sleeve.side at -6.315 14.654 141.448
+pin cb0.side+sleeve.side at 50.506 10.952 -11.965
+pin cb0.side+sleeve.side at 59.494 9.368 -11.965
+pin hb0.side+sleeve.side at 58.027 10.971 -0.035
+pin hb0.side+sleeve.side at 51.973 9.349 -0.035
+pin hl0.side+sleeve.side at -0.035 13.187 29.259
+pin hl0.side+sleeve.side at -0.035 7.133 27.637
+pin hl1.side+sleeve.side at -0.035 13.187 143.051
+pin hl1.side+sleeve.side at -0.035 7.133 141.429
+pin ht0.side+sleeve.side at 56.973 10.971 170.723
+pin ht0.side+sleeve.side at 63.027 9.349 170.723
+pin ht1.side+sleeve.side at 276.063 10.971 170.723
+pin ht1.side+sleeve.side at 282.117 9.349 170.723
+pin hr1.side+sleeve.side at 339.125 7.133 143.051
+pin hr1.side+sleeve.side at 339.125 13.187 141.429
+pin hr0.side+sleeve.side at 339.125 7.133 29.259
+pin hr0.side+sleeve.side at 339.125 13.187 27.637
+pin hb1.side+sleeve.side at 287.117 10.971 -0.035
+pin hb1.side+sleeve.side at 281.063 9.349 -0.035

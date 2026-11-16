@@ -1,6 +1,6 @@
 part s14
 volume 7378.0840
 area 3454.1792
-centre 14.6737 -1.9185 1.0868
+center 14.6737 -1.9185 1.0868
 bbox -6.0000 -15.0000 -7.0000 30.0000 11.5000 15.5000
 faces 19 plane 14 cylinder 5 cone 0 sphere 0 torus 0

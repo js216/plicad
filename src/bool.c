@@ -6,7 +6,7 @@
 //
 // Reads a stream (stream.h) and takes its statements
 //   union NAME A B [C ...]
-//   cut NAME A B [C ...]          A less B, less C, ...
+//   subtract NAME A B [C ...]     A less B, less C, ...
 //   common NAME A B
 // Each replaces the solids it names by the solid NAME, in turn.
 //
@@ -709,7 +709,8 @@ static void st_bool(struct stream *st, int op)
 	struct shape acc;
 
 	if (st->nw < 4 || (op == OP_COMMON && st->nw != 4)) {
-		stream_fail(st, "union|cut NAME A B ..., or common NAME A B",
+		stream_fail(st,
+			    "union|subtract NAME A B ..., or common NAME A B",
 			    NULL);
 	}
 	stream_take(st, st->w[2], &acc);
@@ -745,7 +746,7 @@ int main(int argc, char **argv)
 		}
 		if (stream_is(&st, 0, "union")) {
 			st_bool(&st, OP_UNION);
-		} else if (stream_is(&st, 0, "cut")) {
+		} else if (stream_is(&st, 0, "subtract")) {
 			st_bool(&st, OP_CUT);
 		} else if (stream_is(&st, 0, "common")) {
 			st_bool(&st, OP_COMMON);

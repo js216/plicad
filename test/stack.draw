@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# stack.draw -- A section of two tapped plates, one on the other
+# Copyright (c) 2026 Jakob Kastelic
+
+# The section lines of the two plates run two ways, 1.5 mm apart on
+# the paper.
+units mm
+template plain_c.ps
+scale 2
+hatching 1.5
+field Title STACK
+material 6061-T6 ALUMINUM ALLOY.
+finish NONE.
+view front cut -10 title SECTION A-A

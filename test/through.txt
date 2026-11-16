@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# through.txt -- A fin whose path runs through a plate, to a place apart
+# Copyright (c) 2026 Jakob Kastelic
+
+step 0.5 1
+part base ../build/plate.st
+part fin ../build/plate.st turn x 90 move -150 20 -10 path move -300 0 0

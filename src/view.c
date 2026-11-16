@@ -2,23 +2,35 @@
 // view.c -- Show the meshes and pictures of a scene in a window
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: view [-c | -b] SCENE
+// Usage: view [-c | -b] [-s WxH] SCENE
 //
 // Shows the parts of the scene file (scene.h) in an X11 window by
 // OpenGL, and reads commands (scene.h) from stdin.  The left button
 // turns the view, the middle or right one moves it, and the wheel zooms
-// round the pointer.  A click on a part picks it: prints its name on
-// stdout and shows it in the corner.  Space fits all in the view, and
-// the keys i, f, b, l, r, t and u (iso, front, back, left, right, top,
-// underside) set it; q quits (Escape does not).  The keys h, o and s
-// act on the part under the pointer: h hides it, o shows it alone and s
-// turns it see-through or back; a shows all, solid, and brings every
-// part home (as the command reset).  The key plus explodes the parts out
-// from the centre, a step a press, and minus brings them back, home at
-// the last; the left button with shift drags the item of a part out
-// along its line (explode.c).  Ctrl-Z undoes what shows and the moves,
-// a key or a drag a step, and Ctrl-Y redoes them.  The key ? shows or
-// hides a help of the keys and the buttons, and nothing else hides it.
+// round the pointer.  A click on a part picks it: prints "select NAME" on
+// stdout and shows it in the corner, the last part of its unit in
+// brackets (scene_label), and lights it and, less, its unit.  The view
+// opens fitted to all, as Space fits it, at the size the window manager
+// gives the window, in the view of the scene file if it names one, iso
+// else.  Space fits
+// all in the view, and the keys i, f, b, l, r, t and u (iso, front,
+// back, left, right, top, underside) set it; c centers the view on the
+// picked part, and c again, with no change of the view or the pick
+// between, zooms in two times about it; q quits (Escape does not).
+// The keys h, o and s act on the part under the pointer: h hides it, o
+// shows it alone (or, with one part alone, all again, wherever the
+// pointer is) and s turns it see-through or back; H, O and S do the same
+// for its unit, the level of units up that ] raises and [ lowers, 1 at
+// first.  The key a shows all, solid, and brings every part home (as the
+// command reset).  The parts show assembled; minus takes the last motion
+// of the sequence out, its parts back to the start of their path at
+// once, and plus puts the next one in (scene_play), so that the parts
+// not yet in stand at their starts; A takes every part out at once.
+// The left button with shift moves the unit of the part under the
+// pointer, as H would take it, in the plane of the view.  Ctrl-Z undoes
+// what shows and the moves, a key or a drag a step, and Ctrl-Y redoes
+// them.  The key ? shows or hides a help of the keys and the buttons,
+// and nothing else hides it.
 // A mesh or picture file that changes reads again, and so does the scene
 // file.
 //
@@ -36,6 +48,7 @@
 #include <GL/glx.h>
 #include <X11/X.h>
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <errno.h>
@@ -43,6 +56,7 @@
 #include <stdint.h>
 #include <sys/poll.h>
 #include <sys/types.h>
+#include <sys/utsname.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +67,8 @@
 #define WHEEL_ZOOM 0.85 // The zoom of a step of the wheel.
 #define FULL_TURN 360.0
 #define HELP_SHADE 0.6F // The opacity of the ground of the help.
-#define HIGHLIGHT 0.35F // The share of the light colour on a picked part.
+#define HIGHLIGHT 0.35F // The share of the light color on a picked part.
+#define UNIT_LIGHT 0.15F // The share of it on the rest of its unit.
 #define CLICK_SLOP 3.0 // The most drag of a click, in pixels.
 
 enum {
@@ -67,12 +82,13 @@ enum {
 	BUTTON_WHEEL_DOWN = 5,
 	KEY_LEN = 8,
 	DEPTH_BITS = 24,
-	MATRIX = 16 // The numbers of a matrix of OpenGL.
+	MATRIX = 16, // The numbers of a matrix of OpenGL.
+	FORMAT_32 = 32, // The format of a property of longs.
+	DECIMAL = 10,
+	WIN_MAX = 8192 // The widest and tallest window, in pixels.
 };
 
 enum { TURN, PAN, DRAG };
-
-#define EXPLODE_STEP 0.25 // The step of the explode of a + or a -.
 
 // A watched file: the directory watch and the base name, and the item,
 // or NONE for the scene file.
@@ -90,15 +106,17 @@ struct gui {
 	Atom close;
 	GLXContext ctx;
 	GLuint font;
+	GLuint grain; // The texture of the grain of textured faces.
 	int font_w, font_h; // The size of a letter of the font.
 	int help; // Whether the help shows.
 	struct scene s;
 	int button, moved;
 	int mode; // What a drag does: TURN, PAN or DRAG.
-	size_t picked, item; // The picked part, and the item of a drag.
 	unsigned draw, quit;
 	struct px press, last;
 	char label[LABEL_LEN];
+	char unit[LABEL_LEN]; // The unit of the picked part, or empty.
+	char drag[LABEL_LEN]; // The part or unit that a drag moves.
 	int in_open;
 	char in[LINE_MAX];
 	size_t nin;
@@ -140,7 +158,9 @@ static void watch_all(struct gui *g)
 	}
 	watch_file(g, g->s.path, NONE);
 	for (size_t i = 0; i < g->s.nit; i++) {
-		watch_file(g, g->s.it[i].path, i);
+		if (g->s.it[i].path) {
+			watch_file(g, g->s.it[i].path, i);
+		}
 	}
 }
 
@@ -156,9 +176,88 @@ static void free_gl(struct gui *g, size_t item)
 		if (p->uv) {
 			glDeleteTextures(1, p->gl);
 		} else {
-			glDeleteBuffers(2, p->gl);
+			glDeleteBuffers(4, p->gl);
 		}
-		p->gl[0] = p->gl[1] = 0;
+		p->gl[0] = p->gl[1] = p->gl[2] = p->gl[3] = 0;
+	}
+}
+
+// The grain of textured faces: value noise, smooth between the points
+// of a lattice GRAIN_CELL texels apart that tiles, of a light from
+// GRAIN_DIM of the color to all of it; and the size of a tile on a face
+// of VDI 30, in mm, which grows tenfold every 20 grades, as its
+// roughness does.
+enum { GRAIN = 64, GRAIN_CELL = 8, GRAIN_PTS = GRAIN / GRAIN_CELL };
+#define GRAIN_DIM 0.75F
+#define GRAIN_MM 8.0
+
+static void make_grain(struct gui *g)
+{
+	static unsigned char t[GRAIN * GRAIN];
+	float l[GRAIN_PTS][GRAIN_PTS];
+	unsigned long seed = 1;
+
+	for (int k = 0; k < GRAIN_PTS * GRAIN_PTS; k++) {
+		seed = ((seed * 1103515245UL) + 12345UL) & 0x7fffffffUL;
+		l[k / GRAIN_PTS][k % GRAIN_PTS] =
+			(float)(seed >> 15) / 65536.0F;
+	}
+	for (int k = 0; k < GRAIN * GRAIN; k++) {
+		int x = k % GRAIN;
+		int y = k / GRAIN;
+		float fx = (float)(x % GRAIN_CELL) / GRAIN_CELL;
+		float fy = (float)(y % GRAIN_CELL) / GRAIN_CELL;
+		float sx = fx * fx * (3 - (2 * fx));
+		float sy = fy * fy * (3 - (2 * fy));
+		int i = x / GRAIN_CELL;
+		int j = y / GRAIN_CELL;
+		const float *a = l[j];
+		const float *b = l[(j + 1) % GRAIN_PTS];
+		float lo = a[i] + ((a[(i + 1) % GRAIN_PTS] - a[i]) * sx);
+		float hi = b[i] + ((b[(i + 1) % GRAIN_PTS] - b[i]) * sx);
+
+		t[k] = (unsigned char)(255 *
+				       (GRAIN_DIM + ((1 - GRAIN_DIM) *
+						     (lo + ((hi - lo) * sy)))));
+	}
+	glGenTextures(1, &g->grain);
+	glBindTexture(GL_TEXTURE_2D, g->grain);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, GRAIN, GRAIN, 0,
+		     GL_LUMINANCE, GL_UNSIGNED_BYTE, t);
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+}
+
+// Puts triangle i of p at place k of the buffers b: points, normals,
+// colors and grain, the grain by its box map: the two axes across the
+// one nearest its normal, over the tile of its grade.
+static void put_tri(const struct part *p, size_t i, size_t k, float **b)
+{
+	const float *q = &p->pos[TRI_FLOATS * i];
+	struct vec o = v3(q[0], q[1], q[2]);
+	struct vec n = cross(sub(v3(q[3], q[4], q[5]), o),
+			     sub(v3(q[6], q[7], q[8]), o));
+	int a = fabs(n.x) > fabs(n.y) ? 0 : 1;
+	double tile =
+		p->grade && p->grade[i] >= 0 ?
+			GRAIN_MM * pow(10, ((double)p->grade[i] - 30) / 20) :
+			0;
+
+	a = fabs(comp(n, a)) > fabs(n.z) ? a : 2;
+	memcpy(&b[0][TRI_FLOATS * k], q, TRI_FLOATS * sizeof(float));
+	memcpy(&b[1][TRI_FLOATS * k], &p->nrm[TRI_FLOATS * i],
+	       TRI_FLOATS * sizeof(float));
+	for (size_t c = 0; c < 3 * 2; c++) {
+		if (b[2] && c < 3) {
+			memcpy(&b[2][(TRI_FLOATS * k) + (3 * c)],
+			       &p->col[3 * i], 3 * sizeof(float));
+		}
+		if (tile > 0) {
+			b[3][(6 * k) + c] =
+				(float)((double)q[(3 * (c / 2)) +
+						  ((size_t)a + 1 + (c % 2)) % 3] /
+					tile);
+		}
 	}
 }
 
@@ -166,6 +265,8 @@ static void free_gl(struct gui *g, size_t item)
 static void upload(struct part *p)
 {
 	size_t n = TRI_FLOATS * p->nt * sizeof(float);
+	float *b[4] = { NULL, NULL, NULL, NULL };
+	size_t k = 0;
 
 	if (p->uv) {
 		glGenTextures(1, p->gl);
@@ -181,23 +282,81 @@ static void upload(struct part *p)
 			     GL_RGBA, GL_UNSIGNED_BYTE, p->pix);
 		return;
 	}
-	glGenBuffers(2, p->gl);
-	glBindBuffer(GL_ARRAY_BUFFER, p->gl[0]);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n, p->pos, GL_STATIC_DRAW);
-	glBindBuffer(GL_ARRAY_BUFFER, p->gl[1]);
-	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n, p->nrm, GL_STATIC_DRAW);
+	// The triangles without a texture first, then those with one; the
+	// color of each at each of its corners.
+	b[0] = xmalloc(n + 1);
+	b[1] = xmalloc(n + 1);
+	b[2] = p->col ? xmalloc(n + 1) : NULL;
+	b[3] = xcalloc((6 * p->nt) + 1, sizeof(float));
+	for (int pass = 0; pass < 2; pass++) {
+		for (size_t i = 0; i < p->nt; i++) {
+			if ((p->grade && p->grade[i] >= 0) == pass) {
+				put_tri(p, i, k++, b);
+			}
+		}
+		p->plain = pass ? p->plain : k;
+	}
+	glGenBuffers(4, p->gl);
+	for (int i = 0; i < 4; i++) {
+		glBindBuffer(GL_ARRAY_BUFFER, p->gl[i]);
+		if (b[i]) {
+			glBufferData(
+				GL_ARRAY_BUFFER,
+				(GLsizeiptr)(i == 3 ?
+						     6 * p->nt * sizeof(float) :
+						     n),
+				b[i], GL_STATIC_DRAW);
+		}
+		free(b[i]);
+	}
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-// Draws the triangles of p from its buffers of points and normals.
-static void draw_mesh(const struct part *p)
+// Draws the triangles of p from its buffers of points and normals, and
+// of colors if it has coats and is not see-through; its textured ones
+// last, with the grain over their color unless it is see-through.
+static void draw_mesh(const struct part *p, GLuint grain)
 {
 	glBindBuffer(GL_ARRAY_BUFFER, p->gl[0]);
 	glVertexPointer(3, GL_FLOAT, 0, NULL);
 	glBindBuffer(GL_ARRAY_BUFFER, p->gl[1]);
 	glNormalPointer(GL_FLOAT, 0, NULL);
-	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(3 * p->nt));
+	if (p->col && !p->see) {
+		glEnableClientState(GL_COLOR_ARRAY);
+		glBindBuffer(GL_ARRAY_BUFFER, p->gl[2]);
+		glColorPointer(3, GL_FLOAT, 0, NULL);
+	}
+	glDrawArrays(GL_TRIANGLES, 0,
+		     (GLsizei)(3 * (p->see ? p->nt : p->plain)));
+	if (!p->see && p->plain < p->nt) {
+		glEnable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, grain);
+		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+		glBindBuffer(GL_ARRAY_BUFFER, p->gl[3]);
+		glTexCoordPointer(2, GL_FLOAT, 0, NULL);
+		glDrawArrays(GL_TRIANGLES, (GLint)(3 * p->plain),
+			     (GLsizei)(3 * (p->nt - p->plain)));
+		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+		glDisable(GL_TEXTURE_2D);
+	}
+	glDisableClientState(GL_COLOR_ARRAY);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+// Multiplies the matrix of OpenGL by the motion m.
+static void mult_rigid(struct rigid m)
+{
+	GLdouble x[MATRIX];
+
+	memset(x, 0, sizeof(x));
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++) {
+			x[(4 * c) + r] = m.r[r][c];
+		}
+		x[(4 * 3) + r] = comp(m.t, r);
+	}
+	x[MATRIX - 1] = 1;
+	glMultMatrixd(x);
 }
 
 static void draw_picture(const struct part *p)
@@ -207,7 +366,7 @@ static void draw_picture(const struct part *p)
 	glBindTexture(GL_TEXTURE_2D, p->gl[0]);
 	glColor3f(1, 1, 1);
 	glPushMatrix();
-	glTranslated(p->off.x, p->off.y, p->off.z);
+	mult_rigid(p->mot);
 	glBegin(GL_TRIANGLES);
 	for (size_t k = 0; k < PIC_CORNERS; k++) {
 		glTexCoord2fv(&p->uv[2 * k]);
@@ -222,26 +381,30 @@ static void draw_picture(const struct part *p)
 // Draws the pictures and the see-through parts over the solid parts by
 // their opacity, the farthest first, and keeps the depths of the solid
 // parts.
-// Draws the mesh of part p where it stands, in its colour, lighter if it
-// is the picked one, and by SEE_ALPHA if see-through.
+// Draws the mesh of part p where it stands, in its color, lighter if it
+// is the picked one or, less, in its unit, and by SEE_ALPHA if
+// see-through.
 static void draw_part(const struct gui *g, struct part *p)
 {
 	GLfloat rgb[4];
+	float light = 0;
 
 	if (!p->gl[0]) {
 		upload(p);
 	}
+	if (g->s.picked < g->s.np && p == &g->s.p[g->s.picked]) {
+		light = HIGHLIGHT;
+	} else if (g->unit[0] && scene_in_unit(g->unit, p->name)) {
+		light = UNIT_LIGHT;
+	}
 	for (int k = 0; k < 3; k++) {
-		rgb[k] = p->rgb[k];
-		if (g->label[0] && !strcmp(p->name, g->label)) {
-			rgb[k] += HIGHLIGHT * (1 - rgb[k]);
-		}
+		rgb[k] = p->rgb[k] + (light * (1 - p->rgb[k]));
 	}
 	rgb[3] = p->see ? SEE_ALPHA : 1;
 	glColor4fv(rgb);
 	glPushMatrix();
-	glTranslated(p->off.x, p->off.y, p->off.z);
-	draw_mesh(p);
+	mult_rigid(p->mot);
+	draw_mesh(p, g->grain);
 	glPopMatrix();
 }
 
@@ -426,13 +589,14 @@ static void spin(struct gui *g, long frames)
 	glFinish();
 }
 
+static void relabel(struct gui *g);
+
 static void command(struct gui *g, char *line)
 {
 	struct cmd c = scene_command(&g->s, line);
 
-	if (c.ask & CMD_SIZE) {
-		XResizeWindow(g->d, g->w, (unsigned)g->s.cam.sz.w,
-			      (unsigned)g->s.cam.sz.h);
+	if (c.ask & CMD_DRAW) {
+		relabel(g);
 	}
 	if (c.ask & CMD_SHOT) {
 		gl_shot(g, c.file);
@@ -475,8 +639,8 @@ static void read_stdin(struct gui *g)
 // Forgets the pick and the drag, whose parts may have gone.
 static void unpick(struct gui *g)
 {
-	g->picked = g->item = NONE;
-	g->label[0] = 0;
+	scene_select(&g->s, NONE);
+	g->label[0] = g->unit[0] = g->drag[0] = 0;
 	g->mode = TURN;
 	g->draw = 1;
 }
@@ -493,6 +657,7 @@ static void reload_scene(struct gui *g)
 	}
 	free_gl(g, NONE);
 	s.cam = g->s.cam;
+	s.touched = 1;
 	scene_free(&g->s);
 	g->s = s;
 	watch_all(g);
@@ -544,16 +709,34 @@ static void read_watch(struct gui *g)
 	}
 }
 
+// Sets the label and the unit of the picked part, at the level now.
+static void relabel(struct gui *g)
+{
+	g->label[0] = g->unit[0] = 0;
+	if (g->s.picked < g->s.np) {
+		char *l = scene_label(&g->s, g->s.picked);
+		char *u = scene_unit(&g->s, g->s.picked);
+
+		xsnprintf(g->label, "%s", l);
+		xsnprintf(g->unit, "%s", u);
+		free(l);
+		free(u);
+	}
+	g->draw = 1;
+}
+
+// Picks the part at the pixel at, or none, and prints select and its
+// name, or nothing for none.
 static void pick(struct gui *g, struct px at)
 {
 	size_t i = scene_pick(&g->s, at);
-	const char *name = i == NONE ? "-" : g->s.p[i].name;
 
-	printf("%s\n", name);
+	if (i != NONE) {
+		printf("select %s\n", g->s.p[i].name);
+	}
 	(void)fflush(stdout);
-	xsnprintf(g->label, "%s", i == NONE ? "" : name);
-	g->picked = i;
-	g->draw = 1;
+	scene_select(&g->s, i);
+	relabel(g);
 }
 
 // Runs the key h, o, s or a in buf, pressed with the pointer at at, on
@@ -566,15 +749,18 @@ static int show_key(struct gui *g, const char *buf, struct px at)
 	if (!strcmp(buf, "a")) {
 		scene_reset(s);
 		scene_commit(s);
-	} else if (buf[0] && !buf[1] && strchr("hos", buf[0])) {
+	} else if (buf[0] && !buf[1] && strchr("hosHOS", buf[0])) {
 		(void)scene_show_at(s, buf[0], at);
+	} else if (!strcmp(buf, "]") || (!strcmp(buf, "[") && s->level > 1)) {
+		s->level += buf[0] == ']' ? 1 : -1;
+		relabel(g);
 	} else {
 		return -1;
 	}
 	return 0;
 }
 
-// Runs the key of the picked part, the explode or the history in buf,
+// Runs the key of the picked part, the sequence or the history in buf,
 // with control if ctrl; returns 0, or -1 if it is none of those.
 static int arrange_key(struct gui *g, const char *buf, KeySym ks, int ctrl,
 		       struct px at)
@@ -588,13 +774,18 @@ static int arrange_key(struct gui *g, const char *buf, KeySym ks, int ctrl,
 	if (show_key(g, buf, at) == 0) {
 		return 0;
 	}
-	if (!strcmp(buf, "+") || !strcmp(buf, "=")) {
-		scene_explode(s, s->f + EXPLODE_STEP);
-	} else if (!strcmp(buf, "-") && s->f > 0) {
-		scene_explode(s, fmax(s->f - EXPLODE_STEP, 0));
-	} else {
+	if (!strcmp(buf, "A")) {
+		scene_play(s, 0);
+		scene_commit(s);
+		return 0;
+	}
+	if (strcmp(buf, "+") != 0 && strcmp(buf, "=") != 0 &&
+	    strcmp(buf, "-") != 0) {
 		return -1;
 	}
+	// Each press, or each repeat of a held key, puts its motion at its
+	// end at once.
+	scene_play(s, buf[0] == '-' ? ceil(s->play) - 1 : floor(s->play) + 1);
 	scene_commit(s);
 	return 0;
 }
@@ -625,6 +816,11 @@ static void key(struct gui *g, XKeyEvent *e)
 		g->draw = 1;
 		return;
 	}
+	if (!strcmp(buf, "c")) {
+		scene_center(&g->s);
+		g->draw = 1;
+		return;
+	}
 	fit = !strcmp(buf, " ");
 	for (size_t k = 0; k < sizeof(view_keys) / sizeof(view_keys[0]); k++) {
 		if (!strcmp(buf, view_keys[k][0])) {
@@ -633,6 +829,7 @@ static void key(struct gui *g, XKeyEvent *e)
 		}
 	}
 	if (fit) {
+		scene_cam_moved(&g->s);
 		cam_fit(&g->s.cam, &g->s);
 		g->draw = 1;
 	}
@@ -650,10 +847,12 @@ static void button(struct gui *g, const XButtonEvent *e)
 		if (g->mode == DRAG && g->moved) {
 			scene_commit(&g->s);
 		}
+		g->drag[0] = 0;
 		g->button = 0;
 		return;
 	}
 	if (e->button == BUTTON_WHEEL_UP || e->button == BUTTON_WHEEL_DOWN) {
+		scene_cam_moved(&g->s);
 		cam_zoom(&g->s.cam,
 			 e->button == BUTTON_WHEEL_UP ? WHEEL_ZOOM :
 							1 / WHEEL_ZOOM,
@@ -668,7 +867,7 @@ static void button(struct gui *g, const XButtonEvent *e)
 	if (e->button == Button1 && (e->state & (unsigned)ShiftMask)) {
 		pick(g, at);
 		g->mode = DRAG;
-		g->item = g->picked == NONE ? NONE : g->s.p[g->picked].item;
+		xsnprintf(g->drag, "%s", g->unit);
 	}
 }
 
@@ -693,11 +892,9 @@ static void motion(struct gui *g, const XMotionEvent *e)
 	if (!g->moved) {
 		return;
 	}
-	if (g->mode == DRAG && g->item < g->s.nit) {
-		double k = dot(cam_shift(&g->s.cam, d),
-			       scene_line_out(&g->s, g->item));
-
-		scene_drag(&g->s, g->item, g->s.drag[g->item] + k);
+	scene_cam_moved(&g->s);
+	if (g->mode == DRAG && g->drag[0]) {
+		(void)scene_move(&g->s, g->drag, cam_shift(&g->s.cam, d));
 	} else if (g->mode == PAN) {
 		cam_pan(&g->s.cam, d);
 	} else if (g->mode == TURN) {
@@ -714,8 +911,8 @@ static void event(struct gui *g, XEvent *e)
 		g->draw = 1;
 		break;
 	case ConfigureNotify:
-		g->s.cam.sz = (struct size){ e->xconfigure.width,
-					     e->xconfigure.height };
+		scene_resize(&g->s, (struct size){ e->xconfigure.width,
+						   e->xconfigure.height });
 		g->draw = 1;
 		break;
 	case KeyPress:
@@ -733,6 +930,32 @@ static void event(struct gui *g, XEvent *e)
 		break;
 	default:
 		break;
+	}
+}
+
+// Gives the window the class, the process and the machine by which
+// window managers and placers know a client: WM_CLASS "view", "View",
+// _NET_WM_PID and WM_CLIENT_MACHINE.
+static void name_window(struct gui *g)
+{
+	char res_name[] = "view";
+	char res_class[] = "View";
+	XClassHint hint = { res_name, res_class };
+	struct utsname u;
+	long pid = (long)getpid();
+	Atom net_pid = XInternAtom(g->d, "_NET_WM_PID", False);
+
+	XSetClassHint(g->d, g->w, &hint);
+	XChangeProperty(g->d, g->w, net_pid, XA_CARDINAL, FORMAT_32,
+			PropModeReplace, (const unsigned char *)&pid, 1);
+	if (uname(&u) == 0) {
+		char *list[] = { u.nodename };
+		XTextProperty tp;
+
+		if (XStringListToTextProperty(list, 1, &tp)) {
+			XSetWMClientMachine(g->d, g->w, &tp);
+			XFree(tp.value);
+		}
 	}
 }
 
@@ -772,6 +995,7 @@ static void open_window(struct gui *g, const char *path)
 	xsnprintf(title, "view %s", base);
 	free(base);
 	XStoreName(g->d, g->w, title);
+	name_window(g);
 	g->close = XInternAtom(g->d, "WM_DELETE_WINDOW", False);
 	XSetWMProtocols(g->d, g->w, &g->close, 1);
 	g->ctx = glXCreateContext(g->d, vi, NULL, True);
@@ -788,11 +1012,25 @@ static void open_window(struct gui *g, const char *path)
 		XFreeFont(g->d, font);
 	}
 	set_lights();
+	make_grain(g);
 	XMapWindow(g->d, g->w);
 	do {
 		XNextEvent(g->d, &e);
 		event(g, &e);
 	} while (e.type != Expose);
+}
+
+// Reads the watches and stdin where poll found them ready in fd.
+static void inputs(struct gui *g, const struct pollfd *fd)
+{
+	if ((unsigned)fd[1].revents & (unsigned)POLLIN) {
+		read_watch(g);
+	}
+	if ((unsigned)fd[2].revents & ((unsigned)POLLIN | (unsigned)POLLHUP)) {
+		read_stdin(g);
+	} else if (fd[2].revents) {
+		g->in_open = 0; // Closed, or no file at all.
+	}
 }
 
 static void loop(struct gui *g)
@@ -817,15 +1055,7 @@ static void loop(struct gui *g)
 		if (g->quit || poll(fd, 3, -1) < 0) {
 			continue;
 		}
-		if ((unsigned)fd[1].revents & (unsigned)POLLIN) {
-			read_watch(g);
-		}
-		if ((unsigned)fd[2].revents &
-		    ((unsigned)POLLIN | (unsigned)POLLHUP)) {
-			read_stdin(g);
-		} else if (fd[2].revents) {
-			g->in_open = 0; // Closed, or no file at all.
-		}
+		inputs(g, fd);
 	}
 }
 
@@ -867,18 +1097,52 @@ static void batch(struct scene *s)
 	}
 }
 
+// The size W x H of the words WxH, each 1 to WIN_MAX pixels; dies on
+// any other.
+static struct size window_size(const char *w)
+{
+	char *end = NULL;
+	long x = strtol(w, &end, DECIMAL);
+	long y = 0;
+
+	if (*end == 'x') {
+		y = strtol(end + 1, &end, DECIMAL);
+	}
+	if (*end || x < 1 || y < 1 || x > WIN_MAX || y > WIN_MAX) {
+		die("view: -s WxH, each 1 to %d pixels: %s", WIN_MAX, w);
+	}
+	return (struct size){ (int)x, (int)y };
+}
+
 int main(int argc, char **argv)
 {
 	static struct gui g;
 	struct fault e;
-	int check = argc == 3 && !strcmp(argv[1], "-c");
-	int nowin = argc == 3 && !strcmp(argv[1], "-b");
+	int a = 1;
+	int check = 0;
+	int nowin = 0;
+	struct size sz = { 0, 0 };
 
-	if (argc != 2 + (check || nowin) || argv[argc - 1][0] == '-') {
-		die("usage: view [-c | -b] SCENE");
+	while (a < argc - 1) {
+		if (!strcmp(argv[a], "-c")) {
+			check = 1;
+		} else if (!strcmp(argv[a], "-b")) {
+			nowin = 1;
+		} else if (!strcmp(argv[a], "-s") && a + 2 < argc) {
+			sz = window_size(argv[++a]);
+		} else {
+			break;
+		}
+		a++;
 	}
-	if (scene_read(&g.s, argv[argc - 1], &e) < 0) {
+	if (a != argc - 1 || argv[a][0] == '-' || (check && nowin)) {
+		die("usage: view [-c | -b] [-s WxH] SCENE");
+	}
+	if (scene_read(&g.s, argv[a], &e) < 0) {
 		die("view: %s", e.msg);
+	}
+	if (sz.w) {
+		scene_resize(&g.s, sz);
 	}
 	if (check) {
 		for (size_t i = 0; i < g.s.np; i++) {
@@ -888,11 +1152,10 @@ int main(int argc, char **argv)
 		batch(&g.s);
 	} else {
 		g.in_open = 1;
-		g.picked = g.item = NONE;
 		g.ino = inotify_init1(
 			(int)((unsigned)IN_NONBLOCK | (unsigned)IN_CLOEXEC));
 		watch_all(&g);
-		open_window(&g, argv[argc - 1]);
+		open_window(&g, argv[a]);
 		loop(&g);
 		free_gl(&g, NONE);
 		glXMakeCurrent(g.d, None, NULL);

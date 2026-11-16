@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# draftplate.part -- A round along ellipses where a drafted block meets a round
+# Copyright (c) 2026 Jakob Kastelic
+
+# A block 40 x 20 drafted 3 deg along y, and a plate across it whose
+# top front edge, seen from the side, is a round of 5 (a cylinder along
+# x).  The drafted sides of the block meet that cylinder on ellipses;
+# the edge where they meet gets a round of 1.  Where the round along an
+# ellipse runs on into the one along the line of the top, the two share
+# the ball that touches the top on its seam with the cylinder, not the
+# one square to the line through the corner, which the draft tilts.
+profile b along y -20 -10 0 20 -10 0 20 10 0 -20 10 0
+extrude box from 0 to -30 b draft 3
+profile w along x 5 -15 0 5 5 0 -20 5 5 -20 -15 0
+extrude plate from -25 to 25 w
+common part box plate
+round 1 box.side plate

@@ -7,6 +7,7 @@
 #include "util.h"
 #include <ctype.h>
 #include <math.h>
+#include <setjmp.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,10 +29,35 @@ const char *expr_where(const struct names *nm)
 
 void expr_fail_msg(const struct names *nm, const char *msg, const char *near)
 {
+	if (nm->trap && nm->msg && nm->nmsg) {
+		const char *part[] = { expr_where(nm), ": ", msg,
+				       near ? "\n  near: " : "",
+				       near ? near : "" };
+		size_t at = 0;
+
+		for (size_t i = 0; i < sizeof(part) / sizeof(part[0]); i++) {
+			size_t k = strlen(part[i]);
+
+			if (at + k >= nm->nmsg) {
+				k = nm->nmsg - 1 - at;
+			}
+			memcpy(nm->msg + at, part[i], k);
+			at += k;
+		}
+		nm->msg[at] = 0;
+		return;
+	}
 	if (near) {
 		warn("%s: %s\n  near: %s", expr_where(nm), msg, near);
 	} else {
 		warn("%s: %s", expr_where(nm), msg);
+	}
+}
+
+void expr_trap(const struct names *nm)
+{
+	if (nm->trap) {
+		longjmp(*nm->trap, 1);
 	}
 }
 
@@ -203,6 +229,9 @@ enum fn {
 	F_MAX,
 	F_HYPOT,
 	F_ATAN2,
+	F_MIN,
+	F_ABS,
+	F_CEIL,
 	F_COUNT
 };
 
@@ -212,6 +241,7 @@ static const struct {
 } fns[F_COUNT] = {
 	{ "floor", 1 }, { "tan", 1 }, { "sin", 1 },   { "cos", 1 },
 	{ "sqrt", 1 },	{ "max", 2 }, { "hypot", 2 }, { "atan2", 2 },
+	{ "min", 2 },	{ "abs", 1 }, { "ceil", 1 },
 };
 
 static double apply(enum fn f, const double *a)
@@ -235,6 +265,12 @@ static double apply(enum fn f, const double *a)
 		return hypot(a[0], a[1]);
 	case F_ATAN2:
 		return atan2(a[0], a[1]) / rad;
+	case F_MIN:
+		return fmin(a[0], a[1]);
+	case F_ABS:
+		return fabs(a[0]);
+	case F_CEIL:
+		return ceil(a[0] - FLOOR_SLACK);
 	case F_COUNT:
 	default:
 		break;
@@ -529,28 +565,125 @@ double eval(struct names *nm, const char *s)
 	return v;
 }
 
+// Ends the line of l at its # comment, and its blanks before the end.
+static void cut_comment(char *l)
+{
+	char *hash = strchr(l, '#');
+	size_t n = 0;
+
+	if (hash) {
+		*hash = 0;
+	}
+	n = strlen(l);
+	while (n && isspace((unsigned char)l[n - 1])) {
+		l[--n] = 0;
+	}
+}
+
+// The lines of a source so far, and the text of the line that runs on,
+// if any, from line first.
+struct lines {
+	struct src_line *ls;
+	size_t n, cap;
+	char *run;
+	unsigned first;
+};
+
+// Cuts the backslash off line l, and the blanks before it; returns
+// whether there was one, so that the line runs on.
+static int cut_run_on(char *l)
+{
+	size_t k = strlen(l);
+
+	if (!k || l[k - 1] != '\\') {
+		return 0;
+	}
+	l[--k] = 0;
+	while (k && isspace((unsigned char)l[k - 1])) {
+		l[--k] = 0;
+	}
+	return 1;
+}
+
+// Adds line l, numbered no, to the line that runs on, with a blank for
+// the blanks at its start.
+static void run_on(struct lines *x, const char *l, unsigned no)
+{
+	size_t a = 0;
+	size_t lead = strspn(l, " \t");
+	size_t k = strlen(l);
+
+	if (!x->run) {
+		x->run = xstrdup(l);
+		x->first = no;
+		return;
+	}
+	a = strlen(x->run);
+	x->run = xrealloc(x->run, a + k + 2);
+	x->run[a] = ' ';
+	memcpy(x->run + a + 1, l + lead, k + 1 - lead);
+}
+
+// Ends the line that runs on: keeps it unless it is blank.
+static void end_line(struct lines *x)
+{
+	if (x->run && x->run[strspn(x->run, " \t")]) {
+		struct src_line s = { x->first, x->run };
+
+		PUSH(x->ls, x->n, x->cap, s);
+	} else {
+		free(x->run);
+	}
+	x->run = NULL;
+}
+
+size_t source_lines(char *text, struct src_line **out)
+{
+	char *rest = text;
+	char *l = NULL;
+	struct lines x = { NULL, 0, 0, NULL, 0 };
+	unsigned no = 0;
+
+	while ((l = next_line(&rest)) != NULL) {
+		int on = 0;
+
+		no++;
+		cut_comment(l);
+		on = cut_run_on(l);
+		run_on(&x, l, no);
+		if (!on) {
+			end_line(&x);
+		}
+	}
+	end_line(&x);
+	*out = x.ls;
+	return x.n;
+}
+
+void free_source_lines(struct src_line *l, size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		free(l[i].text);
+	}
+	free(l);
+}
+
 void each_line(struct names *nm, const char *path,
 	       void (*fn)(char *line, void *ctx), void *ctx)
 {
 	char *text = read_file(path);
-	char *rest = text;
 	const char *old = nm->where;
 	char where[WHERE_LEN];
-	unsigned lineno = 0;
-	char *l = NULL;
+	struct src_line *ls = NULL;
+	size_t n = source_lines(text, &ls);
 
-	while ((l = next_line(&rest)) != NULL) {
-		char *hash = strchr(l, '#');
-
-		lineno++;
-		if (hash) {
-			*hash = 0;
-		}
-		xsnprintf(where, "%s:%u", path, lineno);
+	for (size_t i = 0; i < n; i++) {
+		xsnprintf(where, "%s:%u", path, ls[i].no);
 		nm->where = where;
-		fn(l, ctx);
+		fn(ls[i].text, ctx);
 	}
 	nm->where = old;
+	free_source_lines(ls, n);
 	free(text);
 }
 

@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# materials -- The materials and finishes of the library, plicad(7)
+# Copyright (c) 2026 Jakob Kastelic
+
+# A material statement gives NAME R G B ROUGHNESS DENSITY, the color and
+# the roughness from 0 to 1 and the density in g/cm3, and for a finish
+# its least draft, its mark and its texture.
+
+# Bodies.
+material aluminum 0.77 0.77 0.78 0.4 2.70
+material red 0.8 0.1 0.1 0.5 2.68            # aluminum, painted red
+material steel 0.62 0.62 0.6 0.6 7.85
+material stainless 0.7 0.7 0.7 0.35 7.93
+material brass 0.78 0.62 0.3 0.3 8.5
+material abs 0.12 0.12 0.12 0.6 1.05
+material pc 0.15 0.15 0.15 0.5 1.20
+material silicone 0.15 0.15 0.15 0.8 1.15
+
+# Coats of sheet metal.
+material black 0.05 0.05 0.05 0.6 2.68       # powder coat on aluminum
+material clear 0.8 0.78 0.7 0.4 2.68         # chemical film on aluminum
+
+# Textures of molds, by their VDI 3400 grade, with the least draft
+# usual for each in a plastic such as ABS; the molder has the last word.
+# A texture takes the color of the body, so its own is 0 0 0, unused.
+material vdi12 0 0 0 0.7 1.05 draft 0.5 vdi 12
+material vdi18 0 0 0 0.75 1.05 draft 1 vdi 18
+material vdi24 0 0 0 0.8 1.05 draft 1.5 vdi 24
+material vdi27 0 0 0 0.8 1.05 draft 2 vdi 27
+material vdi30 0 0 0 0.85 1.05 draft 3 vdi 30
+material vdi33 0 0 0 0.85 1.05 draft 3.5 vdi 33
+material vdi36 0 0 0 0.9 1.05 draft 4 vdi 36
+material vdi38 0 0 0 0.9 1.05 draft 5 vdi 38
+material vdi42 0 0 0 0.95 1.05 draft 6 vdi 42
+material vdi45 0 0 0 0.95 1.05 draft 7 vdi 45

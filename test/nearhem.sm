@@ -7,7 +7,7 @@
 # difference came out at -12.5 mm3 of two equal solids.
 
 sheet 2.286 0.8263 0.4145
-plate base 0 0 174.4625 129.2657 origin -1.8797 19.1186 0 axes +z +y
+plate base 0 0 174.4625 129.2657 at -1.8797 19.1186 0 axes +z +y
 flange f0 base +y -179.999 15.2402
 flange f2 f0 -x -90 11.9419 span 135.2171 146.7268
-hole 3.2349 -8.5002 145.6025 along z
+hole hole1 3.2349 -8.5002 145.6025 along z

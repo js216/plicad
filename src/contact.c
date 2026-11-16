@@ -229,7 +229,7 @@ static int segs_meet(struct vec2 a, struct vec2 b, struct vec2 c, struct vec2 d)
 	       seg_dist2(c, a, b) < ON || seg_dist2(d, a, b) < ON;
 }
 
-// Whether the angle of the point p about the centre of arc e of part p
+// Whether the angle of the point p about the center of arc e of part p
 // lies on the arc.
 static int on_arc(const struct part *pt, const struct edge *e, struct vec2 p)
 {
@@ -425,6 +425,11 @@ static int in_hole(const struct part *p, const struct hole *h,
 
 		cyl = cyl && r < h->r;
 		cone = cone && r < rc;
+		if (h->blind > 0) {
+			double in = h->bside > 0 ? -q[i].z : q[i].z + p->t;
+
+			cyl = cyl && in < h->blind;
+		}
 	}
 	return cyl || cone;
 }

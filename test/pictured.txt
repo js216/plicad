@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# pictured.txt -- A turned plate with a picture on its face
+# Copyright (c) 2026 Jakob Kastelic
+
+w = 10
+part a ../build/plate.st turn z 90 move 50 0 0
+image label pic.ppm on a 0 0 1 w 0 1 0 w/2 1

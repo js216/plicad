@@ -1,0 +1,40 @@
+part inserts
+volume 3502.5793
+area 5055.2585
+bbox 0.0000 0.0000 -1.5000 60.0000 40.0000 0.0000
+faces 10 plane 6 cylinder 4
+hole 10.0000 10.0000 -0.7500 d 4.2200 axis 0 0 1
+hole 30.0000 10.0000 -0.7500 d 4.2200 axis 0 0 1
+hole 50.0000 10.0000 -0.7500 d 4.2200 axis 0 0 1
+hole 30.0000 30.0000 -0.7500 d 5.4100 axis 0 0 1
+flat 60.0000 40.0000 area 2335.053 holes 4 bends 0
+part inserts/nut
+volume 47.5038
+area 93.2621
+center 10.0000 10.0000 -2.2500
+bbox 6.8250 6.8250 -3.0000 13.1750 13.1750 -1.5000
+faces 4 plane 2 cylinder 2 cone 0 sphere 0 torus 0
+mass 0.3729
+part inserts/nut-2
+volume 47.5038
+area 93.2621
+center 30.0000 10.0000 -2.2500
+bbox 26.8250 6.8250 -3.0000 33.1750 13.1750 -1.5000
+faces 4 plane 2 cylinder 2 cone 0 sphere 0 torus 0
+mass 0.3729
+part inserts/nut-3
+volume 47.5038
+area 93.2621
+center 50.0000 10.0000 -2.2500
+bbox 46.8250 6.8250 -3.0000 53.1750 13.1750 -1.5000
+faces 4 plane 2 cylinder 2 cone 0 sphere 0 torus 0
+mass 0.3729
+part inserts/post
+volume 183.2177
+area 181.5212
+center 30.0000 30.0000 4.0000
+bbox 27.3000 27.3000 0.0000 32.7000 32.7000 8.0000
+faces 4 plane 2 cylinder 2 cone 0 sphere 0 torus 0
+mass 1.4383
+unit inserts mass 2.5570 center 30.0000 21.2497 1.2655
+total mass 2.5570 center 30.0000 21.2497 1.2655

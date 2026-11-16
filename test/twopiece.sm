@@ -4,5 +4,5 @@
 
 # tostep writes one solid for each piece.
 sheet 1 1 0.44
-plate base 0 0 30 10 origin 0 0 0 axes +x +y
-cut 14 -1 16 11 along z
+plate base 0 0 30 10 at 0 0 0 axes +x +y
+cut cut1 14 -1 16 11 along z

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# roundsect.part -- A bar whose flat sides run into rounds, for sections
+# Copyright (c) 2026 Jakob Kastelic
+
+# A bar 30 by 10 across and 20 long along y, its corners round by 4.6:
+# its two short sides are flat for .8 mm only, between the rounds.  A
+# section across it shows each flat side as one line, upright, at x 0
+# and at x 30, however the rounds are thinned to the chord.
+profile p along y 0 0 4.6 30 0 4.6 30 10 4.6 0 10 4.6
+extrude bar from 0 to 20 p

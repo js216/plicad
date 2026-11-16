@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# seated.txt -- Flat heads in the countersinks of test/countersunk.sm
+# Copyright (c) 2026 Jakob Kastelic
+
+# Flush lies on its countersink, a cone on a cone of the same angle;
+# steep, of a wider angle, touches its countersink only along the rim;
+# deep sits 0.01 mm into its countersink.  Only deep collides.
+part plate ../build/countersunk.st
+part flush ../build/part_flathead.st turn x 180
+part steep ../build/part_steephead.st turn x 180 move 20 0 0
+part deep ../build/part_flathead.st turn x 180 move 40 0 -0.01

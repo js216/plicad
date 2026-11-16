@@ -6,24 +6,25 @@
 # Usage: test/occt.sh BIN PARTS
 # BIN holds the programs, PARTS names the test parts.  OCCT must read
 # each as valid solids, as many as the STEP file writes, with the volume
-# and area of measure.
+# and area of measure summed over its parts.
 
 bin=$1
 parts=$2
 steps=
 for t in $parts; do
-	"$bin/smfold" test/$t.sm > build/$t.fold &&
-		"$bin/tostep" build/$t.fold > build/$t.step || exit 1
+	"$bin/smfold" test/$t.sm > build/$t.st &&
+		"$bin/tostep" build/$t.st > build/$t.step || exit 1
 	steps="$steps build/$t.step"
 done
 test/freecad.sh test/occtcheck.py build/occt.txt $steps \
 	> build/occt.log 2>&1
 fail=0
 for t in $parts; do
-	"$bin/measure" build/$t.fold | awk -v t=$t '
-		$1 == "volume" { v = $2 }
-		$1 == "area" { a = $2 }
-		END { print "solid", t, "valid volume", v, "area", a }' \
+	"$bin/measure" build/$t.st | awk -v t=$t '
+		$1 == "volume" { v += $2 }
+		$1 == "area" { a += $2 }
+		END { printf "solid %s valid volume %.4f area %.4f\n",
+			t, v, a }' \
 		> build/occt.want
 	grep "^solid $t " build/occt.txt | cut -d' ' -f1-7 > build/occt.one
 	k=$(grep -c MANIFOLD_SOLID_BREP build/$t.step)

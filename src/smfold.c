@@ -1,69 +1,78 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// smfold.c -- Sheet metal part description to fold file
+// smfold.c -- Sheet metal part source to a stream of its blank
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: smfold [-D NAME=EXPR]... part.sm > part.fold
+// Usage: smfold [-D NAME=EXPR]... part.sm > part.st
 //        smfold -M part.sm     prints the names of the included
 //                              parameters used by part.sm
 //
-// Option -D pins a parameter to a value.
+// Option -D pins a parameter to a value.  The source is in the language
+// of plicad(7); smfold writes the blank as a stream (stream.h).  Flat
+// coordinates are x and y.  The sheet is z in [-t, 0], and its near
+// face, z = 0, is the reference (outer) face.
 //
-// Each line holds one statement, and # starts a comment.  An argument is
-// one expression without spaces, or a (parenthesised) one.  Flat
-// coordinates are x and y.  The sheet is z in [-t, 0], and its top face,
-// z = 0, is the reference (outer) face.
-//
-//   include FILE          name = expr lines, FILE relative to this file
-//   NAME = EXPR           a local definition
 //   sheet T R K           thickness, inside bend radius, ANSI k-factor
-//   plate NAME X0 Y0 X1 Y1 origin OX OY OZ axes U V
+//   plate NAME X0 Y0 X1 Y1 at OX OY OZ axes U V
 //       The root slab.  Flat x and y run along the 3D axes U and V (+x,
-//       -z, ...), the top face faces U x V, and flat (0, 0) is at O.
+//       -z, ...), the near face faces U x V, and flat (0, 0) is at O.
 //   flange NAME PARENT DIR ANGLE LEG [at C] [span A B] [zone A B]
 //       A bend zone starts on the edge of PARENT in flat direction DIR
 //       (+x -x +y -y), or on the line where that coordinate is C.  After
 //       the zone is a straight leg LEG long.  ANGLE is in degrees, and a
-//       positive one folds toward the top face.  The span sets the extent
-//       of the flange along the edge, by default that of the parent.  The
-//       zone sets the extent of the bend, by default the overlap of span
-//       and parent.  The bend has the inside radius of the sheet.
-//   cut U0 V0 U1 V1 along A [at W depth L]
-//   hole D U V along A [at W depth L] [csink DC ANGLE near|far]
+//       positive one folds toward the near face.  The span sets the
+//       extent of the flange along the edge, by default that of the
+//       parent.  The zone sets the extent of the bend, by default the
+//       overlap of span and parent.  The bend has the inside radius of
+//       the sheet.
+//   cut NAME U0 V0 U1 V1 along A [from W0 to W1]
+//   hole NAME D U V along A [from W0 to W1] [csink DC ANGLE near|far]
 //        [pattern AX N P [AX N P] | pattern hex P within R]
 //       A rectangle or a hole through every slab made so far that lies
 //       across the 3D axis A (x, y or z).  U and V are the other two
-//       axes in alphabetical order.  A depth L centred on W limits it.
+//       axes in alphabetical order.  From W0 to W1 along A limits it.
 //       A pattern repeats it N times, P apart, along the axis AX (with
 //       its sign: -x runs toward smaller x).  A hex pattern puts holes
 //       on a hexagonal grid of pitch P round (U, V), rows along U, where
 //       they lie wholly inside the circle of radius R about (U, V).  A
-//       countersink of diameter
-//       DC and included angle ANGLE opens the hole at the top face of
-//       the slab (near) or at the other face (far).
-//   outline along A [at W depth L]
+//       countersink of diameter DC and included angle ANGLE opens the
+//       hole at the near face of the slab or at the far one.
+//   outline NAME along A [from W0 to W1]
 //   point U V [arc CU CV ccw|cw]
 //       A hole of any outline through every slab across A, inside one
 //       face of each, like a cut.  The points of the outline follow in
 //       point statements.  From each point a line runs to the next one,
 //       or an arc about (CU, CV), counterclockwise or clockwise in the
 //       (U, V) plane.
-//   trim along A [at W depth L]
+//   trim NAME along A [from W0 to W1]
 //       An open curve of point statements, from one point on the
 //       outline of a slab face to another, each at a corner or on a
 //       straight edge.  It replaces the run of free outline edges
 //       between them that cuts off the smaller piece.
-//   round NAME R [at X Y Z]
+//   round R NAME [at X Y Z]
 //       Rounds the two free-end corners of flange NAME, or the one
 //       corner of slab NAME at the 3D point (X, Y, Z): a round of a
 //       convex corner, or a fillet of a concave one.  The point may lie
 //       on either face of the sheet.
+//   coat MATERIAL near|far [edges] all | flat X0 Y0 X1 Y1 [X2 Y2]... |
+//        U0 V0 U1 V1 along A [from W0 to W1]
+//       A material on the near or the far face of a region of the
+//       blank, and with edges on its cut edges and holes there: the
+//       whole blank, a rectangle or polygon of flat points, or a
+//       rectangle across A on each slab square to A that it meets, up
+//       to the edges of the slab.  A later coat lies over an earlier.
 //
-// Statements apply in order, like the features of a CAD model.
+// Every NAME is new: the name of a feature, which the drawings select
+// by (draw(5)).  Each edge and hole of the blank carries the name of
+// the feature that made it: a cut, a hole, an outline or a trim, or the
+// plate or flange whose outline it is.  Statements apply in order, like
+// the features of a CAD model.
 
 #include "contact.h"
 #include "expr.h"
 #include "fold.h"
 #include "geom.h"
+#include "insert.h"
+#include "stream.h"
 #include "util.h"
 #include <math.h>
 #include <stdbool.h>
@@ -90,7 +99,7 @@ enum {
 // The words of the statements.
 enum {
 	PLATE_Y1 = 5,
-	PLATE_ORIGIN,
+	PLATE_AT,
 	PLATE_OX,
 	PLATE_OY,
 	PLATE_OZ,
@@ -100,7 +109,19 @@ enum {
 	PLATE_WORDS
 };
 enum { FLANGE_ANGLE = 4, FLANGE_LEG, FLANGE_OPTIONS };
-enum { HOLE_ALONG = 4, CUT_ALONG }; // Where "along A" starts.
+enum { HOLE_ALONG = 5, CUT_ALONG }; // Where "along A" starts.
+enum { CUT_U0 = 2, CUT_V0, CUT_U1, CUT_V1 }; // cut NAME U0 V0 U1 V1
+enum { MATERIAL_WORDS = 7 }; // material NAME R G B ROUGHNESS DENSITY
+enum {
+	INSERT_UV = 4,
+	NAME_ROOM = 256,
+	MSG_LEN = 512
+}; // insert NAME TYPE SIDE U V
+#define SHEET_TIE 1e-9 // Sizes this near in mm are one.
+enum {
+	COAT_MAX = 64, // The most corners of a coat.
+	COAT_RECT_WORDS = 5 // U0 V0 U1 V1 along
+};
 enum { POINT_WORDS = 3, POINT_CU, POINT_CV, POINT_DIR, POINT_ARC_WORDS };
 enum { ROUND_WORDS = 3, ROUND_X, ROUND_Y, ROUND_Z, ROUND_AT_WORDS };
 enum {
@@ -125,20 +146,31 @@ struct sheet_dims {
 	bool set;
 };
 
+// A line x = c (a = 0) or y = c (a = 1) of the flat blank, and the side
+// of it to keep: that where sign (x - c) is 1.
+struct line2 {
+	int a, sign;
+	double c;
+};
+
 // A rectangle that paints cells with a body, or clears the cells of one.
 struct op {
 	double x0, y0, x1, y1;
 	size_t body;
 	int clear;
+	size_t feat; // The feature of a clear.
 };
 
 // A hole on a slab, and the file and line of its statement.
 struct circ {
 	size_t body;
 	double x, y, r;
-	int side; // Countersink at the top face (1), the bottom (-1), none (0).
+	int side; // Countersink at the near face (1), the far (-1), none (0).
 	double rc, h;
 	char *where;
+	size_t feat;
+	double blind; // The depth of a blind hole from the face of bside.
+	int bside;
 };
 
 // A corner rounding, and the file and line of its statement.
@@ -151,14 +183,16 @@ struct rnd {
 };
 
 // A cut or hole: its footprint in the U, V plane across axis a, an
-// optional depth range along a, and for a hole its radius and centre.
+// optional depth range along a, and for a hole its radius and center.
 struct through {
 	int a;
 	struct box foot; // U in x, V in y, the range along a in z.
 	int hole;
 	double rad, cu, cv;
-	int side; // A countersink at the top or bottom face (1, -1), or 0.
+	int side; // A countersink at the near or far face (1, -1), or 0.
 	double rc, angle;
+	double blind; // The depth of a blind hole from the face of bside,
+	int bside; // 1 near or -1 far, or 0 for a hole through.
 };
 
 // A pattern: n[k] copies along axis[k], with pitch step[k] (signed), or
@@ -186,6 +220,7 @@ struct oline {
 	size_t n;
 	int trim; // An open curve that trims the outline of the face.
 	char *where;
+	size_t feat;
 };
 
 // The outline being read: its statement and its corners in (U, V).
@@ -196,14 +231,30 @@ struct open_outline {
 	size_t n, cap;
 	int trim;
 	char *where;
+	size_t feat;
 };
 
 // The part being made: its names, the statement being read, the bodies,
 // paint ops, holes, rounds and outlines so far, the grid of cells and
 // the part.
+// An insert statement: its name and feature, its type, the side its
+// body stands on, the length of its body or 0, and its line.
+struct ins {
+	char *name, *where;
+	char *body; // The name of the inserts, or NULL for that of the hole.
+	size_t feat;
+	struct insert_type t;
+	int side;
+	double length;
+};
+
 struct smf {
 	struct names nm;
 	const char *part_path;
+	struct ins *ins;
+	size_t nins, capins;
+	struct material *mats; // The materials of the source, for coats.
+	size_t nmats, capmats;
 	char *args[MAXARGS];
 	size_t nargs;
 	struct sheet_dims sheet;
@@ -221,6 +272,8 @@ struct smf {
 	double *xs, *ys;
 	size_t nx, ny; // Number of coordinates.
 	size_t *lab; // Body + 1, or 0 for empty.
+	size_t *cby; // The feature that cleared an empty cell, or NONE.
+	size_t feat; // The feature of the statement being read.
 	size_t *fid; // Face, or NONE for empty.
 	size_t *vid; // Grid point to vertex.
 	struct part out;
@@ -249,12 +302,27 @@ static size_t find_slab(struct smf *g, const char *n)
 	expr_fail(&g->nm, "no such plate or flange", n);
 }
 
+// Takes the name of a new feature, which no other one may have, and
+// makes it the feature of the statement being read.
 static void new_name(struct smf *g, const char *n)
 {
-	for (size_t i = 0; i < g->nb; i++) {
-		if (strcmp(g->bodies[i].name, n) == 0) {
-			expr_fail(&g->nm,
-				  "a plate or flange has this name already", n);
+	for (size_t i = 0; i < g->out.nfeats; i++) {
+		if (strcmp(g->out.feats[i].s, n) == 0) {
+			expr_fail(&g->nm, "a feature has this name already", n);
+		}
+	}
+	g->feat = part_feature(&g->out, n);
+}
+
+// Refuses the name n of the bodies of an insert if an insert before has
+// bodies of that name.
+static void body_name(struct smf *g, const char *n)
+{
+	for (size_t i = 0; i < g->nins; i++) {
+		const struct ins *o = &g->ins[i];
+
+		if (strcmp(o->body ? o->body : o->name, n) == 0) {
+			expr_fail(&g->nm, "an insert has this name already", n);
 		}
 	}
 }
@@ -277,8 +345,8 @@ static int axis_of(struct smf *g, const char *s, double *sign)
 static void op(struct smf *g, double x0, double y0, double x1, double y1,
 	       size_t body, int clear)
 {
-	struct op o = { fmin(x0, x1), fmin(y0, y1), fmax(x0, x1),
-			fmax(y0, y1), body,	    clear };
+	struct op o = { fmin(x0, x1), fmin(y0, y1), fmax(x0, x1), fmax(y0, y1),
+			body,	      clear,	    g->feat };
 
 	PUSH(g->ops, g->nops, g->capops, o);
 }
@@ -418,12 +486,12 @@ static void st_plate(struct smf *g)
 	if (g->nb) {
 		expr_fail(&g->nm, "there is only one plate (the root)", NULL);
 	}
-	if (g->nargs != PLATE_WORDS || !is(g, PLATE_ORIGIN, "origin") ||
+	if (g->nargs != PLATE_WORDS || !is(g, PLATE_AT, "at") ||
 	    !is(g, PLATE_AXES, "axes")) {
-		expr_fail(&g->nm,
-			  "plate NAME X0 Y0 X1 Y1 origin OX OY OZ axes U V",
+		expr_fail(&g->nm, "plate NAME X0 Y0 X1 Y1 at OX OY OZ axes U V",
 			  NULL);
 	}
+	new_name(g, g->args[1]);
 	b = blank_body(g->args[1]);
 	b.x0 = arg(g, 2);
 	b.y0 = arg(g, 3);
@@ -603,7 +671,7 @@ static void st_flange(struct smf *g)
 // May the cut make a hole in slab b?  Dies if it crosses b at an angle,
 // crosses a bend or ends inside the sheet.
 // Whether a slab of normal n lies square to the axis a: a line along a
-// through the sheet drifts by less than a micrometre in the slab.
+// through the sheet drifts by less than a micrometer in the slab.
 static int square_to(struct smf *g, struct vec n, int a)
 {
 	struct vec e = axis_vec(a, 1);
@@ -773,7 +841,7 @@ static int cut_hits(struct smf *g, const struct through *c,
 	return 1;
 }
 
-// Maps the point (u, v) on the top of slab b to flat coordinates.
+// Maps the point (u, v) on the near face of slab b to flat coordinates.
 static struct vec slab_flat(const struct through *c, const struct body *b,
 			    double u, double v)
 {
@@ -790,8 +858,11 @@ static void add_circ(struct smf *g, const struct through *c, size_t i)
 {
 	struct vec p = slab_flat(c, &g->bodies[i], c->cu, c->cv);
 	double h = (c->rc - c->rad) / tan(c->angle * DEG / 2);
-	struct circ ci = { i,	    p.x,   p.y, c->rad,
-			   c->side, c->rc, h,	xstrdup(expr_where(&g->nm)) };
+	struct circ ci = {
+		i,	 p.x,	   p.y,	    c->rad,
+		c->side, c->rc,	   h,	    xstrdup(expr_where(&g->nm)),
+		g->feat, c->blind, c->bside
+	};
 
 	PUSH(g->circs, g->ncircs, g->capcircs, ci);
 }
@@ -876,7 +947,8 @@ static size_t parse_pattern(struct smf *g, size_t i, const struct through *c,
 	if (is(g, i + 1, "hex")) {
 		return parse_hex(g, i + 1, pt);
 	}
-	for (i++; i + 2 < g->nargs + 1 && !is(g, i, "at"); i += 3) {
+	for (i++; i < g->nargs && !is(g, i, "from") && !is(g, i, "csink");
+	     i += 3) {
 		if (np == 2) {
 			expr_fail(&g->nm, "at most two pattern directions",
 				  NULL);
@@ -922,8 +994,8 @@ static void parse_csink(struct smf *g, size_t i, struct through *c)
 	}
 }
 
-// Parses "along A [at W depth L] [pattern ...]" from args[i] on; only a
-// hole takes a pattern.
+// Parses "along A [from W0 to W1] [csink ...] [pattern ...]" from args[i]
+// on; only a hole takes a countersink and a pattern.
 static void parse_where(struct smf *g, size_t i, struct through *c,
 			struct pattern *pt)
 {
@@ -936,9 +1008,13 @@ static void parse_where(struct smf *g, size_t i, struct through *c,
 	c->foot.lo.z = -HUGE_VAL;
 	c->foot.hi.z = HUGE_VAL;
 	for (i += 2; i < g->nargs;) {
-		if (is(g, i, "at") && is(g, i + 2, "depth")) {
-			c->foot.lo.z = arg(g, i + 1) - arg(g, i + 3) / 2;
-			c->foot.hi.z = arg(g, i + 1) + arg(g, i + 3) / 2;
+		if (is(g, i, "from") && is(g, i + 2, "to")) {
+			c->foot.lo.z = arg(g, i + 1);
+			c->foot.hi.z = arg(g, i + 3);
+			if (!(c->foot.hi.z > c->foot.lo.z)) {
+				expr_fail(&g->nm, "from W0 to W1 needs W1 > W0",
+					  NULL);
+			}
 			i += 4;
 		} else if (is(g, i, "pattern") && c->hole) {
 			i = parse_pattern(g, i, c, pt);
@@ -1011,31 +1087,43 @@ static void hex_holes(struct smf *g, const struct through *c,
 	}
 }
 
-static void st_cut(struct smf *g, int hole)
+// A hole to cut: its diameter, and the word of the line under work
+// where its U V begin.
+struct hole_cut {
+	double d;
+	size_t word;
+	double blind; // The depth of a blind hole from the face of bside.
+	int bside;
+};
+
+// Cuts the hole hc about words i and i + 1, U V, of the line under work,
+// i its word, and the place along A from word i + 2 on: through the
+// sheet, or as many as its pattern gives.
+static void cut_hole(struct smf *g, struct hole_cut hc)
 {
 	struct through c;
 	struct pattern pt = { { 0, 0 }, { 0, 0 }, { 1, 1 }, 0, 0 };
-	size_t i = hole ? HOLE_ALONG : CUT_ALONG;
+	size_t i = hc.word;
 
 	memset(&c, 0, sizeof(c));
-	c.hole = hole;
-	if (hole) {
-		c.rad = arg(g, 1) / 2;
-		c.cu = arg(g, 2);
-		c.cv = arg(g, 3);
-		if (!(c.rad > 0)) {
-			expr_fail(&g->nm, "the hole diameter must be above 0",
-				  NULL);
-		}
-		c.foot.lo = v3(c.cu - c.rad, c.cv - c.rad, 0);
-		c.foot.hi = v3(c.cu + c.rad, c.cv + c.rad, 0);
-	} else {
-		c.foot.lo = v3(fmin(arg(g, 1), arg(g, 3)),
-			       fmin(arg(g, 2), arg(g, 4)), 0);
-		c.foot.hi = v3(fmax(arg(g, 1), arg(g, 3)),
-			       fmax(arg(g, 2), arg(g, 4)), 0);
+	c.hole = 1;
+	c.rad = hc.d / 2;
+	c.cu = arg(g, i);
+	c.cv = arg(g, i + 1);
+	if (!(c.rad > 0)) {
+		expr_fail(&g->nm, "the hole diameter must be above 0", NULL);
 	}
-	parse_where(g, i, &c, &pt);
+	c.foot.lo = v3(c.cu - c.rad, c.cv - c.rad, 0);
+	c.foot.hi = v3(c.cu + c.rad, c.cv + c.rad, 0);
+	parse_where(g, i + 2, &c, &pt);
+	c.blind = hc.blind;
+	c.bside = hc.bside;
+	if (c.blind > 0 && (c.side || !(c.blind < g->sheet.t))) {
+		expr_fail(&g->nm,
+			  "a blind hole needs a depth inside the sheet and no "
+			  "countersink",
+			  NULL);
+	}
 	if (pt.hex > 0) {
 		hex_holes(g, &c, &pt);
 		return;
@@ -1043,11 +1131,199 @@ static void st_cut(struct smf *g, int hole)
 	for (long j = 0; j < pt.n[0]; j++) {
 		for (long k = 0; k < pt.n[1]; k++) {
 			struct copy_index at = { j, k };
-			struct through d = copy_at(&c, &pt, at);
+			struct through h = copy_at(&c, &pt, at);
 
-			through(g, &d);
+			through(g, &h);
 		}
 	}
+}
+
+// Reads insert NAME TYPE near|far [length L] [as BODY] U V along A ...:
+// the mounting hole of the type as a hole NAME, through the sheet or
+// blind, and the insert BODY in it, or NAME.
+// Refuses an insert of type t in the sheet of g if the sheet is too
+// thin for it, or not set yet.
+static void check_sheet(struct smf *g, const struct insert_type *t)
+{
+	if (!g->sheet.set) {
+		expr_fail(&g->nm, "an insert needs the sheet first", NULL);
+	}
+	if (g->sheet.t < t->sheet - SHEET_TIE) {
+		char msg[MSG_LEN];
+
+		xsnprintf(msg,
+			  "the sheet of %g is under the %g that type %s "
+			  "needs",
+			  g->sheet.t, t->sheet, t->name);
+		expr_fail(&g->nm, msg, NULL);
+	}
+}
+
+static void st_insert(struct smf *g)
+{
+	struct ins in;
+	size_t i = INSERT_UV;
+
+	memset(&in, 0, sizeof(in));
+	if (g->nargs < INSERT_UV + 4) {
+		expr_fail(&g->nm,
+			  "insert NAME TYPE near|far [length L] [as BODY] U V "
+			  "along A ...",
+			  NULL);
+	}
+	{
+		struct insert_ref ref = { g->args[2], g->part_path };
+
+		if (insert_type(ref, &in.t) < 0) {
+			expr_fail(&g->nm, "no insert of that type", g->args[2]);
+		}
+	}
+	if (!is(g, 3, "near") && !is(g, 3, "far")) {
+		expr_fail(&g->nm, "an insert stands near or far", g->args[3]);
+	}
+	in.side = is(g, 3, "near") ? 1 : -1;
+	for (;;) {
+		if (is(g, i, "length") && i + 1 < g->nargs) {
+			in.length = arg(g, i + 1);
+			if (!(in.length > 0)) {
+				expr_fail(&g->nm, "a length is above 0", NULL);
+			}
+		} else if (is(g, i, "as") && i + 1 < g->nargs && !in.body) {
+			in.body = xstrdup(g->args[i + 1]);
+			body_name(g, in.body);
+		} else {
+			break;
+		}
+		i += 2;
+	}
+	check_sheet(g, &in.t);
+	new_name(g, g->args[1]);
+	in.name = xstrdup(g->args[1]);
+	in.where = xstrdup(expr_where(&g->nm));
+	in.feat = g->feat;
+	PUSH(g->ins, g->nins, g->capins, in);
+	{
+		struct hole_cut hc = { in.t.hole, i, in.t.blind,
+				       in.t.blind > 0 ? in.side : 0 };
+
+		cut_hole(g, hc);
+	}
+}
+
+// The distance from flat point (x, y) to edge e of part p: to its line
+// segment, or to the circle of its arc.
+static double edge_gap(const struct part *p, const struct edge *e, double x,
+		       double y)
+{
+	struct vec2 a = p->verts[e->v0];
+	struct vec2 b = p->verts[e->v1];
+	double dx = b.x - a.x;
+	double dy = b.y - a.y;
+	double l2 = (dx * dx) + (dy * dy);
+	double s = 0;
+
+	if (e->arc) {
+		return fabs(hypot(x - e->cx, y - e->cy) -
+			    hypot(a.x - e->cx, a.y - e->cy));
+	}
+	s = l2 > 0 ? fmin(1,
+			  fmax(0, (((x - a.x) * dx) + ((y - a.y) * dy)) / l2)) :
+		     0;
+	return hypot(x - (a.x + (s * dx)), y - (a.y + (s * dy)));
+}
+
+// The distance from the middle of hole h of part p to its nearest edge
+// or bend line.
+static double hole_gap(const struct part *p, size_t h)
+{
+	double gap = HUGE_VAL;
+
+	for (size_t e = 0; e < p->nedges; e++) {
+		gap = fmin(gap, edge_gap(p, &p->edges[e], p->holes[h].cx,
+					 p->holes[h].cy));
+	}
+	return gap;
+}
+
+// Puts insert in into hole h of the part of g, the *k-th of its holes,
+// NAME, or NAME-K from the second; dies if the hole lies nearer an edge
+// or a bend line than its type allows.
+static void put_insert(struct smf *g, const struct ins *in, size_t h,
+		       const size_t *k)
+{
+	struct part *p = &g->out;
+	struct part_insert pi;
+	double gap = hole_gap(p, h);
+	char name[NAME_ROOM];
+	const char *base = in->body ? in->body : in->name;
+
+	if (gap < in->t.edge - SHEET_TIE) {
+		die("%s: insert %s lies %.3g from an edge or a bend line, "
+		    "under the %g of type %s",
+		    in->where, in->name, gap, in->t.edge, in->t.name);
+	}
+	if (*k > 1) {
+		xsnprintf(name, "%s-%zu", base, *k);
+	} else {
+		xsnprintf(name, "%s", base);
+	}
+	memset(&pi, 0, sizeof(pi));
+	pi.side = in->side;
+	pi.hole = h;
+	pi.body_d = in->t.body_d;
+	pi.body_h = in->length > 0 ? in->length : in->t.body_h;
+	pi.fills = in->t.flush || in->t.blind > 0;
+	pi.material = in->t.material[0] ? xstrdup(in->t.material) : NULL;
+	pi.type = xstrdup(in->t.name);
+	pi.name = xstrdup(name);
+	PUSH(p->ins, p->nins, p->capins, pi);
+}
+
+// Puts each insert of g in its holes of the part, NAME, or NAME-2 on for
+// a pattern; dies at its line if a hole lies nearer an edge or a bend
+// line than its type allows.
+static void place_inserts(struct smf *g)
+{
+	const struct part *p = &g->out;
+
+	for (size_t i = 0; i < g->nins; i++) {
+		const struct ins *in = &g->ins[i];
+		size_t k = 0;
+
+		for (size_t h = 0; h < p->nholes; h++) {
+			if (p->holes[h].by == in->feat) {
+				k++;
+				put_insert(g, in, h, &k);
+			}
+		}
+	}
+}
+
+static void st_cut(struct smf *g, int hole)
+{
+	struct through c;
+	struct pattern pt = { { 0, 0 }, { 0, 0 }, { 1, 1 }, 0, 0 };
+
+	if (g->nargs < 2) {
+		expr_fail(&g->nm,
+			  hole ? "hole NAME D U V along A ..." :
+				 "cut NAME U0 V0 U1 V1 along A ...",
+			  NULL);
+	}
+	new_name(g, g->args[1]);
+	if (hole) {
+		struct hole_cut hc = { arg(g, 2), HOLE_ALONG - 2, 0, 0 };
+
+		cut_hole(g, hc);
+		return;
+	}
+	memset(&c, 0, sizeof(c));
+	c.foot.lo = v3(fmin(arg(g, CUT_U0), arg(g, CUT_U1)),
+		       fmin(arg(g, CUT_V0), arg(g, CUT_V1)), 0);
+	c.foot.hi = v3(fmax(arg(g, CUT_U0), arg(g, CUT_U1)),
+		       fmax(arg(g, CUT_V0), arg(g, CUT_V1)), 0);
+	parse_where(g, CUT_ALONG, &c, &pt);
+	through(g, &c);
 }
 
 static void st_outline(struct smf *g, int trim)
@@ -1058,7 +1334,15 @@ static void st_outline(struct smf *g, int trim)
 		expr_fail(&g->nm, "an outline is open", NULL);
 	}
 	memset(&g->ol.c, 0, sizeof(g->ol.c));
-	parse_where(g, 1, &g->ol.c, &none);
+	if (g->nargs < 2) {
+		expr_fail(&g->nm,
+			  trim ? "trim NAME along A ..." :
+				 "outline NAME along A ...",
+			  NULL);
+	}
+	new_name(g, g->args[1]);
+	g->ol.feat = g->feat;
+	parse_where(g, 2, &g->ol.c, &none);
 	g->ol.open = 1;
 	g->ol.trim = trim;
 	g->ol.n = 0;
@@ -1127,6 +1411,7 @@ static void add_oline(struct smf *g, const struct through *c, size_t i)
 	o.trim = g->ol.trim;
 	o.c = xmalloc((g->ol.n + 1) * sizeof(*o.c));
 	o.where = xstrdup(g->ol.where);
+	o.feat = g->ol.feat;
 	for (size_t k = 0; k < g->ol.n; k++) {
 		o.c[k] = flat_corner(c, &g->bodies[i], g->ol.uv[k], flip);
 	}
@@ -1219,10 +1504,10 @@ static void st_round(struct smf *g)
 	if (g->nargs != ROUND_WORDS &&
 	    (g->nargs != ROUND_AT_WORDS ||
 	     strcmp(g->args[ROUND_WORDS], "at") != 0)) {
-		expr_fail(&g->nm, "round NAME R [at X Y Z]", NULL);
+		expr_fail(&g->nm, "round R NAME [at X Y Z]", NULL);
 	}
-	r.body = find_slab(g, g->args[1]);
-	r.r = arg(g, 2);
+	r.r = arg(g, 1);
+	r.body = find_slab(g, g->args[2]);
 	r.at = g->nargs == ROUND_AT_WORDS;
 	r.pt = r.at ? v3(arg(g, ROUND_X), arg(g, ROUND_Y), arg(g, ROUND_Z)) :
 		      v3(0, 0, 0);
@@ -1255,6 +1540,99 @@ static void st_define(struct smf *g)
 	define(&g->nm, g->args[0], eval(&g->nm, buf), 0);
 }
 
+// Adds material m to g, unless it has one of that name.
+static void add_material(struct smf *g, struct material m)
+{
+	for (size_t i = 0; i < g->nmats; i++) {
+		if (strcmp(g->mats[i].name, m.name) == 0) {
+			expr_fail(&g->nm, "a second material of that name",
+				  m.name);
+		}
+	}
+	PUSH(g->mats, g->nmats, g->capmats, m);
+}
+
+// Adds to the materials of g those of the bodies of the inserts that the
+// source does not give, from the library, so that the stream holds every
+// material it names.
+static void insert_materials(struct smf *g)
+{
+	for (size_t i = 0; i < g->out.nins; i++) {
+		const char *m = g->out.ins[i].material;
+		int have = 0;
+
+		for (size_t k = 0; m && k < g->nmats && !have; k++) {
+			have = strcmp(g->mats[k].name, m) == 0;
+		}
+		if (m && !have) {
+			add_material(g, lib_material(g->part_path, m));
+		}
+	}
+}
+
+// A number of the source ctx, the expression w.
+static double expr_num(void *ctx, const char *w)
+{
+	struct smf *g = ctx;
+
+	return eval(&g->nm, w);
+}
+
+// Reads a statement material NAME R G B ROUGHNESS DENSITY [FINISH], or
+// materials FILE of such lines: materials for the coats, those of which
+// the coats take go into the stream.
+static void st_material(struct smf *g)
+{
+	struct material m;
+
+	if (g->args[0][strlen("material")] == 's') {
+		struct sibling sib = { g->part_path,
+				       g->nargs == 2 ? g->args[1] : "" };
+		char *path = NULL;
+		char *text = NULL;
+		struct src_line *ls = NULL;
+		size_t n = 0;
+
+		if (g->nargs != 2) {
+			expr_fail(&g->nm, "materials FILE", NULL);
+		}
+		path = lib_path(sib, "");
+		text = read_file(path);
+		n = source_lines(text, &ls);
+		for (size_t i = 0; i < n; i++) {
+			char where[WHERE_LEN];
+
+			xsnprintf(where, "%s:%u", path, ls[i].no);
+			read_material(&m, ls[i].text, where);
+			add_material(g, m);
+		}
+		free_source_lines(ls, n);
+		free(text);
+		free(path);
+		return;
+	}
+	if (g->nargs < MATERIAL_WORDS) {
+		expr_fail(&g->nm,
+			  "material NAME R G B ROUGHNESS DENSITY [FINISH]",
+			  NULL);
+	}
+	m.name = xstrdup(g->args[1]);
+	for (int i = 0; i < 3; i++) {
+		m.rgb[i] = arg(g, 2 + (size_t)i);
+	}
+	m.rough = arg(g, MATERIAL_WORDS - 2);
+	m.density = arg(g, MATERIAL_WORDS - 1);
+	{
+		struct finish_words fw = { g->args + MATERIAL_WORDS,
+					   g->nargs - MATERIAL_WORDS,
+					   expr_where(&g->nm), expr_num, g };
+
+		material_finish(&m, &fw);
+	}
+	check_material(&m, expr_where(&g->nm));
+	add_material(g, m);
+}
+
 static void st_include(struct smf *g)
 {
 	struct sibling sib;
@@ -1268,6 +1646,189 @@ static void st_include(struct smf *g)
 	path = sibling_path(sib);
 	read_params(&g->nm, path);
 	free(path);
+}
+
+// Whether the rectangle of coat c, across its axis, meets slab b square
+// to that axis, within its depth.
+static int coat_hits(struct smf *g, const struct through *c,
+		     const struct body *b)
+{
+	int au = c->a == 0 ? 1 : 0;
+	int av = c->a == 2 ? 1 : 2;
+	struct box f = c->foot;
+	struct vec n = rig_dir(b->m, v3(0, 0, 1));
+	double s0 = comp(rig_pt(b->m, v3(0, 0, 0)), c->a);
+	double s1 = comp(rig_pt(b->m, v3(0, 0, -g->sheet.t)), c->a);
+
+	return !b->bend && square_to(g, n, c->a) &&
+	       comp(b->box.hi, au) > f.lo.x + EPS &&
+	       comp(b->box.lo, au) < f.hi.x - EPS &&
+	       comp(b->box.hi, av) > f.lo.y + EPS &&
+	       comp(b->box.lo, av) < f.hi.y - EPS &&
+	       fmax(s0, s1) > f.lo.z - EPS && fmin(s0, s1) < f.hi.z + EPS;
+}
+
+// The part of polygon p of n corners on the side of the line x = c
+// along axis a (0 for x, 1 for y) where sign (x - c) is 1, into out;
+// returns its corners.
+static size_t clip_half(const struct vec2 *p, size_t n, struct line2 h,
+			struct vec2 *out)
+{
+	size_t m = 0;
+
+	for (size_t i = 0; i < n; i++) {
+		struct vec2 a = p[i];
+		struct vec2 b = p[(i + 1) % n];
+		double da = h.sign * ((h.a ? a.y : a.x) - h.c);
+		double db = h.sign * ((h.a ? b.y : b.x) - h.c);
+
+		if (da >= 0) {
+			out[m++] = a;
+		}
+		if ((da < 0) != (db < 0)) {
+			double s = da / (da - db);
+
+			out[m].x = a.x + (s * (b.x - a.x));
+			out[m].y = a.y + (s * (b.y - a.y));
+			m++;
+		}
+	}
+	return m;
+}
+
+// Adds coat c, its corners pt, to the part, clipped to the flat
+// rectangle of body b, or whole if b is NULL.
+static void add_coat(struct smf *g, struct coat c, const struct body *b)
+{
+	struct vec2 buf[2][COAT_MAX * 2];
+	size_t n = c.n;
+
+	memcpy(buf[0], c.pt, n * sizeof(*c.pt));
+	if (b) {
+		const double side[4] = { b->x0, b->x1, b->y0, b->y1 };
+
+		// After four halves the polygon is back in buf[0].
+		for (int k = 0; k < 4 && n; k++) {
+			struct line2 h = { k / 2, k % 2 ? -1 : 1, side[k] };
+
+			n = clip_half(buf[k % 2], n, h, buf[(k + 1) % 2]);
+		}
+	}
+	if (n < 3) {
+		return;
+	}
+	c.pt = xmalloc(n * sizeof(*c.pt));
+	memcpy(c.pt, buf[0], n * sizeof(*c.pt));
+	c.n = n;
+	c.material = xstrdup(c.material);
+	PUSH(g->out.coats, g->out.ncoats, g->out.capcoats, c);
+}
+
+// Reads the corners of a coat on the flat blank from word i on: two
+// for a rectangle, or three or more for a polygon.
+static void coat_flat(struct smf *g, struct coat c, size_t i)
+{
+	size_t n = (g->nargs - i) / 2;
+
+	if ((g->nargs - i) % 2 || n < 2 || n > COAT_MAX) {
+		expr_fail(&g->nm, "coat ... flat X0 Y0 X1 Y1 [X2 Y2]...", NULL);
+	}
+	for (size_t k = 0; k < n; k++) {
+		c.pt[k].x = arg(g, i + (2 * k));
+		c.pt[k].y = arg(g, i + (2 * k) + 1);
+	}
+	if (n == 2) {
+		struct vec2 a = c.pt[0];
+		struct vec2 b = c.pt[1];
+
+		c.pt[1].x = b.x;
+		c.pt[1].y = a.y;
+		c.pt[2] = b;
+		c.pt[3].x = a.x;
+		c.pt[3].y = b.y;
+		n = 4;
+	}
+	c.n = n;
+	add_coat(g, c, NULL);
+}
+
+// Reads a coat U0 V0 U1 V1 along A [from W0 to W1] from word i on, and
+// adds its rectangle to the flat frame of each slab it meets, square to
+// A, cut to the flat rectangle of the slab.
+static void coat_along(struct smf *g, struct coat c, size_t i)
+{
+	struct through t;
+	struct pattern pt = { { 0, 0 }, { 0, 0 }, { 1, 1 }, 0, 0 };
+	int hit = 0;
+
+	memset(&t, 0, sizeof(t));
+	if (i + COAT_RECT_WORDS > g->nargs) {
+		expr_fail(&g->nm, "coat ... U0 V0 U1 V1 along A", NULL);
+	}
+	t.foot.lo = v3(fmin(arg(g, i), arg(g, i + 2)),
+		       fmin(arg(g, i + 1), arg(g, i + 3)), 0);
+	t.foot.hi = v3(fmax(arg(g, i), arg(g, i + 2)),
+		       fmax(arg(g, i + 1), arg(g, i + 3)), 0);
+	parse_where(g, i + 4, &t, &pt);
+	for (size_t k = 0; k < g->nb; k++) {
+		const struct body *b = &g->bodies[k];
+		const double u[4] = { t.foot.lo.x, t.foot.hi.x, t.foot.hi.x,
+				      t.foot.lo.x };
+		const double v[4] = { t.foot.lo.y, t.foot.lo.y, t.foot.hi.y,
+				      t.foot.hi.y };
+
+		if (!coat_hits(g, &t, b)) {
+			continue;
+		}
+		for (size_t j = 0; j < 4; j++) {
+			struct vec q = slab_flat(&t, b, u[j], v[j]);
+
+			c.pt[j].x = q.x;
+			c.pt[j].y = q.y;
+		}
+		c.n = 4;
+		add_coat(g, c, b);
+		hit = 1;
+	}
+	if (!hit) {
+		warn("%s: warning: the coat misses the part",
+		     expr_where(&g->nm));
+	}
+}
+
+// Parses coat MATERIAL near|far [edges] all | flat X0 Y0 X1 Y1 ... |
+// U0 V0 U1 V1 along A [from W0 to W1].
+static void st_coat(struct smf *g)
+{
+	struct coat c;
+	struct vec2 pt[COAT_MAX];
+	size_t i = 4;
+
+	memset(&c, 0, sizeof(c));
+	if (g->nargs < 4 || (!is(g, 2, "near") && !is(g, 2, "far"))) {
+		expr_fail(&g->nm, "coat MATERIAL near|far [edges] REGION",
+			  NULL);
+	}
+	c.material = g->args[1];
+	c.side = is(g, 2, "near") ? 1 : -1;
+	c.edges = is(g, 3, "edges");
+	i = c.edges ? 4 : 3;
+	c.pt = pt;
+	if (is(g, i, "all") && g->nargs == i + 1) {
+		const double x[4] = { -NUM_MAX, NUM_MAX, NUM_MAX, -NUM_MAX };
+		const double y[4] = { -NUM_MAX, -NUM_MAX, NUM_MAX, NUM_MAX };
+
+		for (size_t k = 0; k < 4; k++) {
+			c.pt[k].x = x[k];
+			c.pt[k].y = y[k];
+		}
+		c.n = 4;
+		add_coat(g, c, NULL);
+	} else if (is(g, i, "flat")) {
+		coat_flat(g, c, i + 1);
+	} else {
+		coat_along(g, c, i);
+	}
 }
 
 static void statement(char *line, void *ctx)
@@ -1308,6 +1869,12 @@ static void statement(char *line, void *ctx)
 		st_outline(g, 0);
 	} else if (strcmp(w, "trim") == 0) {
 		st_outline(g, 1);
+	} else if (strcmp(w, "coat") == 0) {
+		st_coat(g);
+	} else if (strcmp(w, "insert") == 0) {
+		st_insert(g);
+	} else if (strcmp(w, "material") == 0 || strcmp(w, "materials") == 0) {
+		st_material(g);
 	} else {
 		expr_fail(&g->nm, "unknown statement", w);
 	}
@@ -1403,11 +1970,44 @@ static int is_vertex(struct smf *g, size_t i, size_t j)
 	return !((a == b && c == d) || (a == c && b == d));
 }
 
-static void add_edge(struct smf *g, size_t v0, size_t v1, size_t lf, size_t rf)
+// The two faces of an edge, on its left and on its right, and its
+// feature.
+struct sides {
+	size_t lf, rf, by;
+};
+
+static void add_edge(struct smf *g, size_t v0, size_t v1, struct sides sd)
 {
-	struct edge e = { v0, v1, lf, rf, 0, 0, 0 };
+	struct edge e = { v0, v1, sd.lf, sd.rf, 0, 0, 0, sd.by };
 
 	PUSH(g->out.edges, g->out.nedges, g->out.capedges, e);
+}
+
+// The cell (i, j), or NONE off the grid; i and j may be one below 0.
+static size_t cell_or_none(const struct smf *g, size_t i, size_t j)
+{
+	if (i >= g->nx - 1 || j >= g->ny - 1) {
+		return NONE;
+	}
+	return cell(g, i, j);
+}
+
+// The feature of the side between cells a and b (either NONE off the
+// grid): the feature that cleared the empty one, or else that of the
+// body of the full one; NONE between two full cells.
+static size_t side_feature(struct smf *g, size_t a, size_t b)
+{
+	size_t la = a == NONE ? 0 : g->lab[a];
+	size_t lb = b == NONE ? 0 : g->lab[b];
+	size_t e = la ? b : a;
+
+	if ((la != 0) == (lb != 0)) {
+		return NONE;
+	}
+	if (e != NONE && g->cby[e] != NONE) {
+		return g->cby[e];
+	}
+	return part_feature(&g->out, g->bodies[(la ? la : lb) - 1].name);
 }
 
 // Two bodies.
@@ -1455,6 +2055,10 @@ static void make_grid(struct smf *g)
 	g->nx = uniq(g->xs, 2 * g->nops);
 	g->ny = uniq(g->ys, 2 * g->nops);
 	g->lab = xcalloc((g->nx - 1) * (g->ny - 1), sizeof(*g->lab));
+	g->cby = xmalloc((g->nx - 1) * (g->ny - 1) * sizeof(*g->cby));
+	for (size_t k = 0; k < (g->nx - 1) * (g->ny - 1); k++) {
+		g->cby[k] = NONE;
+	}
 }
 
 // Paints the ops in order: a cut clears only the cells of its body.
@@ -1477,6 +2081,7 @@ static void paint(struct smf *g)
 					*c = o->body + 1;
 				} else if (*c == o->body + 1) {
 					*c = 0;
+					g->cby[cell(g, i, j)] = o->feat;
 				}
 			}
 		}
@@ -1536,7 +2141,7 @@ static struct vec2 v2(double x, double y)
 	return p;
 }
 
-// The point of body b at (x, y) in the flat, z below its top.
+// The point of body b at (x, y) in the flat, z below its near face.
 // A part of one face, body b alone: map 1, on its parent slab, map 0.
 struct body_part {
 	struct map maps[2];
@@ -1947,23 +2552,31 @@ static void find_faces(struct smf *g)
 	free(stack);
 }
 
-// Horizontal edges run along +x, with the cell above on the left.
+// Horizontal edges run along +x, with the cell above on the left; an
+// edge ends where its feature changes.
 static void row_edges(struct smf *g, size_t j)
 {
 	size_t start = NONE;
+	size_t by = NONE;
 
 	for (size_t i = 0; i < g->nx; i++) {
 		int has = i + 1 < g->nx && face_at(g, i + 1, j, 0, 1) !=
 						   face_at(g, i + 1, j, 0, 0);
+		size_t f = has ? side_feature(g, cell_or_none(g, i, j),
+					      cell_or_none(g, i, j - 1)) :
+				 NONE;
 
-		if (start != NONE && (!has || is_vertex(g, i, j))) {
+		if (start != NONE && (!has || f != by || is_vertex(g, i, j))) {
+			struct sides sd = { face_at(g, i, j, 0, 1),
+					    face_at(g, i, j, 0, 0), by };
+
 			add_edge(g, vertex_at(g, start, j), vertex_at(g, i, j),
-				 face_at(g, i, j, 0, 1),
-				 face_at(g, i, j, 0, 0));
+				 sd);
 			start = NONE;
 		}
 		if (has && start == NONE) {
 			start = i;
+			by = f;
 		}
 	}
 }
@@ -1972,19 +2585,26 @@ static void row_edges(struct smf *g, size_t j)
 static void column_edges(struct smf *g, size_t i)
 {
 	size_t start = NONE;
+	size_t by = NONE;
 
 	for (size_t j = 0; j < g->ny; j++) {
 		int has = j + 1 < g->ny && face_at(g, i, j + 1, 0, 0) !=
 						   face_at(g, i, j + 1, 1, 0);
+		size_t f = has ? side_feature(g, cell_or_none(g, i - 1, j),
+					      cell_or_none(g, i, j)) :
+				 NONE;
 
-		if (start != NONE && (!has || is_vertex(g, i, j))) {
+		if (start != NONE && (!has || f != by || is_vertex(g, i, j))) {
+			struct sides sd = { face_at(g, i, j, 0, 0),
+					    face_at(g, i, j, 1, 0), by };
+
 			add_edge(g, vertex_at(g, i, start), vertex_at(g, i, j),
-				 face_at(g, i, j, 0, 0),
-				 face_at(g, i, j, 1, 0));
+				 sd);
 			start = NONE;
 		}
 		if (has && start == NONE) {
 			start = j;
+			by = f;
 		}
 	}
 }
@@ -2034,8 +2654,8 @@ static int corner_edges(struct smf *g, size_t v, size_t *es)
 	return n == 2 ? 0 : -1;
 }
 
-// Adds the arc edge e, with its centre and faces set, between the new
-// vertices nv at np, counterclockwise about its centre.
+// Adds the arc edge e, with its center and faces set, between the new
+// vertices nv at np, counterclockwise about its center.
 static void add_arc(struct smf *g, const size_t *nv, const struct vec2 *np,
 		    struct edge e)
 {
@@ -2075,7 +2695,7 @@ static void round_corner(struct smf *g, size_t v, const struct rnd *rd)
 	size_t face = 0;
 	double r = rd->r;
 	const char *where = rd->where;
-	struct edge arc = { 0, 0, NONE, NONE, 1, 0, 0 };
+	struct edge arc = { 0, 0, NONE, NONE, 1, 0, 0, NONE };
 
 	if (corner_edges(g, v, es)) {
 		die("%s: round: not a corner of the outline", where);
@@ -2096,6 +2716,7 @@ static void round_corner(struct smf *g, size_t v, const struct rnd *rd)
 	}
 	arc.cx = np[0].x + np[1].x - c.x;
 	arc.cy = np[0].y + np[1].y - c.y;
+	arc.by = part_feature(&g->out, g->bodies[rd->body].name);
 	if (point_in_face(&g->out, face, v2(arc.cx, arc.cy))) {
 		arc.lf = face;
 	} else {
@@ -2172,7 +2793,7 @@ static double edge_dist(struct smf *g, const struct edge *e, double x, double y)
 	return hypot(x - s.x - (u * dx), y - s.y - (u * dy));
 }
 
-// The sweep of the arc from corner a to corner b about the centre of a,
+// The sweep of the arc from corner a to corner b about the center of a,
 // counterclockwise positive.
 static double corner_sweep(const struct ocorner *a, const struct ocorner *b)
 {
@@ -2380,7 +3001,8 @@ struct vpair {
 static void push_piece(struct smf *g, const struct ocorner *p, struct vpair run,
 		       const struct chain *c)
 {
-	struct edge e = { run.from, run.to, NONE, NONE, p->arc, p->cx, p->cy };
+	struct edge e = { run.from, run.to, NONE,  NONE,
+			  p->arc,   p->cx,  p->cy, g->feat };
 	int fwd = !p->arc || p->ccw;
 
 	if (!fwd) {
@@ -2418,6 +3040,7 @@ static void add_trim(struct smf *g, const struct oline *o,
 {
 	size_t prev = t->a;
 
+	g->feat = o->feat;
 	for (size_t k = 0; k + 1 < o->n; k++) {
 		size_t next = t->b;
 		struct vpair run = { 0, 0 };
@@ -2515,6 +3138,7 @@ static void place_outline(struct smf *g, const struct oline *o)
 	if (f == NONE) {
 		die("%s: the outline is not on its slab", o->where);
 	}
+	g->feat = o->feat;
 	outline_clear(g, o, f);
 	check_arcs(o);
 	for (size_t k = 0; k < o->n; k++) {
@@ -2548,7 +3172,8 @@ static void place_hole(struct smf *g, const struct circ *c)
 {
 	size_t face = hole_face(g, c);
 	double rc = c->side ? c->rc : c->r;
-	struct hole h = { face, c->x, c->y, c->r, c->side, rc, c->h };
+	struct hole h = { face, c->x, c->y,    c->r,	 c->side,
+			  rc,	c->h, c->feat, c->blind, c->bside };
 
 	for (size_t i = 0; i < g->out.nedges; i++) {
 		const struct edge *e = &g->out.edges[i];
@@ -2668,6 +3293,16 @@ static int options(struct smf *g, int argc, char **argv, int *deps)
 
 static void free_smf(struct smf *g)
 {
+	for (size_t i = 0; i < g->nins; i++) {
+		free(g->ins[i].name);
+		free(g->ins[i].where);
+		free(g->ins[i].body);
+	}
+	free(g->ins);
+	for (size_t i = 0; i < g->nmats; i++) {
+		free(g->mats[i].name);
+	}
+	free(g->mats);
 	for (size_t i = 0; i < g->nb; i++) {
 		free(g->bodies[i].name);
 	}
@@ -2691,6 +3326,7 @@ static void free_smf(struct smf *g)
 	free(g->xs);
 	free(g->ys);
 	free(g->lab);
+	free(g->cby);
 	free(g->fid);
 	free(g->vid);
 	clear_part(&g->out);
@@ -2726,12 +3362,31 @@ int main(int argc, char **argv)
 	find_faces(&g);
 	find_edges(&g);
 	finish(&g);
+	place_inserts(&g);
 	g.out.name = base_name(g.part_path);
 	g.out.t = g.sheet.t;
 	g.out.place = rig_id();
 	check_contacts(&g);
 	check_part(&g.out, g.part_path);
-	write_fold(&g.out);
+	insert_materials(&g);
+	stream_head();
+	for (size_t k = 0; k < g.nmats; k++) {
+		int used = 0;
+
+		for (size_t c = 0; c < g.out.ncoats && !used; c++) {
+			used = strcmp(g.out.coats[c].material,
+				      g.mats[k].name) == 0;
+		}
+		for (size_t c = 0; c < g.out.nins && !used; c++) {
+			used = g.out.ins[c].material &&
+			       strcmp(g.out.ins[c].material, g.mats[k].name) ==
+				       0;
+		}
+		if (used) {
+			write_material(&g.mats[k]);
+		}
+	}
+	write_part(&g.out);
 	free_smf(&g);
 	close_stdout();
 	return 0;

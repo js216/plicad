@@ -2,6 +2,6 @@
 # bad_twice.part -- Two solids of one name
 # Copyright (c) 2026 Jakob Kastelic
 
-circle c along z 0 0 10
+circle c 10 0 0 along z
 extrude a from 0 to 1 c
 extrude a from 1 to 2 c

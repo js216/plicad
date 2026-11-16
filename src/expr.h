@@ -5,6 +5,7 @@
 #ifndef EXPR_H
 #define EXPR_H
 
+#include <setjmp.h>
 #include <stddef.h>
 #include <stdlib.h>
 
@@ -34,7 +35,9 @@ struct sym {
 // The names of a program, and the file and line that it reads, as
 // "file:line", for error messages.  A zero struct names has none.
 // While read_params runs, the lookups mark no names used but collect
-// the names of each definition in seen.
+// the names of each definition in seen.  With a trap, an error writes
+// its message into msg, of size nmsg, and jumps to the trap instead of
+// ending the program.
 struct names {
 	struct sym *syms;
 	size_t nsyms, capsyms;
@@ -42,15 +45,36 @@ struct names {
 	const char *where;
 	size_t *seen;
 	size_t nseen, capseen;
+	jmp_buf *trap;
+	char *msg;
+	size_t nmsg;
 };
+
+// A line of a source file as the parsers take it: its number in the
+// file (the first of its lines, if it runs on) and its text.
+struct src_line {
+	unsigned no;
+	char *text;
+};
+
+// Splits text into the lines of a source file (plicad(7)): a # begins
+// a comment, which runs to the end of the line; a line that then ends
+// in a backslash runs on into the next one, the backslash and the blanks
+// round it taken for one blank; lines with nothing left are dropped.
+// Returns their number.
+size_t source_lines(char *text, struct src_line **out);
+void free_source_lines(struct src_line *l, size_t n);
 
 // The text of where in nm, "" before any file.
 const char *expr_where(const struct names *nm);
 
 void expr_fail_msg(const struct names *nm, const char *msg, const char *near);
+// Jumps to the trap of nm, if it has one.
+void expr_trap(const struct names *nm);
 #define expr_fail(nm, msg, near)                    \
 	do {                                        \
 		expr_fail_msg((nm), (msg), (near)); \
+		expr_trap(nm);                      \
 		exit(EXIT_FAILURE);                 \
 	} while (0)
 
@@ -61,8 +85,8 @@ void pin(struct names *nm, const char *name, double v);
 // Evaluates the string as one expression.
 double eval(struct names *nm, const char *s);
 
-// Calls fn for each line of the file, with the # comment cut off and
-// where set to the file and line.
+// Calls fn for each line of the file (source_lines), with where set to
+// the file and line.
 void each_line(struct names *nm, const char *path,
 	       void (*fn)(char *line, void *ctx), void *ctx);
 

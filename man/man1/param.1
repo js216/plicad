@@ -1,0 +1,37 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" param.1 -- Manual page of param
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PARAM 1
+.SH NAME
+param \- print the values of the names of a source file
+.SH SYNOPSIS
+.B param
+.I file name ...
+.br
+.B param \-e
+.I expr file
+.SH DESCRIPTION
+.I Param
+reads the definitions of a source file of any kind,
+.IR plicad (7):
+its lines
+.IB name " = " expr
+and the definitions of the files its
+.B include
+lines name, in order.
+Other lines are left alone.
+It then prints the value of each
+.IR name ,
+or of the expression
+.IR expr ,
+one per line, a length in mm and an angle in degrees, to 12
+significant digits.
+.SH EXAMPLES
+param box.sm wall depth
+.br
+param \-e '2*wall+1in' box.sm
+.SH SEE ALSO
+plicad(7)
+.SH DIAGNOSTICS
+An unknown name, a faulty expression and a file that cannot be read
+are refused, with the file and the line.

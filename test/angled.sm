@@ -6,6 +6,6 @@
 # plate; the hole through the plate alone stays clear of it, though the
 # box of the flange reaches into the depth of the hole.
 sheet 1.5 1 0.44
-plate p 0 0 60 40 origin 0 0 0 axes +x +y
+plate p 0 0 60 40 at 0 0 0 axes +x +y
 flange f p +x 140 20
-hole 4 50 20 along z at 0.5 depth 4
+hole hole1 4 50 20 along z from -1.5 to 2.5

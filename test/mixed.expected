@@ -1,0 +1,35 @@
+part plate
+volume 9164.3806
+area 10112.8761
+bbox 0.0000 0.0000 -2.0000 100.0000 50.0000 0.0000
+faces 16 plane 10 cylinder 6
+hole 10.0000 10.0000 -1.0000 d 5.0000 axis 0 0 1
+hole 10.0000 40.0000 -1.0000 d 5.0000 axis 0 0 1
+hole 30.0000 10.0000 -1.0000 d 5.0000 axis 0 0 1
+hole 30.0000 40.0000 -1.0000 d 5.0000 axis 0 0 1
+hole 50.0000 10.0000 -1.0000 d 5.0000 axis 0 0 1
+hole 50.0000 40.0000 -1.0000 d 5.0000 axis 0 0 1
+flat 100.0000 50.0000 area 4582.190 holes 6 bends 0
+mass 24.5605
+center 48.8774 25.0000 -1.0000
+part through
+volume 932.9794
+area 720.8206
+center 20.0000 15.0000 -0.6078
+bbox 10.0000 10.0000 -3.0000 30.0000 20.0000 2.0000
+faces 8 plane 6 cylinder 0 cone 2 sphere 0 torus 0
+mass 7.3239
+part apart
+volume 932.9794
+area 720.8206
+center 210.0000 5.0000 2.3922
+bbox 200.0000 0.0000 0.0000 220.0000 10.0000 5.0000
+faces 8 plane 6 cylinder 0 cone 2 sphere 0 torus 0
+part on
+volume 932.9794
+area 720.8206
+center 70.0000 25.0000 2.3922
+bbox 60.0000 20.0000 0.0000 80.0000 30.0000 5.0000
+faces 8 plane 6 cylinder 0 cone 2 sphere 0 torus 0
+mass 7.3239
+total mass 39.2083 center 47.4289 23.1321 -0.2931

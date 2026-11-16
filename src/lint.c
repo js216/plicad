@@ -16,11 +16,11 @@
 //     M SPDX-License-Identifier: GPL-3.0-only
 //     "M NAME -- DESCRIPTION"
 //     M Copyright (c) 2026 Jakob Kastelic
-//   where M is // in C, .\" in a manual page (.1, .5), and # elsewhere;
+//   where M is // in C, .\" in a manual page (.1, .5, .7), and # elsewhere;
 //   after a #! line, on lines 2 to 4.  A manual page has no blank line
 //   after its header, which would print as one.
 // Files without a one-line comment syntax get no header: Markdown (a #
-// starts a heading there) and data files (.expected, .fold, .step,
+// starts a heading there) and data files (.expected, .st, .step,
 // .json).  Nor do the Makefile and the dot files, by the rule of the
 // user, though their # comments follow the rules of prose.
 // All but C (clang-format sets its width):
@@ -52,7 +52,7 @@ static const char typedef_struct[] = { 't', 'y', 'p', 'e', 'd', 'e', 'f', ' ',
 
 // The kinds of file: C, text with # comments and the header, Markdown,
 // data, the Makefile and the dot files (# comments without a header),
-// and manual pages (.1 and .5, .\" comments and the header, but no
+// and manual pages (.1, .5 and .7, .\" comments and the header, but no
 // blank line after it, which would print as one).
 enum kind { K_C, K_HASH, K_MD, K_DATA, K_BARE, K_ROFF };
 
@@ -93,7 +93,7 @@ static int ends_with(const char *s, const char *tail)
 
 static enum kind kind_of(const char *name)
 {
-	static const char *const data[] = { ".expected", ".fold", ".step",
+	static const char *const data[] = { ".expected", ".st", ".step",
 					    ".json" };
 
 	if (ends_with(name, ".c") || ends_with(name, ".h")) {
@@ -105,7 +105,8 @@ static enum kind kind_of(const char *name)
 	if (ends_with(name, ".md")) {
 		return K_MD;
 	}
-	if (ends_with(name, ".1") || ends_with(name, ".5")) {
+	if (ends_with(name, ".1") || ends_with(name, ".5") ||
+	    ends_with(name, ".7")) {
 		return K_ROFF;
 	}
 	for (size_t i = 0; i < sizeof(data) / sizeof(*data); i++) {
@@ -250,7 +251,8 @@ static size_t word_after(const char *p)
 	return n;
 }
 
-// Is the word round s[i] a path, a file name or a command word?
+// Is the word round s[i] a path, a file name, a command word or the
+// name of a manual page, as plicad(7)?
 static int technical(const char *s, size_t i)
 {
 	const char *start = s;
@@ -264,7 +266,9 @@ static int technical(const char *s, size_t i)
 		b++;
 	}
 	for (const char *q = a; q < b; q++) {
-		if (*q == '/' || *q == '=' || (*q == '.' && q + 1 < b)) {
+		if (*q == '/' || *q == '=' || (*q == '.' && q + 1 < b) ||
+		    (*q == '(' && q + 2 < b && isdigit((unsigned char)q[1]) &&
+		     q[2] == ')')) {
 			return 1;
 		}
 	}

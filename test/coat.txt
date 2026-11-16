@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# coat.txt -- The box of test/coat.sm in red, its coats from the materials
+# Copyright (c) 2026 Jakob Kastelic
+
+materials materials
+part box ../build/coat.st material red

@@ -8,11 +8,11 @@
 # y = 10 stays sharp, and so do the two edges of the sharp corner, which
 # turn there.
 
-profile p along y 0 0 2 30 0 3 30 20 0 20 20 2 20 8 2 0 8 1
+profile p along y 0 0 2 30 0 3 side s1 30 20 0 side s2 20 20 2 20 8 2 0 8 1
 extrude a from 0 to 10 p
 extrude b from 10 to 30 p draft 1
 union s a b
 round 0.4 convex
-sharp a.p.* b.p.*
-sharp a.p.3 a.p.4
-sharp b.p.3 b.p.4
+sharp a.side b.side
+sharp a.s1 a.s2
+sharp b.s1 b.s2

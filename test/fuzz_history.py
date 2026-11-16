@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# fuzz_history.py -- Summarise the log of fuzz.py
+# fuzz_history.py -- Summarize the log of fuzz.py
 # Copyright (c) 2026 Jakob Kastelic
 
 # Usage: python3 fuzz_history.py WORK/fuzz.log...

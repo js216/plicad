@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# patch.sm -- A plate with a textured patch on its near side
+# Copyright (c) 2026 Jakob Kastelic
+
+materials materials
+sheet 2 1 0.44
+plate p 0 0 60 40 at 0 0 0 axes +x +y
+coat vdi30 near flat 10 10 30 30

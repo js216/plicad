@@ -3,5 +3,5 @@
 # Copyright (c) 2026 Jakob Kastelic
 
 sheet 2 1 0.44
-plate p 0 0 100 50 origin 0 0 0 axes +x +y
-hole 5 10 25 along z pattern x -3 20
+plate p 0 0 100 50 at 0 0 0 axes +x +y
+hole hole1 5 10 25 along z pattern x -3 20

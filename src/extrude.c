@@ -6,13 +6,15 @@
 //
 // Reads a part source or a stream (stream.h) and adds the solids of its
 // extrude statements:
-//   profile NAME along A U V R [U V R ...]
-//   corner U V R [U V R ...]
+//   profile NAME along A U V R [side SIDE] [U V R [side SIDE] ...]
+//   corner U V R [side SIDE] [U V R [side SIDE] ...]
 //       A closed outline in the plane across the world axis A (x, y or
 //       z), U and V the other two axes in alphabetical order: its
 //       corners in order, each rounded by a tangent arc of radius R, or
 //       sharp for R = 0.  Corner lines go on with the profile above.
-//   circle NAME along A U V D
+//       The side from a corner to the next takes the name SIDE of the
+//       corner, if it has one.
+//   circle NAME D U V along A
 //       A circle of diameter D about (U, V).
 //   extrude NAME from W0 to W1 P [draft DEG] [pattern AX N P [AX N P]]
 //       The solid of the region of profile P, from A = W0 to A = W1.  A
@@ -21,8 +23,9 @@
 //       piece of a cone, and a circle a cone, which may end in a point.
 //       A pattern makes N copies, P apart along the axis AX (with its
 //       sign), as one solid.
-// The faces are named NAME.start and NAME.end for the two ends and
-// NAME.P.K for side K, from 0, of profile P.
+// The faces are named NAME.start and NAME.end for the two ends, and
+// NAME.side.SIDE for a side of its profile named SIDE, NAME.side for the
+// others and the arcs of the corners.
 
 #include "geom.h"
 #include "shape.h"
@@ -40,12 +43,14 @@
 enum {
 	CORNER_WORDS = 3, // U V R
 	PROFILE_HEAD = 4, // profile NAME along A
-	CIRCLE_WORDS = 7, // circle NAME along A U V D
+	CIRCLE_WORDS = 7, // circle NAME D U V along A
 	EXTRUDE_HEAD = 6, // extrude NAME from W0 to W1
 	EXTRUDE_W0 = 3, // The words of W0 and W1.
 	EXTRUDE_W1 = 5,
-	CIRCLE_U = 4, // The words of U and V.
-	CIRCLE_V = 5,
+	CIRCLE_D = 2, // The words of D, U, V and A.
+	CIRCLE_U = 3,
+	CIRCLE_V = 4,
+	CIRCLE_A = 6,
 	NAME_LEN = 256 // Room for the name of a face.
 };
 
@@ -56,6 +61,7 @@ struct p2 {
 struct corner {
 	struct p2 p;
 	double r;
+	char *side; // The name of its faces, or NULL.
 };
 
 // A profile: its corners, or a circle.
@@ -76,6 +82,7 @@ struct seg {
 	int arc, ccw, sharp;
 	struct p2 a, b, c;
 	double r;
+	const char *side; // The name of its corner, or NULL.
 };
 
 struct outline {
@@ -130,22 +137,41 @@ static struct prof *find_prof(struct ex *x, const char *name)
 	stream_fail(&x->st, "no such profile", name);
 }
 
+// Names the side after the last corner of p by word i of the line under
+// work, side SIDE.
+static void name_side(struct ex *x, struct prof *p, size_t i)
+{
+	struct stream *st = &x->st;
+
+	if (i + 1 >= st->nw || p->n == 0 || p->k[p->n - 1].side) {
+		stream_fail(st, "side SIDE follows a corner U V R", NULL);
+	}
+	p->k[p->n - 1].side = xstrdup(st->w[i + 1]);
+}
+
 static void add_corners(struct ex *x, struct prof *p, size_t from)
 {
 	struct stream *st = &x->st;
 
-	if ((st->nw - from) % CORNER_WORDS) {
-		stream_fail(st, "corners come as U V R", NULL);
-	}
-	for (size_t i = from; i < st->nw; i += CORNER_WORDS) {
-		struct corner k = { pt2(stream_num(st, i),
-					stream_num(st, i + 1)),
-				    stream_num(st, i + 2) };
+	for (size_t i = from; i < st->nw;) {
+		struct corner k;
 
+		if (stream_is(st, i, "side")) {
+			name_side(x, p, i);
+			i += 2;
+			continue;
+		}
+		if (i + CORNER_WORDS > st->nw) {
+			stream_fail(st, "corners come as U V R", NULL);
+		}
+		k.p = pt2(stream_num(st, i), stream_num(st, i + 1));
+		k.r = stream_num(st, i + 2);
+		k.side = NULL;
 		if (!(k.r >= 0)) {
 			stream_fail(st, "a corner radius is 0 or more", NULL);
 		}
 		PUSH(p->k, p->n, p->cap, k);
+		i += CORNER_WORDS;
 	}
 }
 
@@ -168,22 +194,21 @@ static void new_prof(struct ex *x, int circle)
 	struct prof p;
 
 	memset(&p, 0, sizeof(p));
-	if (st->nw < PROFILE_HEAD || !stream_is(st, 2, "along")) {
+	if (circle ? st->nw != CIRCLE_WORDS ||
+			     !stream_is(st, CIRCLE_A - 1, "along") :
+		     st->nw < PROFILE_HEAD || !stream_is(st, 2, "along")) {
 		stream_fail(st,
-			    "profile NAME along A ... or circle NAME along "
-			    "A U V D",
+			    circle ? "circle NAME D U V along A" :
+				     "profile NAME along A U V R ...",
 			    NULL);
 	}
 	check_new_prof(x);
 	p.name = xstrdup(st->w[1]);
-	p.axis = axis_of(x, st->w[3]);
+	p.axis = axis_of(x, st->w[circle ? CIRCLE_A : 3]);
 	p.circle = circle;
 	if (circle) {
-		if (st->nw != CIRCLE_WORDS) {
-			stream_fail(st, "circle NAME along A U V D", NULL);
-		}
 		p.c = pt2(stream_num(st, CIRCLE_U), stream_num(st, CIRCLE_V));
-		p.r = stream_num(st, CIRCLE_WORDS - 1) / 2;
+		p.r = stream_num(st, CIRCLE_D) / 2;
 		if (!(p.r > SH_EPS)) {
 			stream_fail(st, "a circle needs D above 0", NULL);
 		}
@@ -286,6 +311,9 @@ static void corner_outline(struct ex *x, const struct prof *p,
 		const struct seg *nx = &arcs[(i + 1) % n];
 
 		memset(&line, 0, sizeof(line));
+		// The side from the corner of arcs[i] to the next one, which
+		// a reversed outline runs from the next one back.
+		line.side = p->k[rev ? ((2 * n) - 2 - i) % n : i].side;
 		if (arcs[i].arc) {
 			push_seg(o, arcs[i]);
 		}
@@ -562,7 +590,12 @@ static void side_faces(struct build *bd, const struct outline *b,
 		struct surf s = side_surf(bd, &b->s[i], &sense);
 		size_t first = 0;
 
-		xsnprintf(bd->fname, "%s.%s.%zu", bd->name, b->name, i);
+		if (b->s[i].side) {
+			xsnprintf(bd->fname, "%s.side.%s", bd->name,
+				  b->s[i].side);
+		} else {
+			xsnprintf(bd->fname, "%s.side", bd->name);
+		}
 		shape_face(bd->sh, s, sense, bd->fname);
 		first = bd->sh->nu;
 		shape_use(bd->sh, r->bot[i], 1);
@@ -822,6 +855,9 @@ int main(int argc, char **argv)
 	stream_write(&x.st);
 	for (size_t i = 0; i < x.npf; i++) {
 		free(x.pf[i].name);
+		for (size_t k = 0; k < x.pf[i].n; k++) {
+			free(x.pf[i].k[k].side);
+		}
 		free(x.pf[i].k);
 	}
 	free(x.pf);

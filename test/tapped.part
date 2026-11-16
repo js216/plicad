@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# tapped.part -- A plate with tapped and countersunk holes, for drawings
+# Copyright (c) 2026 Jakob Kastelic
+
+# A plate 40 by 20 by 8 with two M3 holes tapped through, at their tap
+# drill and countersunk 90 degrees at the bottom; a 4-40 hole tapped
+# 6 deep from the top, countersunk 82 degrees there, its drill ending in
+# a point of 118 degrees; and a plain hole for an M3 flat head,
+# countersunk 90 degrees at the top.
+M3 = 2.5
+M3_CS = 3.5
+T4 = 2.26
+T4_CS = 2.794
+CL = 3.4
+CL_CS = 6.4
+profile p along z 0 0 0 40 0 0 40 20 0 0 20 0
+extrude plate from 0 to 8 p
+circle m3 M3 10 10 along z
+circle m3_cs M3_CS 10 10 along z
+extrude taps from 0 to 8 m3 pattern +x 2 20
+extrude tap_sinks from 0 to (M3_CS-M3)/2 m3_cs draft 45 pattern +x 2 20
+circle t4 T4 20 10 along z
+circle t4_cs T4_CS 20 10 along z
+extrude blind from 8 to 2 t4
+extrude blind_sink from 8 to 8-(T4_CS-T4)/2/tan(41) t4_cs draft 41
+extrude point from 2 to 2-T4/2/tan(59) t4 draft 59
+circle cl CL 20 15 along z
+circle cl_cs CL_CS 20 15 along z
+extrude plain from 0 to 8 cl
+extrude plain_sink from 8 to 8-(CL_CS-CL)/2 cl_cs draft 45
+thread taps M3X0.5-6H
+thread blind 4-40 UNC-2B
+subtract tapped plate taps tap_sinks blind blind_sink point plain \
+    plain_sink

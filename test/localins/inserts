@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# inserts -- Types of the part next to it, beside those of the library
+# Copyright (c) 2026 Jakob Kastelic
+
+# NAME KIND HOLE SHEET EDGE THREAD BODY_D BODY_H [MATERIAL] [flush]
+#     [blind DEPTH]
+# A nut of its own, and a stud whose head sits in a blind hole.
+nut-local nut 5 1 5 M3 8 2 brass
+chc-local stud 4 2 5 M3 3 8 steel blind 1.5

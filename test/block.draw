@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# block.draw -- The drawing of block.part: views, hidden lines, a section
+# Copyright (c) 2026 Jakob Kastelic
+
+units mm
+template plain_c.ps
+scale 1
+field Title BLOCK
+material 6061-T6 ALUMINUM ALLOY.
+finish NONE.
+note TAP M3X0.5 BOTH HOLES.
+view top
+view front hidden
+view front cut -15 title SECTION A-A

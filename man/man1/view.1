@@ -11,26 +11,63 @@ view \- show meshes and pictures in a window
 |
 .B \-b
 ]
+[
+.B \-s
+.IR w x h
+]
 .I scene
 .SH DESCRIPTION
 .I View
 shows the meshes and pictures of a scene file,
 .IR scene (5),
-in a window.
+in a window, of the class view (View), which names the process of
+the viewer and its machine for window managers.
 A file of the scene is reloaded when it changes; a bad file is reported
 and the old one kept.
+The view opens fitted to all, as Space fits it, at the size the window
+manager gives the window, in the view that the scene file names, or iso.
 .PP
 With the mouse, a left drag turns the view, a middle or right drag
 moves it, and the wheel zooms about the pointer.
-A click picks a part (its name is printed, shown in the lower left,
-and the part highlighted).
-A shift and left drag on a part pulls its scene item out along the line
-from the centre, never past home.
+A click picks a part:
+.BI select " name"
+is printed, and the name shown in the lower left with its unit in
+brackets, as front/[knob]/cap; the part is lit, and the rest of its
+unit less.
+A click on nothing clears the pick and prints nothing;
+.B select
+alone on the input clears it too.
+So viewers cross-probe through FIFOs, the output of each the input of
+another, as schview(1) and pcbview(1) do.
+The unit of a part is the subassembly or the mesh of several parts
+that holds it (the units of
+.IR scene (5)),
+.I level
+units up: 1 at first, so that the unit of front/knob/cap is
+front/knob, and of 2, front.
+A shift and left drag on a part moves its unit in the plane of the
+view, as
+.B H
+would take it.
+The faces of a texture, the groups of a mesh with a
+.B "# texture"
+comment
+.RI ( tomesh (1)),
+show a grain over their color, mapped onto them along the axis nearest
+their normal, the coarser the higher the grade; the shots of
+.B \-b
+leave it out.
 .PP
 Keys:
 .TP 8
 Space
 Fit all.
+.TP
+.B c
+Center the view on the picked part, its zoom and direction kept; c
+again, with no drag, zoom, view key or pick between, zooms in two times
+about it.
+With no part picked, nothing.
 .TP
 .B "i f b l r t u"
 Iso, front, back, left, right, top, bottom.
@@ -39,16 +76,41 @@ Iso, front, back, left, right, top, bottom.
 Hide the part under the pointer.
 .TP
 .B o
-Show only the part under the pointer.
+Show only the part under the pointer; with one part alone in view,
+show all the parts again, wherever the pointer is (their see-through
+and their moves stay as they are).
 .TP
 .B s
 Make the part under the pointer see-through, or solid again.
 .TP
+.B "H O S"
+The same for the unit of the part under the pointer;
+.B O
+shows all again when that unit alone is in view.
+.TP
+.B "] ["
+Raise the level of the unit by one, or lower it, down to 1; it stays
+until changed.
+.TP
 .B a
-Show all, all solid, all home.
+Show all, all solid, all in place, with no moves.
 .TP
 .B "+ \-"
-Explode a step of 0.25 further, or back, stopping at home.
+Step the assembly sequence: minus takes the last part in out, to the
+start of its insertion path, and plus puts the next one in, so the parts
+not yet in stand at their starts.
+Each press, or each repeat of a held key, moves its part to the end of
+its motion at once, in the next frame.
+The order is that of
+.IR assemble (1):
+the parts of a unit, then the unit; a part with
+.B with
+moves with its part.
+.TP
+.B A
+Take every part out at once, to the start of its path, as
+.B "play 0"
+does.
 .TP
 .B "^Z ^Y"
 Undo, redo (of what is shown, see-through and moved; not the camera).
@@ -60,18 +122,25 @@ Help, on or off.
 Quit.
 .PP
 Commands are read from the standard input, one per line;
-a pattern matches names, * for any run of characters:
+a
+.I name
+selects the part of that name, and a name of a unit all its parts
+.IR name /...:
 .PP
 .RS
 .nf
-hide|show|only|see|solid PATTERN
+hide|show|only|see|solid NAME
 all, reset, home, undo, redo
-key h|o|s X Y          the key with the pointer at pixel X Y
-explode F              F from 0 (home) to 100
-drag NAME D            NAME D mm out, not less than 0
+key h|o|s|H|O|S X Y    the key with the pointer at pixel X Y
+level K                the level of the unit, 1 to 64
+play K                 K motions in, 0 to all; a fraction is partway
+move NAME DX DY DZ     move the part or unit NAME on, as a drag
 view iso|front|back|left|right|top|bottom
-fit, turn DX DY, zoom F, size W H
+fit, turn DX DY, zoom F
 pick X Y               print the name there, or \-
+select [NAME]          pick the part NAME, or none, printing nothing
+center                 the key c
+label X Y              print it with its unit in brackets, or \-
 list                   NAME TRIS shown|hidden solid|see at X Y Z
 shot FILE.ppm
 spin N                 N frames of a turn about z
@@ -84,8 +153,8 @@ is the
 .B a
 key,
 .B home
-sets every offset to 0, and the position in a list line is the centre
-of the part's box.
+plays the whole sequence and undoes the moves, and the position in a
+list line is the center of the part's box.
 .TP
 .B \-c
 Check the scene, print
@@ -96,5 +165,13 @@ for each part, and quit.
 Read the commands without a window;
 .B shot
 then draws on the processor.
+.TP
+.BI \-s " w" x h
+Open the window, or draw the shots of
+.BR \-b ,
+.I w
+by
+.I h
+pixels, the view fitted to all at that size (640x480 by default).
 .SH SEE ALSO
-scene(5), tomesh(1)
+scene(5), tomesh(1), assemble(1)

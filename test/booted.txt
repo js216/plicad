@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# booted.txt -- The boot of test/boot.part and two plates
+# Copyright (c) 2026 Jakob Kastelic
+
+# Through goes through the left wall of the boot; apart lies below it.
+part boot ../build/part_boot.st
+part through ../build/plate.st move -30 0 58
+part apart ../build/plate.st move 0 0 -200

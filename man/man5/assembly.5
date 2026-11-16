@@ -1,0 +1,177 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" assembly.5 -- Manual page of the assembly file
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH ASSEMBLY 5
+.SH NAME
+assembly \- the parts of an assembly, their places and their order
+.SH DESCRIPTION
+An assembly file, in the language of
+.IR plicad (7),
+names the parts of an assembly, one a line, each with its place in the
+world, and the order of the part lines is the
+.IR "assembly sequence" :
+the order in which the parts go together.
+.IR place (1)
+reads it and writes the parts in place, and
+.B place \-s
+writes a scene for
+.IR view (1),
+which steps through the sequence.
+.PP
+.RS
+.nf
+materials FILE
+material NAME R G B ROUGHNESS DENSITY
+step DIST DEG
+clearance MM
+part NAME FILE [STEP]... [material MATERIAL] [TAIL]
+image NAME FILE on PART X0 Y0 Z0 X1 Y1 Z1 X2 Y2 Z2
+.fi
+.RE
+.PP
+where each
+.I STEP
+is a
+.BI move " DX DY DZ"
+or a
+.BI turn " x|y|z DEG"
+.RB [ about
+.IR "X Y Z" ],
+and the optional
+.I TAIL
+is
+.B path
+.IR STEP ...
+.RB [ step
+.IR "DIST DEG" ]
+or
+.B with
+.IR NAME .
+.PP
+A
+.B material
+gives a material, or a finish, as
+.IR plicad (7)
+says; a
+.B materials
+line reads a file of material lines.
+.SS Parts
+A part line names the part, new in the file, and its stream
+.RI ( stream (5)):
+of a folded part
+.RI ( smfold (1))
+or of solids
+.RI ( fillet (1)).
+A part of a stream of more than one part takes the name NAME/SUB, SUB
+its name in the stream.
+The steps of its place apply in order, a turn about the world origin
+unless it names a point.
+.B material
+gives it a material of the file: its color, and the density by which
+.IR measure (1)
+weighs it; the coats of a folded part
+.RI ( sm (5))
+name materials of the file too.
+.SS Subassemblies
+The file of a part line may be another assembly file, one whose first
+statement is not
+.BR PliCad :
+a subassembly, read as this page says, relative to its own directory,
+and placed as one unit by the steps of the line.
+Its parts take the name NAME/SUB, SUB the name of the part there, so
+names nest: in the assembly
+.PP
+.RS
+.nf
+part front panel.txt
+.fi
+.RE
+.PP
+whose panel.txt holds
+.B part knob knob.txt
+and whose knob.txt holds
+.BR "part cap cap.st" ,
+the cap is front/knob/cap, and every program names it so.
+A subassembly keeps its own names and materials; a material of one
+name must be the same in all.
+Its line takes no
+.BR material .
+A file that holds itself, through any chain of subassemblies, is
+refused with the chain of the files.
+.PP
+The assembly sequence nests too: a subassembly goes together first,
+in its own sequence and in its own frame, and then its line brings it
+in as one unit, by its own path or with the part it names.
+.SS Insertion paths
+.B path
+gives the
+.I insertion path
+of the part, or of a subassembly as one unit: the motion that brings
+it from its start pose to its place.
+The steps run in order, a turn about the origin of the part at its
+place unless it names a point.
+The start pose is the place with the steps undone, the last one first;
+so
+.PP
+.RS
+.nf
+part lid lid.st move 0 0 50 path move 0 0 \-30
+.fi
+.RE
+.PP
+starts 30 mm above its place and comes down.
+.PP
+.B with
+.I NAME
+makes the part travel with the part NAME of a line above it, fixed to
+it: the two go in together along the path of NAME, as a screw goes in
+with the bracket that holds it.
+A part with neither goes in at its place, with no path.
+.PP
+.IR place (1)
+places every part at its place and takes no notice of paths and of
+.BR with ;
+.B place \-s
+writes them into the scene.
+.PP
+.IR assemble (1)
+tries each path in samples:
+.BI step " DIST DEG"
+gives the most a sample of a path of the file moves its parts, in mm,
+and turns them, in degrees; the same words after a path set those of
+that path.
+A file of paths needs a step.
+.BI clearance " MM"
+makes assemble say each pair of parts that passes nearer than that on a
+path of the file.
+.SS Pictures
+An
+.B image
+lays a picture (PPM or PAM, see
+.IR scene (5))
+on the part PART of a line above, its corners X0 (lower left), X1
+(lower right) and X2 (upper left) in the frame of the part, where its
+stream has it: the picture moves with the part.
+Only
+.B place \-s
+writes pictures, into the scene.
+.SH EXAMPLE
+.RS
+.nf
+include params
+materials materials
+part chassis out/chassis.st material black
+part board out/board.st move 10 10 Base material green \e
+    path move 0 0 \-20
+part nut1 out/nut.st move 20 20 Base with board
+part cover out/cover.st move 0 0 H material black \e
+    path move 0 \-50 0 turn x 30 about 0 0 H
+image label label.pam on cover 10 \-1 5 60 \-1 5 10 \-1 25
+.fi
+.RE
+.PP
+The board drops 20 mm into the chassis with its nut; the cover slides
+50 mm toward \-y, and then turns 30 degrees about the line along x at
+the height H to its place, its label with it.
+.SH SEE ALSO
+plicad(7), place(1), view(1), scene(5), stream(5), sm(5)

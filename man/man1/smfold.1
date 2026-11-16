@@ -15,10 +15,11 @@ smfold \- fold a sheet metal part
 .I part.sm
 .SH DESCRIPTION
 .I Smfold
-reads the description of a sheet metal part,
+reads the source of a sheet metal part,
 .IR sm (5),
-and writes the folded part as a fold file,
-.IR fold (5),
+and writes the folded part, its flat blank with the map of each face
+and the feature of each edge and hole, as a stream,
+.IR stream (5),
 on the standard output.
 .TP
 .BI \-D " name" = expr
@@ -31,6 +32,7 @@ overriding every definition of it.
 .B \-M
 Instead, print the names of the included parameters used by the part.
 .SH SEE ALSO
-sm(5), fold(5), smflat(1), tostep(1), measure(1), smview(1)
+plicad(7), sm(5), stream(5), smflat(1), tostep(1), measure(1),
+smview(1)
 .SH DIAGNOSTICS
 FILE:LINE: and the fault, for a statement that cannot be built.

@@ -15,6 +15,11 @@ enum { WHERE_LEN = 4200 }; // Room for a path and a line number.
 // NONE is the index of no face, or of no parent.
 #define NONE SIZE_MAX
 
+// A string of an array of strings.
+struct str {
+	char *s;
+};
+
 // Appends x to the array v of n items with room for cap.
 #define PUSH(v, n, cap, x)                                         \
 	do {                                                       \
@@ -76,17 +81,25 @@ struct sibling {
 	const char *of, *name;
 };
 char *sibling_path(struct sibling s);
+// The name a/b, a new string.
+char *join_names(const char *a, const char *b);
+// The file of s, as sibling_path gives it, if there is one; else the
+// file of that name in the directory dir of the library, plicad-lib(7):
+// lib under the directory PLICAD names, or PLICAD_LIB, the library of
+// the tree of the build.  A new string.
+char *lib_path(struct sibling s, const char *dir);
+// The file of the name in the directory dir of the library, as lib_path
+// has it.  A new string.
+char *lib_file(const char *dir, const char *name);
 
 // Sorts v[0 .. n - 1] up.
 void sort_doubles(double *v, size_t n);
 
 // The largest magnitude of any number in the input, in mm for a length:
-// a kilometre, far past any part, and far from where the arithmetic of
+// a kilometer, far past any part, and far from where the arithmetic of
 // the programs loses its precision.
 #define NUM_MAX 1e6
 // Whether v is a finite number no larger than NUM_MAX either way.
 int num_ok(double v);
-// Whether the name matches the pattern, a * for any run of characters.
-int glob(const char *pat, const char *name);
 
 #endif

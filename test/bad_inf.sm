@@ -4,4 +4,4 @@
 
 sheet 2 1 0.44
 W = 1/0
-plate p 0 0 W 50 origin 0 0 0 axes +x +y
+plate p 0 0 W 50 at 0 0 0 axes +x +y

@@ -1,0 +1,6 @@
+part patch
+volume 4800.0000
+area 5200.0000
+bbox 0.0000 0.0000 -2.0000 60.0000 40.0000 0.0000
+faces 6 plane 6 cylinder 0
+flat 60.0000 40.0000 area 2400.000 holes 0 bends 0

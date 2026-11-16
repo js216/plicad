@@ -6,13 +6,22 @@
 smflat \- write the flat pattern of a part as DXF
 .SH SYNOPSIS
 .B smflat \-f dxf
-.I part.fold
+.I part.st
 .SH DESCRIPTION
 .I Smflat
 writes the unfolded blank of a part as DXF on the standard output,
 in mm.
-The fold file must hold one part.
+The stream
+.RI ( stream (5))
+must hold one folded part.
 Layer OUTLINE holds the cut contour, with true arcs and circles;
-layer BEND holds a centre line for each bend zone.
+layer BEND holds a center line for each bend zone.
+Each coat
+.RI ( sm (5))
+draws its region, cut to the box of the blank, on the layer
+.BI COAT_NEAR_ material
+or
+.BI COAT_FAR_ material
+of its side and its material.
 .SH SEE ALSO
-smfold(1), fold(5)
+smfold(1), stream(5)

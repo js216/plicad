@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# 8353_mount.sm -- End mount of the carry handle Keystone 8353
+# Copyright (c) 2026 Jakob Kastelic
+
+# A reference solid, not a made part, crude as a block (no drawing):
+# one of the two steel end mounts of the strap handle Keystone 8353,
+# 19.05 x 25.4 x 6.5 mm, on the axis of its #6 screw.  The origin is the
+# screw axis, on the face that the handle mounts on; an assembly places
+# one at each end of the strap (8353_strap.sm).
+H = 9.5mm # The height of the handle over the face, its strap on top
+cx = 19.05mm/2
+cy = 25.4mm/2
+u0 = -cx
+v0 = -cy
+u1 = cx
+v1 = cy
+yt = H-3mm
+sheet H-3mm 0.1mm 0.44
+plate k8353_mount u0 v0 u1 v1 at 0 0 yt axes +x +y
+round 1mm k8353_mount at u0 v0 yt
+round 1mm k8353_mount at u1 v0 yt
+round 1mm k8353_mount at u1 v1 yt
+round 1mm k8353_mount at u0 v1 yt

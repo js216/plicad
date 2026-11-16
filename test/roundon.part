@@ -7,9 +7,9 @@
 # sharp edge ends on the face between the two, takes all of it, and
 # goes on into the cone.
 
-profile p along y 0 0 0 30 0 0 30 20 0 0 20 0
+profile p along y 0 0 0 side s0 30 0 0 30 20 0 0 20 0 side s3
 profile q along y 0 0 1 30 0 0 30 20 0 0 20 0
 extrude a from 0 to 10 p
 extrude b from 10 to 30 q draft 1
 union s a b
-round 1 a.p.3 a.p.0
+round 1 a.s3 a.s0

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# color.txt -- Two colored plates: the colors reach the fold and STEP
+# Copyright (c) 2026 Jakob Kastelic
+
+materials materials
+part a ../build/plate.st material red
+part b ../build/plate.st move 0 0 10 material steel

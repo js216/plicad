@@ -9,6 +9,6 @@
 
 profile p along z 0 4.5 1.5 10 4.5 0 10 0 0 0 0 0
 extrude blk from 0 to 16 p draft 3.5
-circle c along z 3.5 0.5 1
+circle c 1 3.5 0.5 along z
 extrude h from -3 to 17 c
-cut u blk h
+subtract u blk h

@@ -7,6 +7,6 @@
 
 profile p along z -5 0 0 2 0 0 2 10 0 -5 10 0
 extrude blk from 7 to 12 p
-circle c along x 3 6 2
+circle c 2 3 6 along x
 extrude rod from 2 to 8 c
 union u blk rod

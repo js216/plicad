@@ -4,6 +4,6 @@
 
 profile r along z 0 0 0 20 0 0 20 10 0 0 10 0
 extrude blk from 0 to 5 r
-circle c along z 3 5 8
+circle c 8 3 5 along z
 extrude cs from 5 to 1 c draft 30
-cut u blk cs
+subtract u blk cs

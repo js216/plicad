@@ -6,13 +6,11 @@
 measure \- print volume, area, box and holes of parts
 .SH SYNOPSIS
 .B measure
-.I part.fold
-.br
-.B measure
-.IR stream | \-
+.IR stream.st | \-
 .SH DESCRIPTION
 .I Measure
-prints, for each part of a fold file:
+prints, for each folded part of a stream
+.RI ( stream (5)):
 .PP
 .RS
 .nf
@@ -23,10 +21,28 @@ bbox XMIN YMIN ZMIN XMAX YMAX ZMAX
 faces N plane P cylinder C [cone K]
 hole X Y Z d D axis AX AY AZ
 flat W H area A holes N bends B
+mass M
+center X Y Z
 .fi
 .RE
 .PP
 Cones are counted only if present.
+The mass, in g, and its center are given for a part with a material
+(its base, set by
+.IR place (1)),
+and after the parts the lines
+.PP
+.RS
+.nf
+unit UNIT mass M center X Y Z
+total mass M center X Y Z
+.fi
+.RE
+.PP
+give those of each unit and of all the parts with a material.
+A unit is a subassembly, or a stream of several parts, whose parts
+.IR place (1)
+names UNIT/...; units nest, and the outer unit comes first.
 Hole axes are given without sign.
 The flat line gives the box of the blank, W not less than H.
 .PP
@@ -37,15 +53,16 @@ For each solid of a stream:
 part NAME
 volume V
 area A
-centre X Y Z
+center X Y Z
 bbox XMIN YMIN ZMIN XMAX YMAX ZMAX
-faces N plane P cylinder C cone K sphere S torus T
+faces N plane P cylinder C cone K sphere S torus T [pipe Q]
 .fi
 .RE
 .PP
-The centre is that of the volume.
+Pipes, the rounds along ellipses, are counted only if present.
+The center is that of the volume.
 An empty solid (the common part of solids that are apart)
-has no centre and no box.
+has no center and no box.
 Lengths are in mm.
 .SH SEE ALSO
-numdiff(1), fold(5), part(5)
+numdiff(1), place(1), stream(5), part(5)

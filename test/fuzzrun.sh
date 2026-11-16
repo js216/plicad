@@ -14,7 +14,7 @@
 # dies with it.  One fuzzer at a time works in WORK: the lock on
 # WORK/fuzz.lock, held until fuzz.py exits, makes a second one fail at
 # once.  The tree of the project stays untouched.  WORK/fuzz.log grows
-# by one line per case; test/fuzz_history.py WORK/fuzz.log summarises
+# by one line per case; test/fuzz_history.py WORK/fuzz.log summarizes
 # it.
 
 set -eu

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# run.budget -- The budgets of the runs of the programs of test/run.sh
+# Copyright (c) 2026 Jakob Kastelic
+
+# rss KB cpu S -- GROUP PROGRAM ARGS: the peak resident set of a run of
+# a program and the time it took on the processor, user and system,
+# under the sanitizers, as build/budget (test/budget.c) measured them
+# the first time.  A run may take a tenth more memory and a quarter
+# more time, and 0.02 s besides, the grain of the clock of the
+# processor and more for a run under about 50 ms: more fails it.
+margin rss 1.1 cpu 1.25 slack 0.02

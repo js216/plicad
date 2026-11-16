@@ -2,6 +2,6 @@
 # pair.txt -- Three test plates: a and b overlap, a and c only touch
 # Copyright (c) 2026 Jakob Kastelic
 
-a ../build/plate.fold
-b ../build/plate.fold at 50 0 -1
-c ../build/plate.fold rot z 90 at 50 -60 -2
+part a ../build/plate.st
+part b ../build/plate.st move 50 0 -1
+part c ../build/plate.st turn z 90 move 50 -60 -2

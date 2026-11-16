@@ -3,29 +3,32 @@
 # smdraw.sh -- Make the drawing of a part from its drawing file
 # Copyright (c) 2026 Jakob Kastelic
 
-# Usage: smdraw part.draw part.fold > part.ps
+# Usage: smdraw part.draw part.st > part.ps
 # For each view record of the drawing file, smview projects the part and
-# smdim adds the dimensions, at the scale of the view and with the
-# indented records under it; smsheet lays the views on the sheets (see
-# smsheet.c for the drawing file).  Without a scale record, the views
-# are made at the scales 2, 1.5, 1, .75, .5, .375 and .25, from the
-# largest that the paper of the drawing file could hold, until smsheet
-# has a scale for each sheet.  The programs are those next to this
-# script, or in the directory PLICAD.
-# For a PDF with the lettering of osifont:
-#   ps2pdf -sFONTPATH=DIR part.ps part.pdf
+# smdim adds the dimensions, at the scale of the view, in the units of
+# the drawing and with the indented records under it; smsheet lays the
+# views on the sheets (see smsheet.c for the drawing file).  smsheet -v
+# reads the drawing file and lists the views for this script.  Without a
+# scale record, the views are made at the scales 2, 1.5, 1, .75, .5,
+# .375 and .25, from the largest that the paper of the drawing file
+# could hold, until smsheet has a scale for each sheet.  smview draws
+# the curves of a solid within .001 in on the paper at the largest
+# scale the view may take: its own, that of the scale record, or 2.
+# The programs are those next to this script, or in the directory
+# PLICAD_BIN.
+# For a PDF with the lettering of osifont, of the fonts of the library:
+#   ps2pdf -sFONTPATH=$PLICAD/lib/fonts part.ps part.pdf
 
 # Nothing it runs depends on the locale.
 LC_ALL=C
 export LC_ALL
-P=${PLICAD:-$(dirname "$0")}
+P=${PLICAD_BIN:-$(dirname "$0")}
 if test $# -ne 2 || test ! -r "$1" || test ! -r "$2"; then
-	echo "usage: smdraw part.draw part.fold > part.ps" >&2
+	echo "usage: smdraw part.draw part.st > part.ps" >&2
 	exit 1
 fi
 draw=$1
 fold=$2
-cr=$(printf '\r')
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT
 
@@ -49,8 +52,8 @@ flush() {
 	test -n "$view" || return 0
 	n=$((n + 1))
 	if test ! -s "$tmp/$n.view"; then
-		"$P/smview" $hidden "$view" "$fold" > "$tmp/$n.view" \
-			2> "$tmp/msg"
+		"$P/smview" $hidden $cut $unmarked -t "$chord" "$view" "$fold" \
+			> "$tmp/$n.view" 2> "$tmp/msg"
 		ok=$?
 		where < "$tmp/msg"
 		test $ok -eq 0 || return 1
@@ -60,48 +63,42 @@ flush() {
 	{
 		cat "$tmp/$n.view"
 		printf '%s' "$rules"
-	} | "$P/smdim" -s "$vscale" 2> "$tmp/msg"
+	} | "$P/smdim" -s "$vscale" -u "$units" 2> "$tmp/msg"
 	ok=$?
 	where < "$tmp/msg"
 	return $ok
 }
 
-# Writes the views of the drawing file at the scale $1; its last line
-# counts even without a newline.
+# Writes the views of the drawing file at the scale $1, as smsheet -v
+# lists them in $tmp/views.
 views() {
 	each=$1
 	view=
 	n=0
-	ln=0
-	while IFS= read -r line || test -n "$line"; do
-		ln=$((ln + 1))
-		line=${line%"$cr"}
+	while IFS= read -r line; do
 		case $line in
-		view*)
+		view\ *)
 			flush || return 1
-			vln=$ln
 			set -- $line
-			view=$2
-			hidden=
+			vln=$2
+			view=$3
+			hidden=$4
+			test "$hidden" = - && hidden=
 			vscale=$each
+			test "$5" = - || vscale=$5
+			top=${fixed:-2}
+			test "$5" = - || top=$5
+			chord=$(awk -v s="$top" 'BEGIN { print 0.0254 / s }')
+			cut=
+			test "${6:--}" = - || cut="-c $6"
 			rules=
-			shift 2
-			while test $# -gt 0; do
-				case $1 in
-				hidden) hidden=-h ;;
-				scale) vscale=$2 ;;
-				title) break ;;
-				esac
-				shift
-			done
 			;;
-		" "* | "	"*)
-			rules="$rules#line $ln $draw
-$line
+		"#line "* | " "*)
+			rules="$rules$line
 "
 			;;
 		esac
-	done < "$draw"
+	done < "$tmp/views"
 	flush
 }
 
@@ -133,7 +130,12 @@ sheets() {
 # smsheet reads the drawing file first, and says what is wrong with it
 # by its line, and with -r gives the room of its paper.
 room=$("$P/smsheet" -r "$draw") || exit 1
-fixed=$(awk '$1 == "scale" && !/^[ \t]/ { print $2 }' "$draw")
+"$P/smsheet" -v "$draw" > "$tmp/views" || exit 1
+units=$(awk '$1 == "units" { print $2 ($3 == "-" ? "" : "," $3) }' \
+	"$tmp/views")
+fixed=$(awk '$1 == "scale" && $2 != "-" { print $2 }' "$tmp/views")
+unmarked=$(awk '$1 == "unmarked" && $2 != "-" { print "-u " $2 }' \
+	"$tmp/views")
 dims=1
 if test -n "$fixed"; then
 	rounds "$fixed"

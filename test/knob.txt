@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# knob.txt -- A subassembly: a base and a cap, the cap in from above
+# Copyright (c) 2026 Jakob Kastelic
+
+materials materials
+part base ../build/plate.st material red
+part cap ../build/plate.st move 0 0 10 material red path move 0 0 30

@@ -19,6 +19,7 @@ struct bedge {
 	int type;
 	struct vec c, n;
 	double r, sweep;
+	size_t by; // The feature of the part it comes from, or NONE.
 };
 
 struct buse {
@@ -31,9 +32,9 @@ struct bloop {
 	size_t first, n;
 };
 
-// The origin of a face: the top or bottom of 2D face idx, the side along
+// The origin of a face: the near or far face of 2D face idx, the side along
 // 2D edge idx, or the wall of hole idx of a folded part.
-enum { F_TOP, F_BOTTOM, F_SIDE, F_HOLE };
+enum { F_NEAR, F_FAR, F_SIDE, F_HOLE };
 
 // A plane has point o, normal n and in-plane direction x.  A cylinder or
 // a cone has axis point o, axis n, reference direction x and radius r.

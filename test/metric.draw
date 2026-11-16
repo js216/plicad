@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# metric.draw -- A drawing of plate.sm in mm, with inches in brackets
+# Copyright (c) 2026 Jakob Kastelic
+
+units mm in
+template plain_b.ps
+field Title PLATE
+material ALUMINUM SHEET, %%t THICK.
+finish NONE.
+view top
+ lin x 0 100

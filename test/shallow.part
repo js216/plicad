@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# shallow.part -- The block of test/textured.part with too little draft
+# Copyright (c) 2026 Jakob Kastelic
+
+# The sides lean 1 degree, less than the 3 that the texture needs.
+materials materials
+profile p along z 0 0 0 40 0 0 40 20 0 0 20 0
+extrude blk from 0 to 10 p draft 1
+finish vdi30 blk.side

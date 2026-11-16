@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# coatdisc.part -- A textured disc, whose coat is a polygon of many points
+# Copyright (c) 2026 Jakob Kastelic
+
+# A disc 40 across and 10 thick along y, all of it textured VDI 3400
+# Ref 30: seen from the front, the coat of its face is a polygon of more
+# corners than any record had room for once.
+materials materials
+circle d 40 0 0 along y
+extrude disc from 0 to 10 d
+finish vdi30 any

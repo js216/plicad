@@ -2,4 +2,4 @@
 # bad_ep.txt -- A part with no faces, which place must reject
 # Copyright (c) 2026 Jakob Kastelic
 
-a bad_empty.fold
+part a bad_empty.st

@@ -36,12 +36,15 @@ the [classic rules](https://doi.org/10.1002/j.1538-7305.1978.tb02135.x):
 | measure   | Prints volume, bounding box, area and holes, one item per line |
 | place     | Positions parts from an assembly file                          |
 | interfere | Prints one line for each pair of colliding parts               |
+| assemble  | Replays the assembly sequence, checking each insertion path    |
 | numdiff   | Compares two outputs of measure within tolerances              |
 | lint      | Checks the text of each source file against the house rules    |
+| param     | Prints the values of the names of a source file                |
+| family    | Writes the part source of a screw, insert or package of a table |
 | extrude   | Makes solids of outlines pushed along an axis, with a draft    |
-| bool      | Unites, cuts and intersects solids                             |
+| bool      | Unites, subtracts and intersects solids                        |
 | fillet    | Rounds the edges of solids, as a ball rolls along them         |
-| mould     | Reports the walls, the drafts and the undercuts along a pull   |
+| mold      | Reports the walls, the drafts and the undercuts along a pull   |
 | smview    | Projects a part into the lines of one drawing view             |
 | smdim     | Adds dimensions and callouts to a view                         |
 | smsheet   | Lays views on sheets as PostScript, with title block           |
@@ -57,34 +60,40 @@ make            # Build the programs
 make check      # Headers and text rules, format and cppcheck
 make sizes      # Report the size of each program
 make tidy       # Clang-tidy, before a commit
-test/run.sh     # Every test, under sanitizers
+test/run.sh     # Every test, under sanitizers, each group in its budget
 test/run.sh parts bad   # Some groups of tests, as test/run.sh lists them
 ```
+
+All source files share one language, described in `man 7 plicad`: one statement
+per line, `#` comments, a trailing `\` to continue a line, `NAME = EXPR`
+definitions, and `include FILE` to share them. Lengths are in mm unless a number
+ends in `in`, and angles are in degrees. Every program reads and writes one text
+format, the stream of stream(5).
 
 For example, an open cube can be described as follows:
 
 ```
-S = 50                  # outer edge length, mm
-t = 1                   # sheet thickness
-r = 1                   # inside bend radius
-tr = t + r              # setback of a 90 degree bend
+S = 50 # outer edge length, mm
+t = 1 # sheet thickness
+r = 1 # inside bend radius
+tr = t + r # setback of a 90 degree bend
 sheet t r 0.44
-plate base tr tr S-tr S-tr origin 0 S 0 axes +x -y
+plate base tr tr S-tr S-tr at 0 S 0 axes +x -y
 flange left base -x -90 S-tr
 flange right base +x -90 S-tr
 flange front base -y -90 S-tr
 flange back base +y -90 S-tr
 ```
 
-The base plate is the centre of a cross-shaped blank. Four walls fold up from
+The base plate is the center of a cross-shaped blank. Four walls fold up from
 its edges to the full height, and the top stays open.
 
 Convert it to STEP (folded) and DXF (flat):
 
 ```sh
-build/smfold cube.sm > cube.fold
-build/tostep cube.fold > cube.step
-build/smflat -f dxf cube.fold > cube.dxf
+build/smfold cube.sm > cube.st
+build/tostep cube.st > cube.step
+build/smflat -f dxf cube.st > cube.dxf
 ```
 
 Use your favorite STEP/DXF viewer to take a look at the output:
@@ -99,6 +108,11 @@ inkscape cube.dxf --export-area-drawing --export-type=png \
 
 <img src="test/cube.png" height="220" alt="The folded open cube"><img
 src="test/cube.flat.png" height="220" alt="The flat pattern of the open cube">
+
+The programs are in `src/`, their manual pages in `man/`, and the
+library in `lib/`: materials and finishes, the templates of drawings,
+and standard tables of screws, holes, inserts, bends and packages
+(`man 7 plicad-lib`). The tests and their fixtures are in `test/`.
 
 ### Contributing
 
