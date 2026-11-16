@@ -58,7 +58,7 @@ To build the programs and run tests:
 make            # Build the programs
 make check      # Headers and text rules, format and cppcheck
 make tidy       # Clang-tidy, before a commit
-make -C test     # Every test, under sanitizers, each group in its budget
+make -C test     # Every test, each group in its budget
 make -C test GROUPS='parts bad'   # Some groups, as test/run.sh lists them
 ```
 

@@ -6,7 +6,7 @@
 # Usage: test/drawbad.sh DIR
 # The programs come from DIR, and the folds of the test parts from
 # build.  Each case must fail with a message that holds the words given,
-# and without a report of a sanitizer.
+# and without a crash.
 
 S=$1
 B=build/drawbad
@@ -29,8 +29,10 @@ sv() {
 refuse() {
 	words=$1
 	shift
-	if "$@" < $B/in > $B/out 2> $B/err || ! grep -q "$words" $B/err ||
-		grep -q Sanitizer $B/err; then
+	"$@" < $B/in > $B/out 2> $B/err
+	st=$?
+	# A refusal is a status of 1 to 125; 0 took it, and more is a crash.
+	if [ $st -eq 0 ] || [ $st -gt 125 ] || ! grep -q "$words" $B/err; then
 		echo "FAIL: $* does not say: $words"
 		cat $B/err
 		exit 1

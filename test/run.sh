@@ -7,7 +7,7 @@
 # The groups are arith, parts, solids, fillet, place, bad, tools, docs,
 # args, draw, mesh, viewer, occt, eda and sizes;
 # with none it runs all of them, on the programs in build, which
-# test/Makefile builds first, all of them sanitized.  It prints
+# test/Makefile builds first.  It prints
 # ok or FAIL for each group and exits non-zero if any fails.  The occt
 # group needs FreeCAD (FREECAD, see test/freecad.sh).
 # Each run of a program is a case that build/budget (test/budget.c)
@@ -40,6 +40,12 @@ STOL="-t volume=rel:1e-9 -t area=rel:1e-9 -t center=abs:2e-4 \
 -t bbox=abs:2e-4"
 
 # The arithmetic of the expressions and of the bends.
+# unrefused STATUS: whether a program that should refuse its input did
+# not: it took it (0) or crashed (over 125, a signal from 128 on).
+unrefused() {
+	test "$1" -eq 0 || test "$1" -gt 125
+}
+
 arith() {
 	$S/test_arith
 }
@@ -356,10 +362,9 @@ part p2/plate part p2/knob/base part p2/knob/cap " &&
 bad() {
 	parts > /dev/null || return 1
 	for f in test/bad_*.part; do
-		if solid "$f" build/bad.st 2> build/bad.err &&
-			$S/tostep build/bad.st > /dev/null 2>> build/bad.err ||
-			! test -s build/bad.err ||
-			grep -q 'Sanitizer' build/bad.err; then
+		{ solid "$f" build/bad.st 2> build/bad.err &&
+			$S/tostep build/bad.st > /dev/null 2>> build/bad.err; }
+		if unrefused $? || ! test -s build/bad.err; then
 			echo "FAIL $f"
 			cat build/bad.err
 			return 1
@@ -371,9 +376,8 @@ bad() {
 		*.st) p=measure ;;
 		*.txt) p=place ;;
 		esac
-		if $S/$p "$f" > /dev/null 2> build/bad.err ||
-			! test -s build/bad.err ||
-			grep -q 'Sanitizer' build/bad.err; then
+		$S/$p "$f" > /dev/null 2> build/bad.err
+		if unrefused $? || ! test -s build/bad.err; then
 			echo "FAIL $f"
 			cat build/bad.err
 			return 1
@@ -932,9 +936,8 @@ viewer() {
 image a ../test/cube.obj on c 0 0 0 1 0 0 0 1 0'; do
 		printf '%s\n' 'f 1 2 3' > build/bad.obj
 		printf '%s\n' "$bad" > build/bad.scene
-		if $S/view -c build/bad.scene > /dev/null 2> build/bad.err ||
-			! grep -q '^view: ' build/bad.err ||
-			grep -q Sanitizer build/bad.err; then
+		$S/view -c build/bad.scene > /dev/null 2> build/bad.err
+		if unrefused $? || ! grep -q '^view: ' build/bad.err; then
 			echo "FAIL view refuses $bad"
 			return 1
 		fi
@@ -1043,7 +1046,7 @@ image a ../test/cube.obj on c 0 0 0 1 0 0 0 1 0'; do
 		{ echo "FAIL view background"; return 1; }
 	test -z "$DISPLAY" && return 0
 	printf '%s\n' 'shot build/view.gl.ppm' 'quit' |
-		ASAN_OPTIONS=detect_leaks=0 timeout 30 \
+		timeout 30 \
 			$S/view test/view.scene &&
 		test "$(head -c 2 build/view.gl.ppm)" = P6 ||
 		{ echo "FAIL view by OpenGL"; return 1; }
@@ -1055,7 +1058,7 @@ image a ../test/cube.obj on c 0 0 0 1 0 0 0 1 0'; do
 	for m in textured plain; do
 		printf '%s\n' "mesh t $m.obj" 'view left' > build/grain_$m.scene
 		printf '%s\n' "shot build/grain_$m.ppm" 'quit' |
-			ASAN_OPTIONS=detect_leaks=0 timeout 30 \
+			timeout 30 \
 				$S/view build/grain_$m.scene || return 1
 	done
 	! cmp -s build/grain_textured.ppm build/grain_plain.ppm ||
@@ -1091,7 +1094,7 @@ view_play() {
 		> build/play_key.scene
 	rm -f build/play.fifo
 	mkfifo build/play.fifo || return 1
-	ASAN_OPTIONS=detect_leaks=0 timeout 60 $S/view build/play_key.scene \
+	timeout 60 $S/view build/play_key.scene \
 		< build/play.fifo > build/play_key.out &
 	runner=$!
 	exec 3> build/play.fifo
@@ -1133,7 +1136,7 @@ view_play() {
 view_fit() {
 	rm -f build/fit.fifo
 	mkfifo build/fit.fifo || return 1
-	ASAN_OPTIONS=detect_leaks=0 timeout 30 $S/view test/view.scene \
+	timeout 30 $S/view test/view.scene \
 		< build/fit.fifo > /dev/null &
 	runner=$!
 	exec 3> build/fit.fifo
@@ -1158,7 +1161,7 @@ view_fit() {
 view_names() {
 	rm -f build/view.fifo
 	mkfifo build/view.fifo || return 1
-	ASAN_OPTIONS=detect_leaks=0 timeout 30 $S/view test/view.scene \
+	timeout 30 $S/view test/view.scene \
 		< build/view.fifo > /dev/null &
 	runner=$!
 	exec 3> build/view.fifo

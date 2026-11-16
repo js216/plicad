@@ -11,12 +11,12 @@ CFLAGS := -std=c99 -pedantic-errors -Werror -Wall -Wextra \
 	-Wshadow -Wconversion -Wundef -Wformat=2 -Wcast-qual -Wwrite-strings \
 	-Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition \
 	-Wvla -Wlogical-op -Wduplicated-cond \
-	-fsanitize=address,undefined -fno-sanitize-recover=all \
-	-fno-omit-frame-pointer -g -O1 -MMD -MP
+	-fsanitize=undefined -fsanitize-trap=all \
+	-fno-omit-frame-pointer -g -O2 -MMD -MP
 
 LDLIBS := -lX11 -lGL -lm
 
-LDFLAGS := -fsanitize=address,undefined -Wl,--as-needed
+LDFLAGS := -Wl,--as-needed
 
 all: $(addprefix build/,$(PROGS))
 

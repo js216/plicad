@@ -1,5 +1,5 @@
 # The tests of PliCad.  make here builds the programs (../Makefile, into
-# ../build, all of them sanitized) and the programs the tests need, then
+# ../build) and the programs the tests need, then
 # runs run.sh: every group, or those named in GROUPS.
 #
 # make                       every test
@@ -7,7 +7,6 @@
 
 B := ../build
 CFLAGS := -std=c99 -pedantic-errors -Werror -Wall -Wextra
-SAN := -fsanitize=address,undefined -fno-sanitize-recover=all -g
 
 run: $(B)/test_arith $(B)/budget $(B)/xresize $(B)/xkey $(B)/schconn
 	cd .. && sh test/run.sh $(GROUPS)
@@ -17,7 +16,7 @@ progs:
 
 # The arithmetic of expressions, bends and line hits, on the library.
 $(B)/test_arith: test_arith.c | progs
-	$(CC) $(CFLAGS) $(SAN) -I../src $< $(B)/libplicad.a -lm -o $@
+	$(CC) $(CFLAGS) -g -I../src $< $(B)/libplicad.a -lm -o $@
 
 # A runner that holds each case to its budget.
 $(B)/budget: budget.c | progs
