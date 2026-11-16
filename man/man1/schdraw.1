@@ -75,6 +75,20 @@ Each label then takes, among the places along each side of its part,
 the one that covers least of the drawing, its own side and its middle
 first.
 .PP
+Blocks that stand side by side across the sheet are spread to fill
+it: a block is a run of parts, with their pins and labels, and wires
+that nothing else of the drawing overlaps across the sheet, with the
+flags (grounds, supplies, ports) that stand in it or next to it.
+The free width of the room of the sheet template is shared equally by
+the left margin, the right margin and each gap, so they come out alike,
+a gap wider than its share closing up to it; if the share is under two
+units of the grid, nothing moves.
+Rows of blocks up the sheet are spread the same way, between the top of
+the room and its foot above the title block.
+No wire runs between two blocks, so they move whole; the drawing then
+stands in the middle of the room, which keeps clear of the title
+block.
+.PP
 Where each pin meets its wire is written as a pin record, by its
 designator and number, and each flag's as a flag record, by its net, so
 the drawing alone tells what it joins: the tests check it against the

@@ -4,11 +4,10 @@
 
 units mm
 template plain_c.ps
-scale 1
 field Title BLOCK
 material 6061-T6 ALUMINUM ALLOY.
 finish NONE.
 note TAP M3X0.5 BOTH HOLES.
-view top
-view front hidden
-view front cut -15 title SECTION A-A
+view top scale 1
+view front scale 1 hidden
+view front scale 1 cut -15 title SECTION A-A

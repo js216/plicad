@@ -65,8 +65,13 @@ The keys:
 .nf
 t, b        show or hide the top and bottom copper
 1 ... 9     the inner layers by number, on the keypad or not
+T, B, S, M, with Shift, any layer key moves its layers on top of
+P, Y, E, D  all the others, shown; the others keep their order
+! ... (     the same for inner layer 1 to 9 (Shift and its number)
 y           the courtyards
 s           the silkscreen
+m           the solder mask
+p           the solder paste
 e           the outline
 d           the holes
 a, A        all the layers on, all off (not z)
@@ -75,6 +80,9 @@ c           center the selected part; again, with nothing
             changed in between, zoom in two times about it
 l           show or hide the bar of the layers
 Space       fit all
+F5          read the files again, the view, the layers shown and
+            their order kept
+Esc         deselect, here alone; hide the help
 ?           a help of the keys, on and off
 q           quit
 .fi
@@ -97,7 +105,8 @@ outline over all the layers.
 A zone is a plane, from a region under a net.
 The bar at the top left has the key of each layer loaded, from the top
 down, on the layer's color if it is shown, plain if not, and last z, on
-gray while the zones are filled; a click on a key does as the key.
+gray while the zones are filled; the key of the layer drawn on top
+(Shift) is underlined; a click on a key does as the key.
 The pointer over a key names it at once, under the bar ("top copper
 (F.Cu)", "inner 1 (In1.Cu)", "silkscreen", "zones: filled", ...).
 It reads commands on stdin, a line each:

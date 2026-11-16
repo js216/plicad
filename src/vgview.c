@@ -13,6 +13,7 @@
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <GL/glx.h>
+#include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <math.h>
@@ -22,7 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 
-double vg_x, vg_y, vg_zoom = 1;
+double vg_x, vg_y, vg_zoom = 1, vg_fill = 0.95;
 int vg_w = 1000, vg_h = 700, vg_sel = -1, vg_font_w, vg_font_h, vg_top;
 
 static const struct vg_viewer *V;
@@ -148,6 +149,7 @@ int vg_start(int argc, char **argv, const struct vg_viewer *v)
 	GLXFBConfig *fc = NULL;
 	XFontStruct *font;
 	int n = 0;
+	long pid = 0;
 
 	V = v;
 	d = XOpenDisplay(NULL);
@@ -157,6 +159,8 @@ int vg_start(int argc, char **argv, const struct vg_viewer *v)
 			v->name);
 		exit(2);
 	}
+	// Four samples a pixel, or none: more cost every frame and every
+	// resize far more than they smooth.
 	for (srgb = 1; !fc && srgb >= 0; srgb--) {
 		for (int s = 4; !fc && s >= 0; s -= 4) {
 			attr[17] = srgb;
@@ -185,6 +189,11 @@ int vg_start(int argc, char **argv, const struct vg_viewer *v)
 	snprintf(cls, sizeof cls, "%c%s", v->name[0] - 'a' + 'A', v->name + 1);
 	XSetClassHint(d, win, &hint);
 	XStoreName(d, win, v->name);
+	// The process, by which window placers know the window.
+	pid = (long)getpid();
+	XChangeProperty(d, win, XInternAtom(d, "_NET_WM_PID", False),
+			XA_CARDINAL, 32, PropModeReplace,
+			(const unsigned char *)&pid, 1);
 	glXMakeCurrent(d, win,
 		       glXCreateNewContext(d, fc[0], GLX_RGBA_TYPE, NULL,
 					   True));
@@ -216,7 +225,7 @@ static void fit(void)
 	vg_y = (b[1] + b[3]) / 2;
 	vg_zoom =
 		fmin(vg_w / (b[2] - b[0] + 1e-9), vg_h / (b[3] - b[1] + 1e-9)) *
-		0.95;
+		vg_fill;
 }
 
 static void wheel(int n, int px, int py)
@@ -338,6 +347,12 @@ static void event(XEvent *e)
 			       e->type == LeaveNotify ? -1 : e->xmotion.y);
 	} else if (k == XK_q) {
 		exit(0);
+	} else if (k == XK_F5 && V->reload) {
+		vg_sel = -1;
+		V->reload();
+	} else if (k == XK_Escape) {
+		vg_sel = -1;
+		help = 0;
 	} else if (k == XK_space) {
 		fit();
 	} else if (k == XK_c) {

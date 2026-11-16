@@ -211,7 +211,10 @@ static struct fp *footprint(struct pcb *b, char **dirs, size_t ndirs,
 			p.y = v[1];
 			p.w = v[2];
 			p.h = v[3];
-		} else if (!strcmp(w[0], "hole") && n == 6 &&
+		} else if (!strcmp(w[0], "hole") &&
+			   (n == 6 || (n == 8 && !strcmp(w[6], "keep") &&
+				       number(w[7], &p.keep) &&
+				       p.keep > 0)) &&
 			   number(w[2], &v[0]) && number(w[3], &v[1]) &&
 			   number(w[4], &v[2]) && number(w[5], &v[3])) {
 			p.shape = PAD_CIRCLE;
@@ -489,6 +492,103 @@ void pcb_spot(const struct pcb *b, const struct pcb_part *q, size_t k,
 	s->layer = p->hole ? -1 : q->bottom ? (int)b->nlayer - 1 : 0;
 }
 
+int pcb_keepout(const struct pcb *b, const struct pcb_part *q, size_t k,
+		double *x, double *y, double *r)
+{
+	struct pcb_spot s;
+
+	if (!q->fp->pad[k].hole || !(q->fp->pad[k].keep > 0)) {
+		return 0;
+	}
+	pcb_spot(b, q, k, &s);
+	*x = s.x;
+	*y = s.y;
+	*r = q->fp->pad[k].keep / 2;
+	return 1;
+}
+
+// The distance from (x, y) to the box c, 0 inside it.
+static double box_dist(const double c[4], double x, double y)
+{
+	return hypot(fmax(fmax(c[0] - x, x - c[2]), 0),
+		     fmax(fmax(c[1] - y, y - c[3]), 0));
+}
+
+static char *pad_key(const struct pcb_part *p, size_t k);
+
+// Whether a keep-out of part h, a circle, overlaps the courtyard c of
+// part o; what, for the message, goes to why.
+static int keep_in(const struct pcb *b, const struct pcb_part *h,
+		   const struct pcb_part *o, const double c[4], char *why,
+		   size_t n)
+{
+	for (size_t k = 0; k < h->fp->npad; k++) {
+		double x, y, r;
+
+		if (pcb_keepout(b, h, k, &x, &y, &r) &&
+		    box_dist(c, x, y) < r - 1e-9) {
+			char *key = pad_key(h, k);
+
+			snprintf(why, n,
+				 "the courtyard of %s (%s) in the keep-out of "
+				 "hole %s (%s)",
+				 o->name, pcb_ref(o), key, pcb_ref(h));
+			free(key);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+int pcb_clash(const struct pcb *b, const struct pcb_part *q,
+	      const struct pcb_part *o, char *why, size_t n)
+{
+	double c[4], d[4];
+
+	if (!q->placed || !o->placed || !q->fp || !o->fp || q == o) {
+		return 0;
+	}
+	pcb_court(q, c);
+	pcb_court(o, d);
+	if (q->bottom == o->bottom && c[0] < d[2] - 1e-9 &&
+	    d[0] < c[2] - 1e-9 && c[1] < d[3] - 1e-9 && d[1] < c[3] - 1e-9) {
+		snprintf(why, n, "the courtyards of %s (%s) and %s (%s) overlap",
+			 q->name, pcb_ref(q), o->name, pcb_ref(o));
+		return 1;
+	}
+	return keep_in(b, o, q, c, why, n) || keep_in(b, q, o, d, why, n);
+}
+
+int pcb_keeps(const struct pcb *b, const struct pcb_part *o, double x,
+	      double y, double rad, char *why, size_t n)
+{
+	for (size_t k = 0; o->placed && o->fp && k < o->fp->npad; k++) {
+		double cx, cy, r;
+
+		if (pcb_keepout(b, o, k, &cx, &cy, &r) &&
+		    hypot(x - cx, y - cy) < r + rad - 1e-9) {
+			char *key = pad_key(o, k);
+
+			snprintf(why, n, "the keep-out of hole %s (%s)", key,
+				 pcb_ref(o));
+			free(key);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+int pcb_in_keepout(const struct pcb *b, double x, double y, double rad,
+		   char *why, size_t n)
+{
+	for (size_t i = 0; i < b->npart; i++) {
+		if (pcb_keeps(b, &b->part[i], x, y, rad, why, n)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 void pcb_court(const struct pcb_part *q, double c[4])
 {
 	double x[2], y[2];
@@ -530,9 +630,9 @@ char *pcb_net_words(const struct pcb *b, size_t k)
 	return s;
 }
 
-char *pcb_pad_key(const struct pcb *b, size_t q, size_t k)
+// The key of pad k of part p, as pcb_pad_key gives it.
+static char *pad_key(const struct pcb_part *p, size_t k)
 {
-	const struct pcb_part *p = &b->part[q];
 	char *s = pcb_alloc(strlen(p->name) + strlen(p->fp->pad[k].name) + 32);
 	size_t same = 0, nth = 0;
 
@@ -549,6 +649,11 @@ char *pcb_pad_key(const struct pcb *b, size_t q, size_t k)
 		sprintf(s, "%s.%s", p->name, p->fp->pad[k].name);
 	}
 	return s;
+}
+
+char *pcb_pad_key(const struct pcb *b, size_t q, size_t k)
+{
+	return pad_key(&b->part[q], k);
 }
 
 // Whether pin s (PART.PIN) is the pad of key (PART.PAD).
@@ -996,6 +1101,7 @@ int pcb_passes(const char *file, char **lib, size_t nlib, const char *group,
 	}
 	free(text);
 	free(groups);
+	pcb_free(&src);
 	return failed;
 }
 
@@ -1116,6 +1222,76 @@ void pcb_read(struct pcb *b, const char *file, char **lib, size_t nlib,
 	}
 	free(buf);
 	free(w);
+	free(dirs[0]);
+	free(dirs);
+}
+
+void pcb_free(struct pcb *b)
+{
+	for (size_t i = 0; i < b->nexcept; i++) {
+		free(b->edge_except[i]);
+	}
+	free(b->edge_except);
+	for (size_t i = 0; i < b->nlayer; i++) {
+		free(b->layer[i].name);
+		free(b->layer[i].net);
+	}
+	free(b->layer);
+	for (size_t i = 0; i < b->npart; i++) {
+		struct pcb_part *q = &b->part[i];
+
+		if (q->name != q->ref) {
+			free(q->name);
+		}
+		free(q->ref);
+		free(q->type);
+		free(q->value);
+		free(q->mpn);
+		free(q->pins);
+		free(q->by);
+	}
+	free(b->part);
+	for (size_t k = 0; k < b->nnet; k++) {
+		free(b->net[k].name);
+		free(b->net[k].end);
+		if (b->netby) {
+			free(b->netby[k]);
+		}
+		for (size_t j = 0; b->netpad && j < b->nnetpad[k]; j++) {
+			free(b->netpad[k][j]);
+		}
+		if (b->netpad) {
+			free(b->netpad[k]);
+		}
+	}
+	free(b->net);
+	free(b->netby);
+	free(b->netpad);
+	free(b->nnetpad);
+	for (size_t i = 0; i < b->ntrack; i++) {
+		free(b->track_[i].xy);
+	}
+	free(b->track_);
+	free(b->via);
+	for (size_t i = 0; i < b->nlink; i++) {
+		free(b->link[i].a);
+		free(b->link[i].b);
+	}
+	free(b->link);
+	for (size_t i = 0; i < b->nstmt; i++) {
+		for (int j = 0; j < b->stmt[i].n; j++) {
+			free(b->stmt[i].w[j]);
+		}
+		free(b->stmt[i].w);
+	}
+	free(b->stmt);
+	for (size_t i = 0; i < b->nsec; i++) {
+		free(b->sec_name[i]);
+		free(b->sec_text[i]);
+	}
+	free(b->sec_name);
+	free(b->sec_text);
+	memset(b, 0, sizeof *b);
 }
 
 // The parts or the nets in the order of their names, so a lock lists

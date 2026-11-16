@@ -105,6 +105,7 @@ struct part {
 	size_t item;
 	float rgb[3];
 	int shown;
+	int before; // Whether it showed before o showed one part alone.
 	float *pos, *nrm, *uv;
 	float *col; // The color of each triangle (its coats), or NULL.
 	float *grade; // The VDI grade of the texture of each triangle, below

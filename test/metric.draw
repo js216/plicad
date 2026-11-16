@@ -7,5 +7,5 @@ template plain_b.ps
 field Title PLATE
 material ALUMINUM SHEET, %%t THICK.
 finish NONE.
-view top
+view top scale 2
  lin x 0 100

@@ -34,6 +34,10 @@
 // routed, each is ripped up and routed again among the others, and its
 // new path kept if it costs no more.
 //
+// Blocks that nothing joins, side by side across the sheet or one over
+// another, are spread so the margins and the gaps between them come
+// out alike (spread).
+//
 // The room the drawing keeps, round bodies and text, is the sheet
 // template's (its clear records); each pair of things too close is
 // printed, and the exit status is 1.  With -v each placement is told on
@@ -58,6 +62,7 @@
 #define DESCENT SCH_DESCENT
 #define PINNUM 5.0 // The pin numbers of an integrated circuit.
 #define MARGIN 8 // Grid units round everything, for the router.
+#define SPREAD_MIN 2 // The least gap between blocks spread, in grid units.
 
 enum {
 	STEP = 10,
@@ -1227,9 +1232,9 @@ static void points(const double *xy, size_t n)
 // The text of a field, by its name after a $.
 static const char *field(const char *name);
 
-// Reads the sheet TEMPLATE.sheet and writes it, its fields filled in:
-// the paper and the room for the drawing come back.
-static void sheet(double room[4], double paper[2])
+// Reads the sheet TEMPLATE.sheet and, if print is set, writes it, its
+// fields filled in: the paper and the room for the drawing come back.
+static void sheet(double room[4], double paper[2], int print)
 {
 	char *path = sch_sheet_path(&S), buf[4096];
 	FILE *f;
@@ -1248,9 +1253,12 @@ static void sheet(double room[4], double paper[2])
 
 		buf[strcspn(buf, "\n")] = 0;
 		if (sscanf(buf, "paper %lf %lf", &paper[0], &paper[1]) == 2) {
-			printf("page %.0f %.0f\n", paper[0], paper[1]);
+			if (print) {
+				printf("page %.0f %.0f\n", paper[0], paper[1]);
+			}
 		} else if (sscanf(buf, "room %lf %lf %lf %lf", &room[0],
-				  &room[1], &room[2], &room[3]) == 4) {
+				  &room[1], &room[2], &room[3]) == 4 ||
+			   !print) {
 		} else if (!strncmp(buf, "line ", 5)) {
 			printf("line %.2f%s\n", LW, buf + 4);
 		} else if (!strncmp(buf, "text ", 5) &&
@@ -1432,7 +1440,7 @@ static void write_vec(void)
 	double room[4], paper[2], e[4];
 
 	printf("# vec of %s, by schdraw\n", S.file);
-	sheet(room, paper);
+	sheet(room, paper, 1);
 	extent(e);
 	SC = S.scale;
 	if ((e[2] - e[0]) * GRID * SC > room[2] - room[0] ||
@@ -1649,6 +1657,152 @@ static void check_room(void)
 	}
 }
 
+// A thing of the drawing on one axis: its span, in grid units, the
+// part (with its label and the text of its flag) or the wire it is,
+// whether it is a flag, and the block it falls in.
+struct span {
+	double lo, hi;
+	size_t i;
+	int wire, flag, block;
+};
+
+static int by_lo(const void *a, const void *b)
+{
+	const struct span *p = a, *q = b;
+	int f = (p->flag > q->flag) - (p->flag < q->flag);
+
+	return f ? f : (p->lo > q->lo) - (p->lo < q->lo);
+}
+
+// The spans of the parts, with their pins, and of the wires of the
+// drawing on axis a, the flags last; their number comes back.
+static size_t spans(size_t a, struct span *sp)
+{
+	size_t n = 0;
+
+	for (size_t i = 0; i < S.npart; i++) {
+		double b[4], t[4], x, y;
+		int al, flag = S.part[i].dev->shape->flag != NULL;
+
+		body(i, b);
+		for (size_t p = 0; p < S.part[i].dev->shape->npin; p++) {
+			int px, py, d;
+
+			sch_pin_at(&S.part[i], p, &px, &py, &d);
+			b[0] = fmin(b[0], px * GRID);
+			b[1] = fmin(b[1], py * GRID);
+			b[2] = fmax(b[2], px * GRID);
+			b[3] = fmax(b[3], py * GRID);
+		}
+		if (label(i, t) ||
+		    (flag && flag_box(&S.part[i], t, &x, &y, &al))) {
+			b[0] = fmin(b[0], t[0]);
+			b[1] = fmin(b[1], t[1]);
+			b[2] = fmax(b[2], t[2]);
+			b[3] = fmax(b[3], t[3]);
+		}
+		sp[n++] = (struct span){ b[a] / GRID, b[a + 2] / GRID, i, 0,
+					 flag, 0 };
+	}
+	for (size_t i = 0; i < npolys; i++) {
+		struct span w = { 1e9, -1e9, i, 1, 0, 0 };
+
+		for (size_t j = 0; j < polys[i].n; j++) {
+			w.lo = fmin(w.lo, polys[i].xy[2 * j + a]);
+			w.hi = fmax(w.hi, polys[i].xy[2 * j + a]);
+		}
+		sp[n++] = w;
+	}
+	qsort(sp, n, sizeof *sp, by_lo);
+	return n;
+}
+
+// Moves thing s by d grid units along axis a.
+static void move_span(size_t a, const struct span *s, int d)
+{
+	if (s->wire) {
+		for (size_t j = 0; j < polys[s->i].n; j++) {
+			polys[s->i].xy[2 * j + a] += d;
+		}
+	} else {
+		*(a ? &S.part[s->i].y : &S.part[s->i].x) += d;
+		*(a ? &labels[s->i].y : &labels[s->i].x) += d * GRID;
+	}
+}
+
+// Spreads the blocks of the drawing along axis a (0 across, 1 up): the
+// runs of parts and wires that nothing else of the drawing overlaps on
+// that axis.  A flag (a ground, a supply or a port) makes no block of
+// its own: it goes with the block it overlaps, or else the nearest.  The
+// free length of the room of the sheet is shared equally by the two
+// margins and the gaps between the blocks, a gap wider than its share
+// closing up to it, if the share is SPREAD_MIN or more.  No wire runs
+// across a gap, so the blocks move whole.  The drawing is centered in
+// the room later, so the margins come out as wide as the gaps.
+static void spread(size_t a)
+{
+	double room[4], paper[2], hi = -1e9, sum = 0, gap, *lo, *end;
+	size_t n, nb = 0;
+	struct span *sp = sch_alloc((S.npart + npolys + 1) * sizeof *sp);
+	int *shift = NULL, ok = 1;
+
+	sheet(room, paper, 0);
+	n = spans(a, sp);
+	lo = sch_alloc((n + 1) * sizeof *lo);
+	end = sch_alloc((n + 1) * sizeof *end);
+	for (size_t k = 0; k < n && !sp[k].flag; k++) {
+		if (sp[k].lo > hi) {
+			lo[nb++] = sp[k].lo;
+		}
+		sp[k].block = (int)nb - 1;
+		hi = fmax(hi, sp[k].hi);
+		end[nb - 1] = hi;
+	}
+	for (size_t k = 0; k < n && nb; k++) {
+		double mid = (sp[k].lo + sp[k].hi) / 2, best = 1e9;
+
+		for (size_t m = 0; sp[k].flag && m < nb; m++) {
+			double d = sp[k].hi < lo[m] ? lo[m] - mid :
+				   sp[k].lo > end[m] ? mid - end[m] :
+						       -1;
+
+			if (d < best) {
+				best = d;
+				sp[k].block = (int)m;
+			}
+		}
+	}
+	for (size_t k = 0; k < n && nb; k++) {
+		lo[sp[k].block] = fmin(lo[sp[k].block], sp[k].lo);
+		end[sp[k].block] = fmax(end[sp[k].block], sp[k].hi);
+	}
+	for (size_t m = 0; m < nb; m++) {
+		sum += end[m] - lo[m];
+		ok = ok && (m == 0 || lo[m] > end[m - 1]);
+	}
+	gap = ((room[a + 2] - room[a]) / (GRID * S.scale) - sum) /
+	      (double)(nb + 1);
+	if (ok && nb > 1 && gap >= SPREAD_MIN) {
+		shift = sch_alloc((nb + 1) * sizeof *shift);
+		for (size_t m = 1; m < nb; m++) {
+			shift[m] = shift[m - 1] +
+				   (int)floor(gap - (lo[m] - end[m - 1]));
+		}
+		for (size_t k = 0; k < n; k++) {
+			move_span(a, &sp[k], shift[sp[k].block]);
+		}
+		if (sch_verbose) {
+			fprintf(stderr, "%s: %zu blocks %s, %.0f grid apart\n",
+				S.file, nb,
+				a ? "up the sheet" : "across the sheet", gap);
+		}
+	}
+	free(sp);
+	free(lo);
+	free(end);
+	free(shift);
+}
+
 // Leaves out of the drawing the parts that found no place (the reader
 // told why), and their pins out of the nets and the wires.
 static void drop_unplaced(void)
@@ -1721,7 +1875,13 @@ int main(int argc, char **argv)
 	route_all();
 	trace();
 	labels_all();
+	spread(0);
+	spread(1);
 	check_room();
 	write_vec();
+	for (size_t k = 0; k < nlib; k++) {
+		free(lib[k]);
+	}
+	free(lib);
 	return failed || faults;
 }

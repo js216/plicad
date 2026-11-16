@@ -21,8 +21,11 @@ line 588 18 588 48
 line 630 18 630 48
 line 666 18 666 48
 line 720 18 720 48
+line 738 48 738 90
 text R 5 0 0 490 83 TITLE
 text R 11 0 0 498 64 $Title
+text R 5 0 0 742 83 SIZE
+text R 11 0 1 756 62 A
 text R 5 0 0 490 41 FILE
 text R 7 0 0 490 30 $File
 text R 5 0 0 592 41 PAGE

@@ -4,7 +4,6 @@
 
 units in
 template plain_c.ps
-scale 1
 field Title BRACKET, L
 field Number TBD
 field Rev B
@@ -18,7 +17,7 @@ note REMOVE ALL BURRS AND SHARP EDGES.
 note INSIDE BEND RADIUS %%r.
 revision A 11/01/26 JK INITIAL RELEASE
 revision B 11/13/26 JK ADDED THE HOLES
-view top
+view top scale 1
  lin x 0in 3.937in +.010in -.000in
  lin y 0in .984in
  drop base y
@@ -26,8 +25,8 @@ view top
  flag 3in 1.5in 3 FARSIDE
  hatch 2.5in .2in 3.8in 1.2in
  leader 3.2in .4in MASK PRIOR TO PAINT
-view front hidden
+view front scale 1 hidden
  drop wall r
 view right scale 2
  drop pins d
-view flat sheet 2 title FLAT PATTERN
+view flat scale 1 sheet 2 title FLAT PATTERN

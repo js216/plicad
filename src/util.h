@@ -85,8 +85,8 @@ char *sibling_path(struct sibling s);
 char *join_names(const char *a, const char *b);
 // The file of s, as sibling_path gives it, if there is one; else the
 // file of that name in the directory dir of the library, plicad-lib(7):
-// lib under the directory PLICAD names, or PLICAD_LIB, the library of
-// the tree of the build.  A new string.
+// lib beside the directory of the running program, as build/ has
+// beside it.  A new string.
 char *lib_path(struct sibling s, const char *dir);
 // The file of the name in the directory dir of the library, as lib_path
 // has it.  A new string.

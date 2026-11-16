@@ -7,6 +7,6 @@ template plain_c.ps
 field Title BOX WITH COATS
 material ALUMINUM SHEET, %%t THICK.
 finish CLEAR, AND BLACK WHERE HATCHED.
-view front
+view front scale 2
  lin y 11mm 21mm
-view top
+view top scale 2

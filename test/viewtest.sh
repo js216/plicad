@@ -5,7 +5,7 @@
 
 # Usage: test/viewtest.sh DIR
 # The programs are those in DIR, with xkey (test/xkey.c), built there by
-# eda.mk.  The viewers run on a display of their own (Xvfb), driven as a
+# make.  The viewers run on a display of their own (Xvfb), driven as a
 # user drives them: the keys and the mouse by XTest, through xkey, and
 # the commands of their stdin (select, layer, shot, ...).  The holes of
 # the letters and digits must show the ground; a click on a part's
@@ -40,7 +40,7 @@ if ! command -v Xvfb > /dev/null; then
 fi
 X=$P/xkey
 if ! test -x "$X"; then
-	echo "skip viewers: no $X (make -f eda.mk)"
+	echo "skip viewers: no $X (make build/xkey)"
 	exit 0
 fi
 n=90

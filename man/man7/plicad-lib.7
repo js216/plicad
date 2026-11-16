@@ -30,8 +30,8 @@ A program looks for a file that a source names, as
 or
 .BR template ,
 next to that source first, and then in the library: the directory
-lib under the directory that PLICAD names, or else the lib of the tree
-it was built in.
+lib beside the directory of the program, as the tree has lib beside
+build.
 .SS The library
 .TP 12
 .B materials
@@ -78,7 +78,8 @@ the lettering of drawings, whose widths
 .IR smsheet (1)
 lays text out by, under the license osifont.license (the GPL with the
 font exception), for Ghostscript as
-.BR "ps2pdf \-sFONTPATH=" $PLICAD/lib/fonts ;
+.BI "ps2pdf \-sFONTPATH=" tree /lib/fonts
+(the tree of PliCad);
 and the glyphs of Nimbus Sans, nimbussans.txt, of the schematics
 (nimbussans.LICENSE).
 .PP
@@ -87,9 +88,5 @@ made from a row of its table, not kept as a file for each size.
 Every length of a table is in the units of
 .IR plicad (7),
 mm unless a number ends in in.
-.SH ENVIRONMENT
-.TP
-.B PLICAD
-the directory whose lib is the library.
 .SH SEE ALSO
 plicad(7), draw(5), sm(5), part(5), assembly(5)

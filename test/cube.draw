@@ -16,8 +16,8 @@ boxed PART MARKING: VENDOR ID, MONTH/YEAR OF MANUFACTURE, PART NUMBER, \
 note REMOVE ALL BURRS AND SHARP EDGES.
 note BEND RADII SHALL BE .03 MAX.
 revision A 11/13/26 JK INITIAL RELEASE
-view top
+view top scale 0.75
  flag .5in 1.5in 3
-view front
-view right
-view flat title FLAT PATTERN
+view front scale 0.75
+view right scale 0.75
+view flat scale 0.75 title FLAT PATTERN

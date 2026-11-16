@@ -27,7 +27,8 @@ out=${TMPDIR:-/tmp}/dimcheck.$$
 trap 'rm -f "$out".*' EXIT
 "$S/measure" "$fold" > "$out.measure" || exit 1
 for view in "$@"; do
-	"$S/smview" "$view" "$fold" | "$S/smdim" > "$out.dim" || exit 1
+	printf 'view %s - 1 -\n' "$view" | "$S/smview" "$fold" |
+		"$S/smdim" > "$out.dim" || exit 1
 	awk -v view="$view" '
 	function inch(mm,    s) {
 		s = sprintf("%.3f", mm / 25.4)

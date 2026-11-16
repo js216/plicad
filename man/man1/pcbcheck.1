@@ -37,7 +37,14 @@ net apart (a sliver), and between an opening and a via; a small part of
 two pins with one pad on a plane joins it by a neck no wider than a
 track, with no via by it, or its pads heat unevenly (a thermal
 imbalance); no silkscreen, a footprint's lines or a designator, runs
-over an opening of the solder mask, where it would be cut; every part
+over an opening of the solder mask, where it would be cut; no two
+courtyards on one side overlap, and no courtyard on either side, nor
+any via, comes into the keep-out of a hole a screw goes through
+.RI ( pcbfp (5)),
+whatever the nets, the fault naming both parts
+(the courtyards of ch1.tank.l (L401) and ch1.tank.c1 (C402) overlap;
+the courtyard of ch1.tank.l (L401) in the keep-out of hole blk.1/7
+(Z401)); every part
 is placed by a current statement, with the nets of its pads as they are;
 and each net's copper was made by its current statements for its pads
 where they stand: the fault says what changed.

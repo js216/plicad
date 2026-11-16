@@ -17,11 +17,13 @@ enum { LAYER_SIGNAL, LAYER_PLANE }; // The kinds of copper layers.
 // A pad of a footprint: its name (the pin number), its shape and its
 // box from the origin of the footprint, as seen from the top; a hole
 // pad is drilled and plated, on every copper layer.  A pad without paste
-// (nopaste) is a contact pad, never soldered.
+// (nopaste) is a contact pad, never soldered.  A hole a screw goes
+// through has a keep-out, a circle of diameter keep round it (0 for
+// none), which keeps the parts of both sides off, and the vias.
 struct fp_pad {
 	char *name;
 	int shape, hole, nopaste;
-	double x, y, w, h, drill;
+	double x, y, w, h, drill, keep;
 };
 
 // A line of the silkscreen of a footprint: its width and points.
@@ -158,6 +160,9 @@ void pcb_error(struct pcb *b, int line, const char *fmt, ...);
 // other sections are kept as they are.
 void pcb_read(struct pcb *b, const char *file, char **lib, size_t nlib,
 	      FILE *lock, const char *group);
+// Frees what pcb_read and the programs made of the board, but the
+// footprints, which every board read shares.
+void pcb_free(struct pcb *b);
 // Writes the lock: the section read made anew (the parts placed and the
 // copper), the others as they were, the board's first and the groups'
 // in the order of their names.
@@ -185,6 +190,24 @@ void pcb_spot(const struct pcb *b, const struct pcb_part *q, size_t k,
 	      struct pcb_spot *s);
 // The courtyard of a placed part, on the board.
 void pcb_court(const struct pcb_part *q, double c[4]);
+// The keep-out of pad k of part q, a hole a screw goes through: its
+// center and radius on the board; returns 0 if it has none.
+int pcb_keepout(const struct pcb *b, const struct pcb_part *q, size_t k,
+		double *x, double *y, double *r);
+// Whether placed parts q and o clash: their courtyards overlap on one
+// side, or a keep-out of either overlaps the courtyard of the other
+// (a keep-out is on both sides), whatever their nets.  The fault, in
+// words that name both, goes to why, of room n.
+int pcb_clash(const struct pcb *b, const struct pcb_part *q,
+	      const struct pcb_part *o, char *why, size_t n);
+// Whether a circle at (x, y) of radius rad (a via) overlaps the keep-out
+// of a hole of placed part o; which goes to why, of room n.
+int pcb_keeps(const struct pcb *b, const struct pcb_part *o, double x,
+	      double y, double rad, char *why, size_t n);
+// Whether such a circle overlaps the keep-out of a hole of any placed
+// part of the board.
+int pcb_in_keepout(const struct pcb *b, double x, double y, double rad,
+		   char *why, size_t n);
 // Finds a pin, PART.PIN (by number, or by name for a part with pin
 // names): the part, and the first pad of the pin; returns 0 if none.
 int pcb_pin(const struct pcb *b, const char *s, size_t *part, size_t *pad);

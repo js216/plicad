@@ -32,7 +32,12 @@
 //   faces N plane P cylinder C cone K sphere S torus T
 //   mass M                            (of a part with a material)
 // without the center and the box for a solid of no faces, as a common
-// part of solids apart leaves.
+// part of solids apart leaves.  The volume, the area and the center of
+// a part are worked out once for each shape of its own content, in its
+// own frame, and moved to the place of each part of it: the parts of an
+// assembly are mostly copies of a few.
+
+#define _POSIX_C_SOURCE 200809L // For open_memstream.
 
 #include "brep.h"
 #include "bsolid.h"
@@ -281,6 +286,83 @@ static void print_flat(const struct part *p)
 
 // Grows x by the points of edge e: its ends and the points of a conic
 // that lie furthest along an axis.
+// The volume, area and moment of a solid in its own frame, by the text
+// of the solid (shape_write), and the hash of that text.
+struct memo {
+	char *text;
+	unsigned long hash;
+	struct solid_mass m;
+};
+
+static struct memo *memos;
+static size_t nmemos, capmemos;
+
+// The FNV-1a hash of the text s of n bytes.
+static unsigned long hash_of(const char *s, size_t n)
+{
+	unsigned long h = 2166136261UL;
+
+	for (size_t i = 0; i < n; i++) {
+		h = (h ^ (unsigned char)s[i]) * 16777619UL;
+	}
+	return h;
+}
+
+// The volume, area and moment of solid sh in its own frame, worked out
+// once for each content.
+static struct solid_mass own_mass(const struct shape *sh)
+{
+	char *text = NULL;
+	size_t n = 0;
+	FILE *f = open_memstream(&text, &n);
+	struct memo m;
+
+	if (!f) {
+		die("measure: out of memory");
+	}
+	shape_write(f, sh);
+	if (fclose(f) != 0) {
+		die("measure: out of memory");
+	}
+	m.hash = hash_of(text, n);
+	for (size_t i = 0; i < nmemos; i++) {
+		if (memos[i].hash == m.hash && !strcmp(memos[i].text, text)) {
+			free(text);
+			return memos[i].m;
+		}
+	}
+	m.text = text;
+	m.m = shape_mass(sh);
+	PUSH(memos, nmemos, capmemos, m);
+	return m.m;
+}
+
+// The volume, area and moment of part p, where it stands: of its shape
+// in its own frame, moved by its place.
+static struct solid_mass solid_mass_of(const struct part *p)
+{
+	struct solid_mass m;
+
+	if (p->solid) {
+		m = own_mass(p->solid);
+	} else {
+		struct part own = *p;
+		struct shape sh;
+
+		own.place = rig_id();
+		part_shape(&own, &sh);
+		m = own_mass(&sh);
+		shape_free(&sh);
+	}
+
+	if (m.volume != 0) {
+		struct vec c = rig_pt(p->place, mul(m.moment, 1 / m.volume));
+
+		m.moment = mul(c, m.volume);
+	}
+	return m;
+}
+
 // The mass of parts, in g, its moment about the origin, and the parts.
 struct mass_sum {
 	double mass;
@@ -293,7 +375,6 @@ struct mass_sum {
 // volume), and adds them to t.
 static void print_mass(const struct part *p, struct mass_sum *t)
 {
-	struct shape sh;
 	struct solid_mass m;
 	double g = 0;
 	struct vec c;
@@ -301,9 +382,7 @@ static void print_mass(const struct part *p, struct mass_sum *t)
 	if (!p->base) {
 		return;
 	}
-	part_shape(p, &sh);
-	m = shape_mass(&sh);
-	shape_free(&sh);
+	m = solid_mass_of(p);
 	g = m.volume * p->density / MM3_PER_CM3;
 	c = mul(m.moment, 1 / m.volume);
 	printf("mass %.4f\n", g);
@@ -316,12 +395,13 @@ static void print_mass(const struct part *p, struct mass_sum *t)
 	t->parts++;
 }
 
-static void print_shape(const struct shape *sh)
+// Prints solid part p, its shape sh where it stands.
+static void print_shape(const struct part *p, const struct shape *sh)
 {
 	static const char *const names[SF_KINDS] = { "plane", "cylinder",
 						     "cone",  "sphere",
 						     "torus", "pipe" };
-	struct solid_mass m = shape_mass(sh);
+	struct solid_mass m = solid_mass_of(p);
 	struct box x = box_empty();
 	size_t count[SF_KINDS] = { 0, 0, 0, 0, 0, 0 };
 	struct vec c = mul(m.moment, 1 / m.volume);
@@ -423,7 +503,7 @@ int main(int argc, char **argv)
 			struct shape sh;
 
 			part_shape(&ps[i], &sh);
-			print_shape(&sh);
+			print_shape(&ps[i], &sh);
 			shape_free(&sh);
 		} else {
 			printf("part %s\n", ps[i].name);
@@ -442,6 +522,10 @@ int main(int argc, char **argv)
 		print_sum("total", total);
 	}
 	free(m);
+	for (size_t i = 0; i < nmemos; i++) {
+		free(memos[i].text);
+	}
+	free(memos);
 	free_parts(ps, n);
 	close_stdout();
 	return 0;

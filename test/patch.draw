@@ -7,4 +7,4 @@ template plain_b.ps
 field Title PATCH
 material ALUMINUM SHEET, %%t THICK.
 finish NONE.
-view top
+view top scale 2

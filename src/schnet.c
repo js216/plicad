@@ -172,5 +172,10 @@ int main(int argc, char **argv)
 		}
 		printf("\n");
 	}
+	free(order);
+	for (size_t k = 0; k < nlib; k++) {
+		free(lib[k]);
+	}
+	free(lib);
 	return faults > 0;
 }

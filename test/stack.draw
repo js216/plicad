@@ -6,9 +6,8 @@
 # the paper.
 units mm
 template plain_c.ps
-scale 2
 hatching 1.5
 field Title STACK
 material 6061-T6 ALUMINUM ALLOY.
 finish NONE.
-view front cut -10 title SECTION A-A
+view front scale 2 cut -10 title SECTION A-A

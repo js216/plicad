@@ -56,12 +56,15 @@ struct vg_viewer {
 	int (*command)(const char *s);
 	int (*click)(int x, int y);
 	int (*move)(int x, int y);
+	void (*reload)(void); // F5: read the files again, the view kept.
 };
 
 // The view: the point at the center, pixels a unit, the window, the
 // part selected (-1 none), the font's cell, and the pixels at the top a
 // viewer keeps for itself (the help stands under them).
 extern double vg_x, vg_y, vg_zoom;
+// The share of the window that fit gives the box, 0.95 unless set.
+extern double vg_fill;
 extern int vg_w, vg_h, vg_sel, vg_font_w, vg_font_h, vg_top;
 // A line thinner than a pixel is drawn a pixel wide at full strength,
 // not fainter (a board's outline).

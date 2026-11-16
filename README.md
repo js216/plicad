@@ -38,14 +38,13 @@ the [classic rules](https://doi.org/10.1002/j.1538-7305.1978.tb02135.x):
 | interfere | Prints one line for each pair of colliding parts               |
 | assemble  | Replays the assembly sequence, checking each insertion path    |
 | numdiff   | Compares two outputs of measure within tolerances              |
-| lint      | Checks the text of each source file against the house rules    |
 | param     | Prints the values of the names of a source file                |
 | family    | Writes the part source of a screw, insert or package of a table |
 | extrude   | Makes solids of outlines pushed along an axis, with a draft    |
 | bool      | Unites, subtracts and intersects solids                        |
 | fillet    | Rounds the edges of solids, as a ball rolls along them         |
 | mold      | Reports the walls, the drafts and the undercuts along a pull   |
-| smview    | Projects a part into the lines of one drawing view             |
+| smview    | Projects a part into the lines of its drawing views            |
 | smdim     | Adds dimensions and callouts to a view                         |
 | smsheet   | Lays views on sheets as PostScript, with title block           |
 | tomesh    | Writes the triangles of parts as an OBJ mesh                   |
@@ -58,10 +57,9 @@ To build the programs and run tests:
 ```sh
 make            # Build the programs
 make check      # Headers and text rules, format and cppcheck
-make sizes      # Report the size of each program
 make tidy       # Clang-tidy, before a commit
-test/run.sh     # Every test, under sanitizers, each group in its budget
-test/run.sh parts bad   # Some groups of tests, as test/run.sh lists them
+make -C test     # Every test, under sanitizers, each group in its budget
+make -C test GROUPS='parts bad'   # Some groups, as test/run.sh lists them
 ```
 
 All source files share one language, described in `man 7 plicad`: one statement
@@ -94,6 +92,14 @@ Convert it to STEP (folded) and DXF (flat):
 build/smfold cube.sm > cube.st
 build/tostep cube.st > cube.step
 build/smflat -f dxf cube.st > cube.dxf
+```
+
+and draw it on a B sheet, by the views of `test/cube.draw`, each at its own
+scale:
+
+```sh
+build/smsheet -v test/cube.draw | build/smview cube.st | build/smdim |
+    build/smsheet test/cube.draw - > cube.ps
 ```
 
 Use your favorite STEP/DXF viewer to take a look at the output:

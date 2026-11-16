@@ -43,7 +43,7 @@
 #   mut   A damaged input file (.sm, .st, .txt, .params, .draw, a
 #         source header or a measure output) for its programs.
 #   view  A generated part, for smview in every view, with and without
-#         -h.  Every record is well formed, no line or arc is shorter
+#         its hidden lines.  Every record is well formed, no line or arc is shorter
 #         than SHORT, and the only refusal is a circle seen at an
 #         angle.  In one case of ten, the visible lines of one view
 #         agree with the hidden-line projection of OCCT within HLR_TOL.
@@ -54,14 +54,15 @@
 #         (or a pitch in its callout), each size of hole one callout
 #         with its count, and no text lies on another.
 #   sheet A random drawing file for a generated part, on a plain
-#         template of the tests with random fields, for smdraw and
-#         then Ghostscript.  A refusal must be one that the generator
+#         template of the tests with random fields, for the pipe
+#         smsheet -v | smview | smdim | smsheet (DRAW_PIPE) and then
+#         Ghostscript.  A refusal must be one that the generator
 #         explains: a boxed note it left without a flag, a flag it gave
 #         a bad number, a view too large for the paper by the sizes the
 #         message gives, and the like.
 #   mutdraw A damaged drawing file (test/*.draw, and the drawings of a
 #         project if WORK/outside names them, copied into WORK/drawings)
-#         for smdraw on a test fold: the
+#         for the pipe of a drawing on a test fold: the
 #         drawing passes Ghostscript, or the refusal names its line, or
 #         is one of the refusals of the file as a whole.
 #   mesh  A generated part, sheet metal or solid, for tomesh at a random
@@ -179,7 +180,7 @@ WORDS = ["include", "sheet", "plate", "flange", "cut", "hole", "round",
          "SPDX-License-Identifier:", "--", "//", "/*", "#!"]
 AXES = ["+x", "-x", "+y", "-y", "+z", "-z"]
 # The programs that print their findings on stdout.
-CHECKERS = ("numdiff", "hdrcheck", "lint")
+CHECKERS = ("numdiff", "hdrcheck")
 PIPES = {
     "sm": "smfold gen.sm > gen.st, then measure, tostep (gen.step) "
           "and smflat -f dxf on gen.st, then occtworker",
@@ -194,13 +195,17 @@ PIPES = {
              "> gen.round, then measure and tostep (gen.step) on "
              "gen.round, then occtworker",
     "fillet": "as solid",
-    "view": "smfold gen.sm > gen.st, then smview [-h] VIEW gen.st for "
+    "view": "smfold gen.sm > gen.st, then smview gen.st < VIEW.views, "
+            "the record view VIEW -|-h 2.54 -, for "
             "each view, and occtworker on gen.step and one view",
-    "dim": "smfold gen.sm > gen.st, smview VIEW gen.st > gen.view, "
-           "smdim -s SCALE -u in < gen.view, and measure gen.st",
-    "sheet": "smfold gen.sm > gen.st, PLICAD_BIN=BIN smdraw gen.draw gen.st "
-             "> out.ps, gs -sDEVICE=nullpage out.ps",
-    "mutdraw": "PLICAD_BIN=BIN smdraw mut.draw part.st > out.ps, gs on out.ps",
+    "dim": "smfold gen.sm > gen.st, smview gen.st < gen.views, the "
+           "record view VIEW - SCALE -, > gen.view, smdim < gen.view, and "
+           "measure gen.st",
+    "sheet": "smfold gen.sm > gen.st, smsheet -v gen.draw | smview gen.st | "
+             "smdim | smsheet gen.draw - > out.ps, gs -sDEVICE=nullpage "
+             "out.ps",
+    "mutdraw": "smsheet -v mut.draw | smview part.st | smdim | "
+               "smsheet mut.draw - > out.ps, gs on out.ps",
     "mesh": "smfold gen.sm > gen.st (or extrude, bool and fillet of "
             "gen.part > gen.round), measure, then tomesh OPTS > gen.obj",
     "scene": "view -c scene.txt, then view -b scene.txt < cmds",
@@ -248,15 +253,17 @@ def san_sig(err):
     return kind
 
 
-def run(argv, cwd=None, out=None, stdout_msg=False):
-    # Runs one program.  The verdict is OK or FAIL for a clean run, else
-    # CRASH, SANITIZER, HANG or NOMSG.
+def run(argv, cwd=None, out=None, stdout_msg=False, inp=None):
+    # Runs one program, with the bytes inp on its stdin, or none.  The
+    # verdict is OK or FAIL for a clean run, else CRASH, SANITIZER, HANG
+    # or NOMSG.
     env = dict(os.environ, **SAN_ENV)
     prog = os.path.basename(argv[0])
+    feed = {"stdin": subprocess.DEVNULL} if inp is None else {"input": inp}
     try:
-        p = subprocess.run(argv, stdin=subprocess.DEVNULL,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           timeout=TIMEOUT, env=env, cwd=cwd)
+        p = subprocess.run(argv, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, timeout=TIMEOUT,
+                           env=env, cwd=cwd, **feed)
     except subprocess.TimeoutExpired as e:
         err = (e.stderr or b"").decode("latin-1")
         return Run("HANG", "timeout %d s" % TIMEOUT, err, b"",
@@ -1748,8 +1755,12 @@ HLR_TOL = 0.08
 SHORT = 1e-3            # mm: no line or arc of smview is shorter
 VIEW_REFUSAL = re.compile(r"view \w+: the circle about \(.*\) is seen at an "
                           r"angle")
-# The refusals of smdraw that may name no line: those of the file as a
-# whole.
+# The pipe that makes a drawing, for sh -c with the directory of the
+# programs, the drawing file and the fold as $0, $1 and $2.
+DRAW_PIPE = ('"$0/smsheet" -v "$1" | "$0/smview" "$2" | "$0/smdim" | '
+             '"$0/smsheet" "$1" -')
+# The refusals of a drawing that may name no line: those of the file as
+# a whole.
 DRAW_REFUSAL = re.compile(
     r"^\S*:\d+: |: no view$|: no template record|: no units record|"
     r"has a box, but no view has "
@@ -1816,7 +1827,7 @@ def inch_text(mm):
     return s
 
 
-VIEW_SHAPES = {"view": "ss", "thick": "n", "radius": "n", "box": "nnnn",
+VIEW_SHAPES = {"view": "ssn", "thick": "n", "radius": "n", "box": "nnnn",
                "fill": "", "m": "nn", "l": "nn", "a": "nnnnn", "z": "",
                "line": "kvnnnn", "arc": "kvnnnnn", "bend": "nnnnn"}
 
@@ -2129,7 +2140,7 @@ FIELDS = ["Title", "Number", "Rev", "Drawn", "Eng", "Filename"]
 
 def refusal_ok(msg, plan):
     # None if the plan of the drawing explains the refusal msg of
-    # smdraw, else the reason why not.
+    # a drawing, else the reason why not.
     m = FIT_RE.search(msg)
     if m:
         w, h, dw, dh, rw, rh = map(float, m.groups())
@@ -2216,8 +2227,7 @@ class DrawGen:
             bad = rng.choice(["Titel", "Sheet", "Scale", "Revisions"])
             out.append("field %s X" % bad)
             plan["badfields"].add(bad)
-        if rng.random() < 0.3:
-            out.append("scale " + rng.choice(SCALES))
+        scale = rng.choice(SCALES)
         out.append("material 5052-H32 ALUMINUM, %%t THICK.")
         out.append("finish " + self.words(1, 8))
         notes = 2
@@ -2256,8 +2266,8 @@ class DrawGen:
             line = "view " + n
             if rng.random() < 0.3:
                 line += " hidden"
-            if rng.random() < 0.2:
-                line += " scale " + rng.choice(SCALES)
+            line += " scale " + (rng.choice(SCALES) if rng.random() < 0.2
+                                 else scale)
             line += " sheet %d" % rng.randint(1, sheets)
             if rng.random() < 0.3:
                 line += " title " + self.words(1, 3)
@@ -3417,10 +3427,14 @@ class Fuzzer:
         try:
             for v in views:
                 for h in hidden:
-                    argv = [self.prog("smview")] + h + [v, fold]
-                    out = os.path.join(d, "%s%s.view" % (v, "h" if h
-                                                         else ""))
-                    r = run(argv, cwd=d, out=out)
+                    name = "%s%s" % (v, "h" if h == "-h" else "")
+                    rec = ("view %s %s 2.54 -\n" % (v, h)).encode()
+                    views = os.path.join(d, name + ".views")
+                    with open(views, "wb") as f:
+                        f.write(rec)
+                    argv = [self.prog("smview"), fold, "<", views]
+                    out = os.path.join(d, name + ".view")
+                    r = run(argv[:2], cwd=d, out=out, inp=rec)
                     if r.verdict == "FAIL":
                         if VIEW_REFUSAL.search(r.err):
                             continue
@@ -3475,7 +3489,7 @@ class Fuzzer:
         occt = self.use_occt and rng.random() < 0.1
         ov = rng.sample(VIEWS[:-1], 6) if occt else None
         self.hlr_note = "no occt"
-        check = lambda dd, x: self.smview_check(dd, x, VIEWS, [[], ["-h"]],
+        check = lambda dd, x: self.smview_check(dd, x, VIEWS, ["-", "-h"],
                                                 ov)
         try:
             bad = check(self.case, data)
@@ -3496,15 +3510,20 @@ class Fuzzer:
         if bad is not None:
             return bad
         fold, outs, m, model = self.last
-        argv = [self.prog("smview"), view, fold]
+        rec = ("view %s - %s -\n" % (view, scale)).encode()
+        views = os.path.join(d, "gen.views")
+        with open(views, "wb") as f:
+            f.write(rec)
+        argv = [self.prog("smview"), fold, "<", views]
         vfile = os.path.join(d, "gen.view")
-        r = run(argv, cwd=d, out=vfile)
+        r = run(argv[:2], cwd=d, out=vfile, inp=rec)
         if r.verdict == "FAIL" and VIEW_REFUSAL.search(r.err):
             return None
         try:
             must(r, argv, True)
-            argv = [self.prog("smdim"), "-s", scale, "-u", "in"]
-            with open(vfile, "rb") as f:
+            sfile = vfile
+            argv = [self.prog("smdim")]
+            with open(sfile, "rb") as f:
                 p = subprocess.run(argv, stdin=f, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, timeout=TIMEOUT,
                                    env=dict(os.environ, **SAN_ENV))
@@ -3515,23 +3534,23 @@ class Fuzzer:
                     "signal %d" % -p.returncode
                 raise Bad("SANITIZER" if SAN_RE.search(r.err) else "CRASH",
                           "smdim", "SANITIZER smdim %s" % s, s,
-                          argv + ["<", vfile], r.err)
+                          argv + ["<", sfile], r.err)
             if p.returncode != 0:
                 msg = r.err.strip().splitlines()[0] if r.err.strip() else ""
                 if not msg:
                     raise Bad("NOMSG", "smdim", "NOMSG smdim", "no message",
-                              argv + ["<", vfile])
+                              argv + ["<", sfile])
                 if "no room for the callout" in msg:
                     return None
                 raise Bad("MISMATCH", "smdim", "MISMATCH smdim refuses",
-                          msg[:150], argv + ["<", vfile], r.err)
+                          msg[:150], argv + ["<", sfile], r.err)
             with open(vfile, "rb") as f:
                 vtext = f.read().decode("latin-1")
             bad = dim_properties(view, vtext, r.out.decode("latin-1"), m,
                                  float(scale))
             if bad:
                 raise Bad("MISMATCH", "smdim", "MISMATCH smdim " + bad[0],
-                          bad[1], argv + ["<", vfile])
+                          bad[1], argv + ["<", sfile])
         except Bad as b:
             return b
         return None
@@ -3552,15 +3571,20 @@ class Fuzzer:
             return
         self.note("dim", "smdim", "PASS", "%s %s" % (view, scale), seed)
 
-    def smdraw_run(self, d, draw, fold, files):
-        # smdraw on a drawing file, then Ghostscript on the PostScript.
-        # Returns the first line of a refusal, or None for a drawing;
-        # raises Bad.
-        argv = [self.prog("smdraw"), draw, fold]
-        env = dict(os.environ, PLICAD_BIN=self.bin, **SAN_ENV)
+    def draw_argv(self, draw, fold):
+        # The command of the pipe of a drawing.
+        return ["sh", "-c", DRAW_PIPE, self.bin, draw, fold]
+
+    def draw_run(self, d, draw, fold):
+        # The pipe of a drawing on a drawing file, then Ghostscript on
+        # the PostScript.  Returns the first line of a refusal, the
+        # message of the first program that refused, or None for a
+        # drawing; raises Bad.
+        argv = self.draw_argv(draw, fold)
+        env = dict(os.environ, **SAN_ENV)
         ps = os.path.join(d, "out.ps")
-        # smdraw runs the other programs: on a timeout, the whole group
-        # of its processes goes.
+        # On a timeout, the whole group of the processes of the pipe
+        # goes.
         with open(ps, "wb") as f:
             p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=f,
                                  stderr=subprocess.PIPE, env=env, cwd=d,
@@ -3570,16 +3594,16 @@ class Fuzzer:
             except subprocess.TimeoutExpired:
                 os.killpg(p.pid, signal.SIGKILL)
                 p.communicate()
-                raise Bad("HANG", "smdraw", "HANG smdraw", "timeout", argv)
+                raise Bad("HANG", "draw", "HANG draw", "timeout", argv)
         err = err.decode("latin-1")
         if SAN_RE.search(err):
             s = san_sig(err)
-            raise Bad("SANITIZER", "smdraw", "SANITIZER smdraw %s" % s, s,
+            raise Bad("SANITIZER", "draw", "SANITIZER draw %s" % s, s,
                       argv, err)
         if p.returncode != 0:
             msg = err.strip().splitlines()[0] if err.strip() else ""
             if not msg:
-                raise Bad("NOMSG", "smdraw", "NOMSG smdraw", "no message",
+                raise Bad("NOMSG", "draw", "NOMSG draw", "no message",
                           argv)
             return re.sub(r"^\S*/", "", msg)
         g = subprocess.run([GS, "-q", "-dNOPAUSE", "-dBATCH", "-dSAFER",
@@ -3608,15 +3632,15 @@ class Fuzzer:
             f.write(draw)
         put_templates(d)
         try:
-            msg = self.smdraw_run(d, path, fold, {})
+            msg = self.draw_run(d, path, fold)
             self.sheet_msg = "drawn" if msg is None else \
                 "refused: " + re.sub(r"^\S*: ", "", msg)[:80]
             if msg is None:
                 return self.layout_check(d, path, fold, plan)
             why = refusal_ok(msg, plan)
             if why:
-                raise Bad("MISMATCH", "smdraw", "MISMATCH smdraw " + why,
-                          msg[:200], [self.prog("smdraw"), path, fold])
+                raise Bad("MISMATCH", "draw", "MISMATCH draw " + why,
+                          msg[:200], self.draw_argv(path, fold))
         except Bad as b:
             return b
         return None
@@ -3632,7 +3656,7 @@ class Fuzzer:
         bad = sheet_properties(ps, template)
         if bad:
             return Bad("MISMATCH", "smsheet", "MISMATCH layout " + bad[0],
-                       bad[1], [self.prog("smdraw"), path, fold])
+                       bad[1], self.draw_argv(path, fold))
         return None
 
     def gen_sheet(self, seed):
@@ -3649,13 +3673,13 @@ class Fuzzer:
                                               "gen.sm": data},
                          "gen.draw", lambda dd, x: self.retry(check, dd, x))
             return
-        self.note("sheet", "smdraw", "PASS", "%s %s" % (
+        self.note("sheet", "draw", "PASS", "%s %s" % (
             plan["size"], getattr(self, "sheet_msg", "")), seed)
 
     def mutdraw_check(self, d, data, fold):
-        # smdraw on a damaged drawing file: a drawing that Ghostscript
-        # reads, or a refusal that names its line or one of the
-        # refusals of the whole file.
+        # The pipe of a drawing on a damaged drawing file: a drawing that
+        # Ghostscript reads, or a refusal that names its line or one of
+        # the refusals of the whole file.
         path = os.path.join(d, "mut.draw")
         with open(path, "wb") as f:
             f.write(data)
@@ -3663,13 +3687,13 @@ class Fuzzer:
         with open(fpath, "wb") as f:
             f.write(fold)
         try:
-            msg = self.smdraw_run(d, path, fpath, {})
+            msg = self.draw_run(d, path, fpath)
             if msg is not None and not DRAW_REFUSAL.search(msg):
-                raise Bad("MISMATCH", "smdraw",
-                          "MISMATCH smdraw unplaced %s" % re.sub(
+                raise Bad("MISMATCH", "draw",
+                          "MISMATCH draw unplaced %s" % re.sub(
                               r"-?\d[\d.]*|\S+\.\S+", "N", msg)[:60],
                           "a refusal that names no line: " + msg[:150],
-                          [self.prog("smdraw"), path, fpath])
+                          self.draw_argv(path, fpath))
         except Bad as b:
             return b
         return None
@@ -3694,7 +3718,7 @@ class Fuzzer:
             self.finding("mut", seed, bad, files, "mut.draw",
                          lambda dd, x: self.mutdraw_check(dd, x, fold))
             return
-        self.note("mut", "smdraw", "PASS", ".draw", seed)
+        self.note("mut", "draw", "PASS", ".draw", seed)
 
     # Meshes and scenes.
 

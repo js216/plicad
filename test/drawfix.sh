@@ -17,6 +17,19 @@ fail() {
 	exit 1
 }
 
+# sv RECORD part.st: the view of the part that the view record RECORD,
+# VIEW -h|- SCALE DEPTH|-, asks smview for.
+sv() {
+	printf 'view %s\n' "$1" | $S/smview "$2"
+}
+
+# draw part.draw part.st: the drawing of the part, by the pipe of the
+# programs, in 60 s at most.
+draw() {
+	timeout 60 sh -c '"$0/smsheet" -v "$1" | "$0/smview" "$2" |
+		"$0/smdim" | "$0/smsheet" "$1" -' "$S" "$1" "$2"
+}
+
 # No view of a test part, with its hidden lines, has a line or an arc
 # shorter than a micrometer: such a piece printed with no length, and
 # Ghostscript stopped on its dashes (channel, nearhem).  Nor does one
@@ -27,7 +40,7 @@ for f in build/*.st; do
 		*/coincident.st) continue ;; esac
 	grep -q '^map' "$f" || continue
 	for v in top bottom front back left right flat; do
-		$S/smview -h $v "$f" > $B/view 2> /dev/null || continue
+		sv "$v -h 1 -" "$f" > $B/view 2> /dev/null || continue
 		awk '$1 == "line" && ($4 - $6) ^ 2 + ($5 - $7) ^ 2 < 1e-6 ||
 			$1 == "arc" && $6 * ($8 - $7) * 0.01745 < 1e-3 {
 			bad = 1 } END { exit bad }' $B/view ||
@@ -37,7 +50,7 @@ done
 
 # A hatch over the whole view moves no callout: a text may lie on it,
 # and its lines stop round the text.
-$S/smview top build/bracket.st > $B/bracket.view
+sv 'top - 1 -' build/bracket.st > $B/bracket.view
 $S/smdim < $B/bracket.view | grep '^text' > $B/plain
 { cat $B/bracket.view; echo 'hatch 0 0 4 2.2'; } | $S/smdim > $B/hatch.dim
 grep '^text' $B/hatch.dim | cmp -s - $B/plain ||
@@ -46,29 +59,28 @@ grep -q '^clear' $B/hatch.dim || fail "no clear record for a hatch"
 
 # The datum ordinate on the far side starts at the datum edge, which
 # stops at x = 60 mm, not at the far side of the view.
-$S/smview top build/notch.st | $S/smdim > $B/notch.dim
+sv 'top - 1 -' build/notch.st | $S/smdim > $B/notch.dim
 awk '$1 == "thin" && $3 == 0 && $5 == 0 && $2 < 2.4 && $4 > 4 { ok = 1 }
 	END { exit !ok }' $B/notch.dim ||
 	fail "notch: the datum ordinate does not start at the datum edge"
 
 # A leader whose point lies where a hole callout would stand: the
 # callout keeps off the point, and the leader finds its room.
-$S/smview top build/plate.st > $B/plate.view
+sv 'top - 1 -' build/plate.st > $B/plate.view
 at=$($S/smdim < $B/plate.view | awk '$1 == "text" && $7 ~ /%%c/ {
 	print $2 + 0.1, $3; exit }')
 { cat $B/plate.view; echo "leader $at MASK HERE"; } |
 	$S/smdim > /dev/null || fail "plate: no room for a leader at $at"
 
 # A drawing file without a newline at its end, whose last line is its
-# one view, is drawn (fuzzer finding); one with a scale and no view is
-# refused with a message (fuzzer finding).
+# one view, is drawn (fuzzer finding); one with no view is refused
+# with a message (fuzzer finding).
 printf 'units in\ntemplate plain_b.ps\nview front scale 1' > $B/nonl.draw
-PLICAD_BIN=$S build/smdraw $B/nonl.draw build/cube.st > $B/nonl.ps &&
+draw $B/nonl.draw build/cube.st > $B/nonl.ps &&
 	grep -q '^%%Page: 1 1' $B/nonl.ps ||
 	fail "a drawing file without a final newline"
-printf 'scale 1\n' > $B/noview.draw
-if PLICAD_BIN=$S build/smdraw $B/noview.draw build/cube.st \
-	> /dev/null 2> $B/err ||
+printf 'units in\n' > $B/noview.draw
+if draw $B/noview.draw build/cube.st > /dev/null 2> $B/err ||
 	! grep -q 'noview.draw: no view' $B/err; then
 	fail "a drawing file with no view: $(cat $B/err)"
 fi
@@ -77,24 +89,24 @@ fi
 # the word; once the search for its end ran past the start of the text
 # for ever (fuzzer finding).
 { cat test/cube.draw; printf 'note A %0200d\n' 9; } > $B/word.draw
-PLICAD_BIN=$S timeout 60 build/smdraw $B/word.draw build/cube.st > $B/word.ps &&
+draw $B/word.draw build/cube.st > $B/word.ps &&
 	grep -q '^%%Page: 1 1' $B/word.ps || fail "a note with a long word"
 # So too a long word after words that fill part of a line (fuzzer
-# finding 0022, a hang of smdraw).
+# finding 0022, a hang of the drawing).
 { cat test/cube.draw
 	printf 'note REMOVE ALL BURRS AND SHARP EDGES. %0400d\n' 9; } \
 	> $B/word2.draw
-PLICAD_BIN=$S timeout 60 build/smdraw $B/word2.draw build/cube.st \
-	> $B/word2.ps && grep -q '^%%Page: 1 1' $B/word2.ps ||
+draw $B/word2.draw build/cube.st > $B/word2.ps &&
+	grep -q '^%%Page: 1 1' $B/word2.ps ||
 	fail "a long word after words in a note"
 
 # A field of the drawing file reaches the template as its text, with
 # parentheses and backslashes as they are.
 { cat lib/templates/plain_c.ps
 	echo '(<) print Title print (>) print'; } > $B/echo.ps
-{ head -5 test/cube.draw; echo 'template echo.ps'; echo 'view top'
+{ head -5 test/cube.draw; echo 'template echo.ps'; echo 'view top scale 1'
 	printf '%s\n' 'field Title A (B) \C \\ )( ('; } > $B/echo.draw
-$S/smview top build/plate.st | $S/smdim > $B/echo.dim
+sv 'top - 1 -' build/plate.st | $S/smdim > $B/echo.dim
 $S/smsheet $B/echo.draw $B/echo.dim > $B/echo.ps.out
 gs -q -dNOPAUSE -dBATCH -dSAFER -sDEVICE=nullpage $B/echo.ps.out \
 	2> /dev/null | grep -F -q '<A (B) \C \\ )( (>' ||
@@ -115,11 +127,11 @@ boxed PART MARKING: VENDOR ID, MONTH/YEAR OF MANUFACTURE, PART NUMBER, \
     AND CURRENT REVISION LEVEL USING METAL AND/OR RUBBER STAMP, \
     APPROXIMATELY WHERE SHOWN.
 note REMOVE ALL BURRS AND SHARP EDGES.
-view top
+view top scale 1
  flag 5in 1.5in 3
-view front
+view front scale 1
 D
-PLICAD_BIN=$S build/smdraw $B/wide.draw build/wide.st > $B/wide.ps &&
+draw $B/wide.draw build/wide.st > $B/wide.ps &&
 	grep -q '^/Scale (1.00) def' $B/wide.ps ||
 	fail "wide: the views do not fit a B sheet at scale 1"
 
@@ -127,7 +139,7 @@ PLICAD_BIN=$S build/smdraw $B/wide.draw build/wide.st > $B/wide.ps &&
 sed 's/^%%PliCadNotes: 0.9 0.9 6.4/%%PliCadNotes: 0.9 0.9 3.4/' \
 	lib/templates/plain_b.ps > $B/narrow.ps
 sed 's/plain_b/narrow/' $B/wide.draw > $B/narrow.draw
-PLICAD_BIN=$S build/smdraw $B/narrow.draw build/wide.st > $B/narrow.ps.out ||
+draw $B/narrow.draw build/wide.st > $B/narrow.ps.out ||
 	fail "narrow notes: no drawing"
 awk '/^\[\(/ && $NF == "TX" && $(NF - 5) + 0 == 1.2 {
 	s = $0; sub(/^\[\(/, "", s); sub(/\)\].*/, "", s)
@@ -137,7 +149,7 @@ awk '/^\[\(/ && $NF == "TX" && $(NF - 5) + 0 == 1.2 {
 # A leader to a point off the part: the box of the view covers the
 # leader and its dot, so that smsheet keeps them on the paper and off
 # the other views (fuzzer finding).
-{ $S/smview top build/plate.st; echo 'leader 2 3.5 OFF'; } |
+{ sv 'top - 1 -' build/plate.st; echo 'leader 2 3.5 OFF'; } |
 	$S/smdim > $B/off.dim
 awk '$1 == "box" && $5 >= 3.52 { ok = 1 } END { exit !ok }' $B/off.dim ||
 	fail "a leader off the part lies outside the box of its view"
@@ -149,7 +161,7 @@ printf '%s\n' '%%PliCadPaper: 30 10.45' '%%PliCadRoom: 0.5 0.5 29.5 9.95' \
 	> $B/tight.ps
 printf '%s\n' 'units in' 'template tight.ps' 'view front scale 1' \
 	'view bottom scale 2 title BOTTOM' > $B/tight.draw
-PLICAD_BIN=$S build/smdraw $B/tight.draw build/bracket.st > $B/tight.out &&
+draw $B/tight.draw build/bracket.st > $B/tight.out &&
 	awk '/translate$/ { ty = $3 } /SCALE/ && / TX$/ {
 		if (ty + $(NF - 4) - 0.06 < 0.5) bad = 1; n++ }
 		END { exit bad || !n }' $B/tight.out ||
@@ -160,8 +172,8 @@ PLICAD_BIN=$S build/smdraw $B/tight.draw build/bracket.st > $B/tight.out &&
 # (fuzzer finding).
 printf '%s\n' '%%PliCadPaper: 30 3' '%%PliCadRoom: 0.5 0.5 29.5 1' \
 	> $B/low.ps
-printf '%s\n' 'units in' 'template low.ps' 'view top' > $B/low.draw
-$S/smview top build/plate.st | $S/smdim > $B/low.dim
+printf '%s\n' 'units in' 'template low.ps' 'view top scale 1' > $B/low.draw
+sv 'top - 1 -' build/plate.st | $S/smdim > $B/low.dim
 h=$($S/smsheet $B/low.draw $B/low.dim 2>&1 > /dev/null |
 	sed -n 's/.* takes [0-9.]* x \([0-9.]*\) in .*/\1/p')
 : > $B/low.res
@@ -180,7 +192,7 @@ grep -q '^0.005 0$' $B/low.res && grep -q '^-0.006 1$' $B/low.res &&
 # the texts of the row over the flat view of rowcorner at scale 1/4
 # stand past the column right of it, whose texts stay under that row
 # (fuzzer finding).
-$S/smview flat build/rowcorner.st | $S/smdim -s 0.25 > $B/rowcorner.dim
+sv 'flat - 0.25 -' build/rowcorner.st | $S/smdim > $B/rowcorner.dim
 awk '$1 == "text" && $4 == 90 && $5 == "l" { if (!rx || $2 > rx) rx = $2
 		if (!ry || $3 < ry) ry = $3 }
 	$1 == "text" && $4 == 0 && $5 == "l" && $6 == 0.120 &&
@@ -194,12 +206,12 @@ awk '$1 == "text" && $4 == 90 && $5 == "l" { if (!rx || $2 > rx) rx = $2
 # the name of the view, and smview refused it with no place in the file
 # (fuzzer finding).  Each refusal of a program in the pipe names the
 # line of the view in the drawing file.
-printf 'units in\r\ntemplate plain_b.ps\r\nview top\r\n' > $B/crlf.draw
-PLICAD_BIN=$S build/smdraw $B/crlf.draw build/cube.st > $B/crlf.ps &&
+printf 'units in\r\ntemplate plain_b.ps\r\nview top scale 1\r\n' \
+	> $B/crlf.draw
+draw $B/crlf.draw build/cube.st > $B/crlf.ps &&
 	grep -q '^%%Page: 1 1' $B/crlf.ps || fail "a drawing file with CR LF"
-printf 'units in\ntemplate plain_b.ps\nview front\n' > $B/angle.draw
-if PLICAD_BIN=$S build/smdraw $B/angle.draw build/rowcorner.st \
-	> /dev/null 2> $B/err ||
+printf 'units in\ntemplate plain_b.ps\nview front scale 1\n' > $B/angle.draw
+if draw $B/angle.draw build/rowcorner.st > /dev/null 2> $B/err ||
 	! grep -q '^build/drawfix/angle.draw:3: view front: ' $B/err; then
 	fail "a refusal of smview without its line: $(cat $B/err)"
 fi
@@ -222,21 +234,19 @@ cp lib/templates/plain_d.ps $B/
 { echo 'units in'; echo 'template plain_d.ps'
 	printf 'field Title %0400d\n' 0
 	printf 'note'; printf ' WORD%.0s' $(seq 80); echo
-	echo 'view top'
+	echo 'view top scale 1'
 	printf ' leader 1in 0.5in %0300d\n' 0; } > $B/long.draw
-PLICAD_BIN=$S build/smdraw $B/long.draw build/plate.st > $B/long.ps &&
+draw $B/long.draw build/plate.st > $B/long.ps &&
 	grep -q '^%%Page: 1 1' $B/long.ps || fail "long texts"
-{ echo 'units in'; echo 'template plain_d.ps'; echo 'view top'
+{ echo 'units in'; echo 'template plain_d.ps'; echo 'view top scale 1'
 	printf ' leader 1in 0.5in %01000d\n' 0; } > $B/long2.draw
-if PLICAD_BIN=$S build/smdraw $B/long2.draw build/plate.st \
-	> /dev/null 2> $B/err ||
+if draw $B/long2.draw build/plate.st > /dev/null 2> $B/err ||
 	! grep -q '^build/drawfix/long2.draw:3: sheet 1: view top at' $B/err
 then
 	fail "a leader wider than the paper: $(cat $B/err)"
 fi
 printf 'units in\ntemplate plain_d.ps\nview %0400d\n' 9 > $B/long3.draw
-if PLICAD_BIN=$S build/smdraw $B/long3.draw build/plate.st \
-	> /dev/null 2> $B/err ||
+if draw $B/long3.draw build/plate.st > /dev/null 2> $B/err ||
 	! grep -q '^build/drawfix/long3.draw:3: the views are' $B/err; then
 	fail "a long view name: $(cat $B/err)"
 fi
@@ -244,9 +254,9 @@ fi
 # A view whose title is wider than the view takes the width of its
 # title: the right view keeps off the title of the front view, which
 # once ran under it (fuzzer finding 0030).
-printf 'units in\ntemplate plain_b.ps\nview front title %s\nview right\n' \
-	"$(printf 'WIDE%.0s ' $(seq 16))" > $B/wt.draw
-PLICAD_BIN=$S build/smdraw $B/wt.draw build/cube.st > $B/wt.ps &&
+printf 'units in\ntemplate plain_b.ps\nview front scale 1 title %s\n%s\n' \
+	"$(printf 'WIDE%.0s ' $(seq 16))" 'view right scale 1' > $B/wt.draw
+draw $B/wt.draw build/cube.st > $B/wt.ps &&
 	python3 -I -c 'import sys; sys.path.insert(0, "test"); import fuzz
 sys.exit(fuzz.sheet_properties(open(sys.argv[1], encoding="latin-1").read(),
     open("lib/templates/plain_b.ps").read()) is not None)' \

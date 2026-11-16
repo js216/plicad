@@ -14,8 +14,11 @@
 // the smallest such element, prints "select NAME", and draws it
 // brightened as KiCad does; a click on none clears it here alone.  The
 // keys t and b show or hide the top and bottom copper, 1 to 9 the inner
-// layers, y the courtyards, s the silkscreen, e the edge, d the holes;
-// a shows all and A hides all; z draws the zones filled or as outlines;
+// layers, y the courtyards, s the silkscreen, m the solder mask, p the
+// paste, e the edge, d the holes;
+// a shows all and A hides all; a layer key with Shift (T, B, S, M, P,
+// Y, E, D, and ! to ( for 1 to 9) moves that layer on top of the others,
+// shown, the others keeping their order; z draws the zones filled or as outlines;
 // l shows or hides the bar of the layers at the top left, whose keys do
 // as clicked and are named as the pointer passes; c, Space, ? and q are
 // vecgl's.  Commands come on stdin, a line each: those of vecgl, and
@@ -44,9 +47,14 @@ static const char *const help[] = {
 	"click           select a part, print its name; on none, clear",
 	"click a track   select its connected track, its net named",
 	"space           fit all",
+	"F5              read the files again",
+	"Esc             deselect, hide this help",
 	"t b             top, bottom copper on and off",
 	"1 ... 9         inner layer N on and off",
+	"T B S M P Y E D that layer on top (shown), the rest in order",
+	"! ... (         the same for inner layer 1 to 9",
 	"y s e d         courtyards, silkscreen, edge, holes on and off",
+	"m p             solder mask, paste on and off",
 	"z               zones filled or outlined",
 	"a A             all layers on, all off",
 	"c               center the selected part, again: zoom in",
@@ -89,6 +97,7 @@ struct names {
 struct layer {
 	struct vg_file f;
 	int shown, key;
+	size_t rank; // Its place in the order of drawing, the highest on top.
 	double rgba[4];
 	size_t c0, c1;
 	struct names *names;
@@ -119,10 +128,10 @@ static void style(const char *path, struct layer *l)
 		{ "B.Courtyard", 'y', 38, 233, 255, 1 },
 		{ "F.Silkscreen", 's', 242, 237, 161, 1 },
 		{ "B.Silkscreen", 's', 232, 178, 167, 1 },
-		{ "F.Mask", 0, 216, 100, 255, 0.4 },
-		{ "B.Mask", 0, 2, 255, 238, 0.4 },
-		{ "F.Paste", 0, 180, 160, 154, 0.9 },
-		{ "B.Paste", 0, 0, 194, 194, 0.9 },
+		{ "F.Mask", 'm', 216, 100, 255, 0.4 },
+		{ "B.Mask", 'm', 2, 255, 238, 0.4 },
+		{ "F.Paste", 'p', 180, 160, 154, 0.9 },
+		{ "B.Paste", 'p', 0, 194, 194, 0.9 },
 		{ "F.Cu", 't', 200, 52, 52, 1 },
 		{ "In1.Cu", '1', 127, 200, 127, 1 },
 		{ "In2.Cu", '2', 206, 125, 44, 1 },
@@ -292,25 +301,55 @@ static void names_of(const struct layer *l, double depth)
 	}
 }
 
+// The rank above all: each Shift of a layer key gives its layers the
+// next, so they go on top and the rest keep their order.
+static size_t ranks;
+
+// The key of the layer on top: the shown one of the highest rank (the
+// edge, drawn over all, aside); 0 for none.
+static int top_key(void)
+{
+	size_t best = 0;
+	int k = 0;
+
+	for (size_t i = 0; i < nls; i++) {
+		if (ls[i].shown && ls[i].key && ls[i].key != 'e' &&
+		    (!k || ls[i].rank > best)) {
+			best = ls[i].rank;
+			k = ls[i].key;
+		}
+	}
+	return k;
+}
+
+// The depth of layer i by its rank, the higher nearer.
+static double depth_of(size_t i, double within)
+{
+	return 1 - ((double)ls[i].rank + within) / (double)(ranks + 2);
+}
+
 static void draw(void)
 {
 	glEnable(GL_STENCIL_TEST);
 	glEnable(GL_DEPTH_TEST);
-	glEnable(GL_ALPHA_TEST); // The stencil takes what covers half.
-	glAlphaFunc(GL_GREATER, 0.5F);
+	// The coverage of a fragment becomes that of its samples, so the
+	// stencil and the depth take the soft edge sample by sample, and a
+	// sample it covers takes the whole color: strokes that overlap make
+	// their union, with no seam.
+	glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+	glEnable(GL_SAMPLE_ALPHA_TO_ONE);
 	glDepthFunc(GL_LEQUAL);
 	glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 	for (size_t i = nls; i-- > 0;) {
 		if (ls[i].shown && ls[i].rgba[3] >= 1 && ls[i].key != 'e') {
-			draw_layer(&ls[i],
-				   1 - (double)(i + 1) / (double)(nls + 2));
+			draw_layer(&ls[i], depth_of(i, 1));
 		}
 	}
-	glDisable(GL_ALPHA_TEST);
+	glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+	glDisable(GL_SAMPLE_ALPHA_TO_ONE);
 	for (size_t i = 0; i < nls; i++) {
 		if (ls[i].shown && ls[i].rgba[3] < 1) {
-			draw_layer(&ls[i],
-				   1 - (double)(i + 1) / (double)(nls + 2));
+			draw_layer(&ls[i], depth_of(i, 1));
 		}
 	}
 	if (vg_sel >= 0) {
@@ -318,8 +357,8 @@ static void draw(void)
 	}
 	if (sel_layer >= 0 && ls[sel_layer].shown) {
 		glDisable(GL_STENCIL_TEST);
-		glDepthRange(1 - ((double)sel_layer + 1.25) / (double)(nls + 2),
-			     1 - ((double)sel_layer + 1.25) / (double)(nls + 2));
+		glDepthRange(depth_of((size_t)sel_layer, 1.25),
+			     depth_of((size_t)sel_layer, 1.25));
 		glDepthMask(GL_FALSE);
 		now = &ls[sel_layer];
 		vg_draw(&sel_file, dark, bright);
@@ -327,8 +366,7 @@ static void draw(void)
 	}
 	for (size_t i = 0; i < nls; i++) {
 		if (ls[i].shown && ls[i].names) {
-			names_of(&ls[i],
-				 1 - ((double)i + 1.5) / (double)(nls + 2));
+			names_of(&ls[i], depth_of(i, 1.5));
 		}
 	}
 	glDepthMask(GL_TRUE);
@@ -350,7 +388,7 @@ static int bar_keys(int keys[16], const struct layer *of[16])
 {
 	int n = 0;
 
-	for (const char *o = "t123456789bsyed"; *o; o++) {
+	for (const char *o = "t123456789bsmpyed"; *o; o++) {
 		for (size_t i = nls; i-- > 0;) {
 			if (ls[i].key == *o) {
 				keys[n] = *o;
@@ -377,18 +415,21 @@ static int bar_at(int x, int y)
 
 // The bar: a shown layer's key on its color, in black or white as the
 // color is light or dark, a hidden one's plain, z on gray while the
-// zones are filled; the name of the key under the pointer under it.
+// zones are filled, the key of the layer on top underlined; the name of
+// the key under the pointer under it.
 static void overlay(void)
 {
 	static const double gray[4] = { 0.8, 0.8, 0.8, 1 };
 	static const char *const names[] = {
 		"t top copper (F.Cu)", "b bottom copper (B.Cu)",
-		"s silkscreen",	       "y courtyards",
+		"s silkscreen",	       "m solder mask",
+		"p solder paste",      "y courtyards",
 		"e board edge",	       "d drill holes",
 		"z zones: filled",     "Z zones: outlines",
 	};
 	const struct layer *of[16];
 	int keys[16], n = bar_keys(keys, of), cw = vg_font_w + 6;
+	int top = top_key();
 	int ch = vg_font_h + 4;
 
 	// The net of the selected track, in the upper right corner.
@@ -414,6 +455,11 @@ static void overlay(void)
 			glColor3d(lum <= 0.5, lum <= 0.5, lum <= 0.5);
 		}
 		vg_text(i * cw + 3, vg_h - ch + 4, k);
+		// The layer drawn on top, underlined.
+		if (keys[i] == top) {
+			glRecti(i * cw + 2, vg_h - ch + 3,
+				i * cw + 4 + vg_font_w, vg_h - ch + 1);
+		}
 		if (keys[i] != hover) {
 			continue;
 		}
@@ -540,22 +586,26 @@ static void group_tracks(struct names *nm)
 			for (size_t j = 0; j < nm->ntracks; j++) {
 				struct track *b = &nm->tracks[j];
 
-				if (a->group == b->group || strcmp(a->net, b->net)) {
+				if (a->group == b->group ||
+				    strcmp(a->net, b->net)) {
 					continue;
 				}
 				for (int e = 0; e < 2; e++) {
-					const double *p = &a->xy[e ? 2 * a->n - 2 : 0];
+					const double *p =
+						&a->xy[e ? 2 * a->n - 2 : 0];
 
 					for (int f = 0; f < 2; f++) {
 						const double *q =
-							&b->xy[f ? 2 * b->n - 2 : 0];
+							&b->xy[f ? 2 * b->n - 2 :
+								   0];
 
-						if (hypot(p[0] - q[0], p[1] - q[1]) <
-							    1e-4 &&
+						if (hypot(p[0] - q[0],
+							  p[1] - q[1]) < 1e-4 &&
 						    !in_pad(nm, p[0], p[1])) {
-							size_t g = a->group < b->group ?
-									   a->group :
-									   b->group;
+							size_t g =
+								a->group < b->group ?
+									a->group :
+									b->group;
 
 							a->group = b->group = g;
 							changed = 1;
@@ -593,7 +643,8 @@ static struct names *make_names(const char *path)
 
 		line[strcspn(line, "\n")] = 0;
 		if (!strncmp(line, "net", 3) && (!line[3] || line[3] == ' ')) {
-			snprintf(net, sizeof net, "%s", line[3] ? line + 4 : "");
+			snprintf(net, sizeof net, "%s",
+				 line[3] ? line + 4 : "");
 			continue;
 		}
 		if (!strncmp(line, "part", 4) && (!line[4] || line[4] == ' ')) {
@@ -607,8 +658,9 @@ static struct names *make_names(const char *path)
 				if (fabs((b[0] + b[2]) / 2 - px) < 1e-3 &&
 				    fabs((b[1] + b[3]) / 2 - py) < 1e-3 &&
 				    strrchr(pin, '.')) {
-					snprintf(pads[i].num, sizeof pads[i].num,
-						 "%s", strrchr(pin, '.') + 1);
+					snprintf(pads[i].num,
+						 sizeof pads[i].num, "%s",
+						 strrchr(pin, '.') + 1);
 				}
 			}
 			continue;
@@ -691,7 +743,8 @@ static struct names *make_names(const char *path)
 			fclose(out[k][b]);
 			f = fmemopen(buf[k][b], len[k][b], "r");
 			if (f) {
-				vg_load_stream(k ? &nm->track[b] : &nm->pad[b], f, -1);
+				vg_load_stream(k ? &nm->track[b] : &nm->pad[b],
+					       f, -1);
 				fclose(f);
 			}
 			free(buf[k][b]);
@@ -720,10 +773,27 @@ static int pick(double x, double y, double tol)
 // the zones the other way.
 static int key(KeySym k)
 {
+	static const char shifted[] = "TBSMPYED!@#$%^&*(";
+	static const char plain[] = "tbsmpyed123456789";
+	const char *at = k < 128 && k ? strchr(shifted, (int)k) : NULL;
 	int any = k == 'z' || k == 'a' || k == 'A';
 
+	// A shifted layer key: that layer on top, shown; again, back.
+	if (at) {
+		int lk = plain[at - shifted];
+
+		ranks++;
+		for (size_t i = 0; i < nls; i++) {
+			if (ls[i].key == lk) {
+				ls[i].shown = 1;
+				ls[i].rank = ranks;
+			}
+		}
+		return 1;
+	}
+
 	for (size_t i = 0; (k == 'a' || k == 'A') && i < nls; i++) {
-		ls[i].shown = !ls[i].key || k == 'a';
+		ls[i].shown = k == 'a';
 	}
 	outline ^= k == 'z';
 	bar_on ^= k == 'l';
@@ -739,12 +809,12 @@ static int key(KeySym k)
 static int command(const char *s)
 {
 	static const char *const t[] = {
-		"layer top",  "t", "layer bottom", "b", "layer silk", "s",
-		"layer edge", "e", "layer drill",  "d", "courtyard",  "y",
-		"bar",	      "l", "layer all",	   "a", "layer none", "A"
+		"layer top",   "t", "layer bottom", "b", "layer silk", "s",
+		"layer mask",  "m", "layer paste",  "p", "layer edge", "e",
+		"layer drill", "d", "courtyard",    "y", "bar",	       "l",
+		"layer all",   "a", "layer none",   "A"
 	};
-	if (!strncmp(s, "layer ", 6) && s[6] >= '1' && s[6] <= '9' &&
-		   !s[7]) {
+	if (!strncmp(s, "layer ", 6) && s[6] >= '1' && s[6] <= '9' && !s[7]) {
 		key((KeySym)s[6]);
 	} else if (!strncmp(s, "zones ", 6)) {
 		outline = s[6] == 'o';
@@ -769,13 +839,18 @@ static int track_at(double x, double y, double tol, size_t *layer, size_t *t)
 			const struct track *r = &nm->tracks[k];
 
 			for (int j = 1; j < r->n; j++) {
-				const double *a = &r->xy[2 * j - 2], *b = &r->xy[2 * j];
+				const double *a = &r->xy[2 * j - 2],
+					     *b = &r->xy[2 * j];
 				double dx = b[0] - a[0], dy = b[1] - a[1];
 				double l = dx * dx + dy * dy, u;
 
-				u = l > 0 ? ((x - a[0]) * dx + (y - a[1]) * dy) / l : 0;
+				u = l > 0 ? ((x - a[0]) * dx +
+					     (y - a[1]) * dy) /
+						    l :
+					    0;
 				u = u < 0 ? 0 : u > 1 ? 1 : u;
-				if (hypot(x - a[0] - u * dx, y - a[1] - u * dy) <=
+				if (hypot(x - a[0] - u * dx,
+					  y - a[1] - u * dy) <=
 					    r->w / 2 + tol &&
 				    !in_pad(nm, x, y)) {
 					*layer = i;
@@ -855,9 +930,54 @@ static int move(int x, int y)
 	return changed;
 }
 
+static char **paths; // The files of the layers.
+
+// Reads the file of layer i: its drawing, and for copper its names.
+static void load_layer(size_t i)
+{
+	vg_hair = ls[i].key == 'e' || ls[i].key == 'y';
+	vg_load(&ls[i].f, paths[i], ls[i].key == 'd' ? 0.2 : -1);
+	vg_hair = 0;
+	if (ls[i].key == 't' || ls[i].key == 'b' ||
+	    (ls[i].key >= '1' && ls[i].key <= '9')) {
+		ls[i].names = make_names(paths[i]);
+	}
+	ls[i].c0 = ls[i].f.nrun;
+	ls[i].c1 = 0;
+	for (size_t k = 0; k < ls[i].f.nrun; k++) {
+		if (!ls[i].f.run[k].dark) {
+			ls[i].c0 = ls[i].c0 < k ? ls[i].c0 : k;
+			ls[i].c1 = k;
+		}
+	}
+}
+
+// F5: every layer read again, shown and ordered as it was.
+static void reload(void)
+{
+	for (size_t i = 0; i < nls; i++) {
+		vg_free(&ls[i].f);
+		if (ls[i].names) {
+			for (int b = 0; b < NAMES; b++) {
+				vg_free(&ls[i].names->pad[b]);
+				vg_free(&ls[i].names->track[b]);
+			}
+			for (size_t t = 0; t < ls[i].names->ntracks; t++) {
+				free(ls[i].names->tracks[t].xy);
+			}
+			free(ls[i].names->tracks);
+			free(ls[i].names);
+			ls[i].names = NULL;
+		}
+		load_layer(i);
+	}
+	sel_layer = -1;
+}
+
 int main(int argc, char **argv)
 {
 	static const struct vg_viewer v = { .name = "pcbview",
+					    .reload = reload,
 					    .bg = { 0, 0, 0 },
 					    .help = help,
 					    .draw = draw,
@@ -873,26 +993,14 @@ int main(int argc, char **argv)
 	vg_top = vg_font_h + 4; // The bar.
 	vg_solid = 1;
 	nls = (size_t)(argc - a);
+	ranks = nls;
 	ls = calloc(nls, sizeof *ls);
+	paths = argv + a;
 	for (size_t i = 0; ls && i < nls; i++) {
-		const char *path = argv[(size_t)a + i];
-
-		style(path, &ls[i]);
-		vg_hair = ls[i].key == 'e' || ls[i].key == 'y';
-		vg_load(&ls[i].f, path, ls[i].key == 'd' ? 0.2 : -1);
-		vg_hair = 0;
-		if (ls[i].key == 't' || ls[i].key == 'b' ||
-		    (ls[i].key >= '1' && ls[i].key <= '9')) {
-			ls[i].names = make_names(path);
-		}
+		style(paths[i], &ls[i]);
+		ls[i].rank = i;
 		ls[i].shown = 1;
-		ls[i].c0 = ls[i].f.nrun;
-		for (size_t k = 0; k < ls[i].f.nrun; k++) {
-			if (!ls[i].f.run[k].dark) {
-				ls[i].c0 = ls[i].c0 < k ? ls[i].c0 : k;
-				ls[i].c1 = k;
-			}
-		}
+		load_layer(i);
 		for (int j = 0; j < 4; j++) {
 			box[j] = j < 2 ? fmin(box[j], ls[i].f.box[j]) :
 					 fmax(box[j], ls[i].f.box[j]);

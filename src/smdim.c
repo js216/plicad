@@ -2,17 +2,19 @@
 // smdim.c -- Add dimensions and callouts to a drawing view
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: smdim [-s SCALE] [-u in|mm[,in|mm]] < part.view > part.dim
+// Usage: smdim < part.view > part.dim
 //
-// As in smview VIEW part.st | smdim -s SCALE > part.dim, reads one
-// view of smview, in mm, and writes it at SCALE in inches on the paper,
-// with the origin at the datum, the lower left corner of the view.  The
-// fill, line, arc and poly records stay as they are but for the units.
+// As in smview part.st < views | smdim > part.dim, reads the views of
+// smview, in mm, and writes each at the scale of its view record, 1 if
+// it gives none, in inches on the paper, with the origin at the datum,
+// the lower left corner of the view.  A view runs from its view record
+// to the next.  The fill, line, arc and poly records stay as they are
+// but for the units.
 // A record fill cut I, the faces of part I that a section cuts, becomes
 // fill hatch ANGLE GAP: a region of material with section lines at the
 // angle of the part, GAP inches apart (hatching): 45 degrees for part 0,
 // 135 for part 1, then 30, 120, 60 and 150, and round again.  The view
-// record gains the scale, and these records come new:
+// record ends in the scale, and these records come new:
 //   line c v X0 Y0 X1 Y1           (the center marks of the holes)
 //   thin X0 Y0 X1 Y1               (a thin line of a dimension)
 //   text X Y ANGLE ALIGN HEIGHT STRING...
@@ -41,8 +43,10 @@
 // countersink sign, %%d the degree sign and %%p the plus and minus
 // sign.
 //
-// The dimensions are in the first unit of -u, inches unless it says mm,
-// and in the second one, if any, in brackets after them: inches to
+// The dimensions are in the first unit of the last record
+//   units in|mm [in|mm|-]
+// before the view, inches if none, and in the second one, if any, in
+// brackets after them: inches to
 // three decimals, without the zero before the point, and mm to two.  On
 // each axis an ordinate from the datum goes to the far end of the view,
 // to every hole seen along its axis, to every straight edge of a
@@ -65,8 +69,10 @@
 // leader, or an ordinate text with ROW_GAP inches to each side of it.
 //
 // A line "#line N NAME" makes the messages about the records after it
-// name line N of NAME, and so on.  These records, after the view on the
-// input, change the result:
+// name line N of NAME, and so on, up to a view record, which the
+// messages about the view as a whole name; after it the lines are named
+// by their lines on stdin again.  These records, after the view record
+// on the input, change the result:
 //   drop FEATURE [x|y|d|r]         (leave out the dimensions of the
 //                                   feature of that name, or those of
 //                                   one kind)
@@ -306,8 +312,7 @@ struct view {
 	size_t nbend, capbend;
 	struct rule *rule;
 	size_t nrule, caprule;
-	struct rule *names; // The names of #line records.
-	size_t nnames, capnames;
+	struct rule origin; // Its view record, for the messages.
 	const struct rule *at; // The rule under way, if any.
 	struct rect *text; // The room each text takes.
 	size_t ntext, captext;
@@ -861,10 +866,17 @@ static void read_fill(struct view *v, struct reader *r)
 	PUSH(v->fill, v->nfill, v->capfill, f);
 }
 
+// Reads the view record: the name of the view, its part and its scale,
+// 1 if none.
 static void read_name(struct view *v, struct reader *r)
 {
 	v->name = word(r);
 	v->part = word(r);
+	v->scale = r->k < r->n ? num(r) : 1;
+	if (!(v->scale > 0)) {
+		die("%s:%u: a scale is above 0", r->what, r->line);
+	}
+	v->k = v->scale / INCH;
 }
 
 static void read_thick(struct view *v, struct reader *r)
@@ -886,8 +898,9 @@ static void read_rule(struct view *v, struct reader *r)
 	r->k = r->n;
 }
 
-// Reads the record in r, by its first word.
-static void read_record(struct view *v, struct reader *r)
+// Reads the record in r, by its first word, into view v, or with no
+// view, dies unless it is a view record.
+static void read_record(struct view *v, struct reader *r, int have)
 {
 	static const struct {
 		const char *name;
@@ -916,6 +929,9 @@ static void read_record(struct view *v, struct reader *r)
 	if (i == sizeof(kinds) / sizeof(*kinds)) {
 		die("%s:%u: unknown record %s", r->what, r->line, k);
 	}
+	if (!have) {
+		die("%s:%u: a record before the first view", r->what, r->line);
+	}
 	kinds[i].read(v, r);
 	if (r->k != r->n) {
 		die("%s:%u: too many fields", r->what, r->line);
@@ -937,26 +953,48 @@ static int split_record(struct reader *r, char *l)
 	return r->n && r->w[0][0] != '#';
 }
 
-// Keeps the name s for the messages of the records after it.
-static const char *name_of(struct view *v, const char *s)
+// Reads the units of the record in r, units U1 [U2|-], into units.
+static void read_units(struct reader *r, int units[2])
 {
-	struct rule kept = { xstrdup(s), NULL, 0 };
+	static const char *const names[] = { "-", "in", "mm" };
 
-	PUSH(v->names, v->nnames, v->capnames, kept);
-	return kept.s;
+	for (int i = 0; i < 2; i++) {
+		const char *w = r->k < r->n ? word(r) : "-";
+		int u = U_NONE;
+
+		while (u <= U_MM && strcmp(w, names[u]) != 0) {
+			u++;
+		}
+		units[i] = u;
+	}
+	if (r->k != r->n || units[0] == U_NONE || units[0] > U_MM ||
+	    units[1] > U_MM || units[1] == units[0]) {
+		die("%s:%u: expected units in|mm [in|mm], two units apart",
+		    r->what, r->line);
+	}
 }
 
-// Reads the view.  A line "#line N NAME" says that the next line is line
-// N of the file NAME, for the messages.
-static void read_input(struct view *v, char *input)
+static void dim_view(struct view *v);
+
+// Reads the views on the input, and writes each with its dimensions.  A
+// line "#line N NAME" says that the next line is line N of the file
+// NAME, for the messages, up to a view record: the lines after that
+// are named by their lines on stdin.
+static void read_input(char *input)
 {
 	struct reader r = { "stdin", NULL, 0, NULL, 0, 0, 0 };
+	struct view v;
+	int units[2] = { U_IN, U_NONE };
+	unsigned in = 0;
+	int have = 0;
 	char *rest = input;
 	char *l = NULL;
 
+	memset(&v, 0, sizeof(v));
 	while ((l = next_line(&rest)) != NULL) {
 		char *copy = NULL;
 
+		in++;
 		if (strncmp(l, "#line ", strlen("#line ")) == 0) {
 			char *end = NULL;
 			unsigned long n =
@@ -966,21 +1004,44 @@ static void read_input(struct view *v, char *input)
 				die("%s:%u: expected #line N NAME", r.what,
 				    r.line + 1);
 			}
-			r.what = name_of(v, end + 1);
+			r.what = end + 1;
 			r.line = (unsigned)(n - 1);
 			continue;
 		}
 		copy = xstrdup(l);
 		r.text = copy;
-		if (split_record(&r, l)) {
-			read_record(v, &r);
+		if (!split_record(&r, l)) {
+			free(copy);
+			continue;
+		}
+		if (strcmp(r.w[0], "units") == 0) {
+			r.k = 1;
+			read_units(&r, units);
+		} else {
+			if (strcmp(r.w[0], "view") == 0) {
+				if (have) {
+					dim_view(&v);
+				}
+				memset(&v, 0, sizeof(v));
+				v.units[0] = units[0];
+				v.units[1] = units[1];
+				v.origin.what = r.what;
+				v.origin.line = r.line;
+				have = 1;
+			}
+			read_record(&v, &r, have);
+			if (strcmp(r.w[0], "view") == 0) {
+				r.what = "stdin";
+				r.line = in;
+			}
 		}
 		free(copy);
 	}
 	free(r.w);
-	if (!v->name[0] || v->box.x1 <= v->box.x0 || v->box.y1 <= v->box.y0) {
-		die("stdin: no view with a box");
+	if (!have) {
+		die("stdin: no view");
 	}
+	dim_view(&v);
 }
 
 static struct pt to_paper(const struct view *v, struct pt p)
@@ -2055,9 +2116,9 @@ static void no_room(const struct view *v, const struct note *nt,
 		    "on %d rings round the view lies on a text or a leader",
 		    v->at->what, v->at->line, nt->line[0], w, RINGS);
 	}
-	die("view %s: no room for the callout %s, %.1f in wide: each place "
-	    "on %d rings round the view lies on a text or a leader",
-	    v->name, nt->line[0], w, RINGS);
+	die("%s:%u: view %s: no room for the callout %s, %.1f in wide: each "
+	    "place on %d rings round the view lies on a text or a leader",
+	    v->origin.what, v->origin.line, v->name, nt->line[0], w, RINGS);
 }
 
 // Puts note nt at its best free spot: inside the view, or on the rings
@@ -2774,10 +2835,6 @@ static void free_view(struct view *v)
 	for (size_t i = 0; i < v->nrule; i++) {
 		free(v->rule[i].s);
 	}
-	for (size_t i = 0; i < v->nnames; i++) {
-		free(v->names[i].s);
-	}
-	free(v->names);
 	free(v->fill);
 	free(v->rule);
 	for (size_t i = 0; i < v->nseg; i++) {
@@ -2827,83 +2884,49 @@ static void free_view(struct view *v)
 	free(v->place[1]);
 }
 
-// Reads the units of option -u: in or mm, and after a comma the other.
-static void read_units(struct view *v, const char *s)
+// Writes view v with its dimensions, and frees it.
+static void dim_view(struct view *v)
 {
-	const char *comma = strchr(s, ',');
-	size_t n = comma ? (size_t)(comma - s) : strlen(s);
-
-	v->units[1] = U_NONE;
-	if (n == 2 && !strncmp(s, "in", 2)) {
-		v->units[0] = U_IN;
-	} else if (n == 2 && !strncmp(s, "mm", 2)) {
-		v->units[0] = U_MM;
-	} else {
-		die("smdim: -u in|mm[,in|mm]");
+	if (v->box.x1 <= v->box.x0 || v->box.y1 <= v->box.y0) {
+		die("%s:%u: view %s: no box", v->origin.what, v->origin.line,
+		    v->name);
 	}
-	if (comma && !strcmp(comma + 1, "in")) {
-		v->units[1] = U_IN;
-	} else if (comma && !strcmp(comma + 1, "mm")) {
-		v->units[1] = U_MM;
+	printf("view %s %s %g\nthick %.4f\n", v->name, v->part, v->scale,
+	       v->thick);
+	if (v->radius > 0) {
+		printf("radius %.4f\n", v->radius);
 	}
-	if (comma) {
-		if (v->units[1] == U_NONE || v->units[1] == v->units[0]) {
-			die("smdim: -u in|mm[,in|mm], two units apart");
-		}
-	}
+	print_fills(v);
+	hatch_coats(v);
+	print_curves(v);
+	ordinates(v, 0);
+	ordinates(v, 1);
+	rules(v, 1);
+	v->frame = v->box;
+	list_obstacles(v);
+	sort_obstacles(v);
+	face_marks(v);
+	bend_notes(v);
+	hole_notes(v);
+	round_notes(v);
+	rules(v, 0);
+	print_clear(v);
+	printf("far %d\ncrowd %.3f\nbox %.4f %.4f %.4f %.4f\n", v->far,
+	       v->crowd, v->box.x0, v->box.y0, v->box.x1, v->box.y1);
+	free_view(v);
 }
 
 int main(int argc, char **argv)
 {
-	char *arg[1] = { NULL };
-	struct reader args = { "-s", NULL, 0, arg, 1, 0, 1 };
-	struct view v;
 	char *input = NULL;
 
-	memset(&v, 0, sizeof(v));
-	v.name = v.part = "";
-	v.scale = 1;
-	v.units[0] = U_IN;
-	for (int i = 1; i + 1 < argc; i += 2) {
-		if (strcmp(argv[i], "-s") == 0) {
-			args.w[0] = argv[i + 1];
-			args.k = 0;
-			v.scale = num(&args);
-		} else if (strcmp(argv[i], "-u") == 0) {
-			read_units(&v, argv[i + 1]);
-		} else {
-			v.scale = 0;
-		}
+	if (argc > 1) {
+		die("smdim: %s: no arguments\nusage: smdim < part.view > "
+		    "part.dim",
+		    argv[1]);
 	}
-	if (argc % 2 == 0 || !(v.scale > 0)) {
-		die("usage: smdim [-s SCALE] [-u in|mm[,in|mm]] < part.view > "
-		    "part.dim");
-	}
-	v.k = v.scale / INCH;
 	input = read_file("-");
-	read_input(&v, input);
-	printf("view %s %s %g\nthick %.4f\n", v.name, v.part, v.scale, v.thick);
-	if (v.radius > 0) {
-		printf("radius %.4f\n", v.radius);
-	}
-	print_fills(&v);
-	hatch_coats(&v);
-	print_curves(&v);
-	ordinates(&v, 0);
-	ordinates(&v, 1);
-	rules(&v, 1);
-	v.frame = v.box;
-	list_obstacles(&v);
-	sort_obstacles(&v);
-	face_marks(&v);
-	bend_notes(&v);
-	hole_notes(&v);
-	round_notes(&v);
-	rules(&v, 0);
-	print_clear(&v);
-	printf("far %d\ncrowd %.3f\nbox %.4f %.4f %.4f %.4f\n", v.far, v.crowd,
-	       v.box.x0, v.box.y0, v.box.x1, v.box.y1);
-	free_view(&v);
+	read_input(input);
 	free(input);
 	close_stdout();
 	return 0;

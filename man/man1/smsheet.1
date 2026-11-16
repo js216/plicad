@@ -7,12 +7,7 @@ smsheet \- lay views on sheets as PostScript
 .SH SYNOPSIS
 .B smsheet
 .I part.draw
-[
-.I views
-]
-.br
-.B smsheet \-r
-.I part.draw
+.IR views | \-
 .br
 .B smsheet \-v
 .I part.draw
@@ -23,16 +18,25 @@ reads a drawing file,
 and views from
 .IR smdim (1)
 in the file
-.I views
-or on the standard input
-(one per view record, in order; then, if further scales are offered,
-all again at each, largest first),
+.IR views ,
+or on the standard input for
+.B \-
+(one per view record, in order, each at the scale of its record),
 and writes a PostScript page for each sheet: the template, the views,
 and on sheet 1 the notes.
+A drawing is made by one pipe:
 .PP
-A sheet is drawn at the largest scale at which its views fit the
-template and, below scale 1, no ordinate text stands more than .75 in
-from its place.
+.RS
+.nf
+smsheet \-v part.draw | smview part.st | smdim |
+	smsheet part.draw \- > part.ps
+.fi
+.RE
+.PP
+The scale of a sheet, in its title block, is that of its first view;
+a view at another scale gets its scale under it.
+The views of a sheet must fit the template and, below scale 1, no
+ordinate text may stand more than .75 in from its place.
 The views of a sheet are arranged in third-angle projection around the
 front view, .4 in apart and .25 in clear of the notes and the kept
 regions; a view with
@@ -44,34 +48,30 @@ The lettering is osifont, to be found by Ghostscript with
 as in the fonts of the library,
 .IR plicad-lib (7).
 .TP
-.B \-r
-Print the width and height of the room for views in the template,
-in inches; no views are read.
-.TP
 .B \-v
-Print what
-.IR smdraw (1)
-needs of the drawing file: a line
+Print the views of the drawing file for
+.IR smview (1):
+a line
 .BI units " unit unit"
 (the second \- if none),
-.BI scale " s"
-or
-.BR "scale \-" ,
 .BI unmarked " material"
 or
 .BR "unmarked \-" ,
-and for each view a line
-.BI view " line name"
+and for each view, after a line
+.BI #line " n file"
+of its record, a line
+.BI view " name"
 .BR \-h | \-
-.IR scale | \-
-(its line in the file, whether it shows hidden lines, and its own
-scale), each of its records for
+.I scale
+.IR depth | \-
+(whether it shows hidden lines, its scale, and the depth of its cut in
+mm), and each of its records for
 .IR smdim (1)
 after it, its lengths in inches, after a line
 .BI #line " n file" .
 .SH SEE ALSO
-draw(5), smdim(1), smdraw(1), gs(1)
+draw(5), smview(1), smdim(1), gs(1)
 .SH DIAGNOSTICS
 FILE:LINE: and the fault, for a bad record of the drawing file.
-If no scale fits, the size of the views at the smallest scale is given
-with the room of the template.
+If the views of a sheet do not fit, their size is given with the room
+of the template.

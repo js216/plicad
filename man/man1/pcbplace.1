@@ -35,8 +35,14 @@ A part without
 .B rot
 is turned the way, of four, that brings its pads nearest the placed
 pads of their nets; then it moves out its way until its courtyard is
-clear of the parts on its side and of every plated hole, inside the
-board.
+clear of the parts on its side, of the keep-out of every hole
+.RI ( pcbfp (5))
+and of every plated hole, inside the board.
+A group laid out alone whose root is fixed keeps clear of the parts
+fixed outside it, as they stand from its root.
+What is not moved, a part fixed or kept from the lock or a block fixed
+by its root, and comes on another part or a keep-out, is a fault: its
+line and both parts.
 With
 .B \-v
 each placement is told on stderr with its line and rule; it and every

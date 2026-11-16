@@ -811,11 +811,18 @@ static int way_word(const char *s)
 // Whether a via of net n at (x, y), of radius r, keeps the via gap from
 // every pad of its net (its ring that far from their edges, so it joins
 // them by a neck track, not standing on them) and the mask web from
-// every opening of the mask, on either side, for the via is tented.
+// every opening of the mask, on either side, for the via is tented,
+// and stands off the keep-out of every hole (pcbfp(5)).
 static int via_room(int n, double x, double y, double r, const char **who)
 {
 	for (size_t q = 0; q < B.npart; q++) {
 		const struct pcb_part *p = &B.part[q];
+		char why[1024];
+
+		if (pcb_keeps(&B, p, x, y, r, why, sizeof why)) {
+			*who = part_label(p);
+			return 0;
+		}
 
 		for (size_t k = 0; p->placed && p->fp && k < p->fp->npad; k++) {
 			struct pcb_spot s;
@@ -958,6 +965,7 @@ static int vias(int n)
 						 q->fp->pad[e->pad].name);
 			}
 			if (holed) {
+				free(key);
 				continue;
 			}
 		}
@@ -1235,6 +1243,7 @@ static size_t block_copper(char **lib, size_t nlib)
 			}
 		}
 		if (r < 0) {
+			pcb_free(&L);
 			continue;
 		}
 		tx = round((B.part[r].x - L.part[r].x) * 1e4) / 1e4;
@@ -1291,6 +1300,7 @@ static size_t block_copper(char **lib, size_t nlib)
 			fprintf(stderr, "%s: the copper of block %s, moved %.4f %.4f\n",
 				B.file, st->w[1], tx, ty);
 		}
+		pcb_free(&L);
 	}
 	return first;
 }
@@ -1302,7 +1312,7 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 {
 	char **words;
 	size_t nfresh = 0, ours;
-	int *fresh, *order;
+	int *fresh, *order, status;
 
 	scope = group;
 	pcb_read(&B, file, lib, nlib, in, scope);
@@ -1426,6 +1436,9 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 		free(B.netpad[k]);
 		free(B.netby[k]);
 		B.netby[k] = net_here(k) ? words[k] : NULL;
+		if (!net_here(k)) {
+			free(words[k]);
+		}
 		B.netpad[k] = pcb_net_pads(&B, k, &B.nnetpad[k]);
 	}
 	if (verbose) {
@@ -1433,7 +1446,19 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 			nfresh);
 	}
 	pcb_write_lock(&B, out);
-	return B.failed;
+	status = B.failed;
+	for (size_t q = 0; q < B.npart; q++) {
+		free(padnet[q]);
+	}
+	free(padnet);
+	padnet = NULL;
+	free(fresh);
+	free(order);
+	free(words);
+	free(kept);
+	kept = NULL;
+	pcb_free(&B);
+	return status;
 }
 
 int main(int argc, char **argv)
@@ -1444,6 +1469,8 @@ int main(int argc, char **argv)
 	const char *group = NULL;
 	const char *usage = "usage: pcbroute [-v] [-g GROUP] [-L LIB]... "
 			    "board.pcb [LOCK] > new.lock";
+	FILE *in;
+	int failed;
 
 	for (; i < argc && argv[i][0] == '-'; i++) {
 		if (!strcmp(argv[i], "-v")) {
@@ -1461,7 +1488,14 @@ int main(int argc, char **argv)
 	if (i != argc - 1 && i != argc - 2) {
 		pcb_die("%s", usage);
 	}
-	return pcb_passes(argv[i], lib, nlib, group,
-			  pcb_open_lock(i + 1 < argc ? argv[i + 1] : NULL),
-			  stdout, pass);
+	in = pcb_open_lock(i + 1 < argc ? argv[i + 1] : NULL);
+	failed = pcb_passes(argv[i], lib, nlib, group, in, stdout, pass);
+	if (in && in != stdin) {
+		fclose(in);
+	}
+	for (size_t k = 0; k < nlib; k++) {
+		free(lib[k]);
+	}
+	free(lib);
+	return failed;
 }

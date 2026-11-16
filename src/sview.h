@@ -29,14 +29,16 @@
 // A view: its name, x to the right and y up on the paper and z toward
 // the eye; whether it shows the hidden lines; whether it is a section,
 // by the plane at the depth cut along z; the chord, in mm, that a poly
-// record keeps within; and the texture of the faces not marked, or NULL
-// for that of the most area.
+// record keeps within; the texture of the faces not marked, or NULL
+// for that of the most area; the scale of the view, for its view
+// record; and what the messages name it by, before the name of the
+// view.
 struct sview {
 	const char *name;
 	struct vec x, y, z;
 	int hidden, section;
-	double cut, chord;
-	const char *unmarked;
+	double cut, chord, scale;
+	const char *unmarked, *where;
 };
 
 // Prints the records of view v of the n parts ps on stdout.

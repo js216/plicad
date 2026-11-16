@@ -2,16 +2,14 @@
 // util.c -- Errors, memory, arrays, words and whole-file reading
 // Copyright (c) 2026 Jakob Kastelic
 
+#define _POSIX_C_SOURCE 200112L // For readlink.
+
 #include "util.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-// The library of the tree of the build, if the build gives none.
-#ifndef PLICAD_LIB
-#define PLICAD_LIB "lib"
-#endif
+#include <unistd.h>
 
 void close_stdout(void)
 {
@@ -183,18 +181,25 @@ char *base_name(const char *path)
 
 char *lib_file(const char *dir, const char *name)
 {
-	const char *root = getenv("PLICAD");
-	const char *lib = root ? "/lib/" : "";
+	char exe[4096];
+	ssize_t len = readlink("/proc/self/exe", exe, sizeof exe - 1);
 	size_t n = 0;
 	char *out = NULL;
+	char *slash = NULL;
 
-	if (!root) {
-		root = PLICAD_LIB;
-		lib = "/";
+	if (len < 0 || (size_t)len == sizeof exe - 1)
+		die("cannot find the program, to find %s in the library", name);
+	exe[len] = '\0';
+	// The library is lib beside the directory of the program.
+	for (int up = 0; up < 2; up++) {
+		slash = strrchr(exe, '/');
+		if (!slash)
+			die("cannot find the library, for %s", name);
+		*slash = '\0';
 	}
-	n = strlen(root) + strlen(lib) + strlen(dir) + strlen(name) + 2;
+	n = strlen(exe) + strlen(dir) + strlen(name) + 7;
 	out = xmalloc(n);
-	(void)snprintf(out, n, "%s%s%s%s%s", root, lib, dir, *dir ? "/" : "",
+	(void)snprintf(out, n, "%s/lib/%s%s%s", exe, dir, *dir ? "/" : "",
 		       name);
 	return out;
 }

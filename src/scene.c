@@ -100,6 +100,8 @@ const char *const view_help[] = {
 	"click           pick a part, print its name",
 	"shift drag      move the unit of the part in the view plane",
 	"space           fit all",
+	"F5              read the scene again",
+	"Esc             pick nothing, hide this help",
 	"c               center on the picked part; again, zoom in",
 	"i f b l r t u   iso front back left right top under",
 	"h               hide the part under the cursor",
@@ -617,6 +619,7 @@ static int load_image(const struct scene *s, size_t i, struct part **out,
 	p->name = xstrdup(it->name);
 	p->item = i;
 	p->shown = 1;
+	p->before = 1;
 	p->rgb[0] = p->rgb[1] = p->rgb[2] = 1;
 	part_box(p);
 	return 0;
@@ -666,6 +669,7 @@ static int load_item(const struct scene *s, size_t i, struct part **out,
 		mesh_part(it, &f.p[k], &p, part_name(it, &f, k));
 		p.item = i;
 		p.shown = 1;
+		p.before = 1;
 		part_box(&p);
 		PUSH(*out, *n, cap, p);
 	}
@@ -1398,8 +1402,8 @@ static int alone(const struct scene *s, const char *u)
 	return 1;
 }
 
-// Shows every part again, as they are, if one part alone shows, or with
-// up, one unit alone; returns whether it did.
+// Shows again the parts that showed before o, if one part alone shows,
+// or with up, one unit alone; returns whether it did.
 static int all_again(struct scene *s, int up)
 {
 	size_t shown = 0;
@@ -1420,7 +1424,7 @@ static int all_again(struct scene *s, int up)
 	all = up ? alone(s, v) : shown == 1;
 	free(v);
 	for (size_t i = 0; all && i < s->np; i++) {
-		s->p[i].shown = 1;
+		s->p[i].shown = s->p[i].before;
 	}
 	return all;
 }
@@ -1449,8 +1453,11 @@ int scene_show_at(struct scene *s, int key, struct px at)
 
 		if (low == 's' && in) {
 			s->p[i].see = see;
-		} else if (low == 'o' || (low == 'h' && in)) {
-			s->p[i].shown = low == 'o' && in;
+		} else if (low == 'o') {
+			s->p[i].before = s->p[i].shown;
+			s->p[i].shown = in;
+		} else if (low == 'h' && in) {
+			s->p[i].shown = 0;
 		}
 	}
 	free(u);

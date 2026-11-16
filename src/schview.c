@@ -25,6 +25,8 @@ static const char *const help[] = {
 	"wheel           zoom",
 	"click           select a part, print its name; on none, clear",
 	"space           fit all",
+	"F5              read the file again",
+	"Esc             deselect, hide this help",
 	"c               center the selected part, again: zoom in",
 	"?               this help, on and off",
 	"q               quit",
@@ -67,14 +69,27 @@ static int pick(double x, double y, double tol)
 	return best;
 }
 
+static const char *path;
+
+static void reload(void)
+{
+	vg_free(&sheet);
+	vg_load(&sheet, path, 0);
+}
+
 int main(int argc, char **argv)
 {
-	static const struct vg_viewer v = {
-		.name = "schview", .help = help, .draw = draw, .pick = pick
-	};
+	static const struct vg_viewer v = { .name = "schview",
+					    .help = help,
+					    .draw = draw,
+					    .pick = pick,
+					    .reload = reload };
 	int i = vg_start(argc, argv, &v);
 
-	vg_load(&sheet, argv[i], 0);
+	vg_solid = 1; // A line thinner than a pixel stays a pixel, whole.
+	vg_fill = 1; // Fitted, the frame of the sheet meets the window.
+	path = argv[i];
+	vg_load(&sheet, path, 0);
 	vg_loop(sheet.box);
 	return 0;
 }

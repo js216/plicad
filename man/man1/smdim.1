@@ -6,28 +6,25 @@
 smdim \- dimension a drawing view
 .SH SYNOPSIS
 .B smdim
-[
-.B \-s
-.I scale
-] [
-.B \-u
-.IR unit [, unit ]
-]
 .SH DESCRIPTION
 .I Smdim
-reads a view from
+reads views from
 .IR smview (1)
-on the standard input and writes it in inches on the paper at
-.I scale
-(default 1), with the datum (the lower left corner of the view) at the
-origin, and with its dimensions and callouts, whose sizes are in the
-units of
-.B \-u
+on the standard input, each from its view record to the next, and
+writes each in inches on the paper at the scale that ends its view
+record (1 if none), with the datum (the lower left corner of the view)
+at the origin, and with its dimensions and callouts, whose sizes are in
+the units of the last record
+.PP
+.RS
+.nf
+units in|mm [in|mm|\-]
+.fi
+.RE
+.PP
+before the view
 .RB ( in
-or
-.BR mm ,
-.B in
-by default), the second after each in brackets.
+if none), the second after each in brackets.
 Fill, line, arc and poly records are kept, without their features; a
 region
 .B fill cut
@@ -38,7 +35,7 @@ its section lines, thin, at the angle of the part, 45 degrees for part
 .I gap
 inches apart (.08 unless a record
 .B hatching
-says); the view record is given the scale; thick and radius records
+says); the view record ends in the scale; thick and radius records
 are passed through in mm.
 A record may have any number of fields.
 The sides of each coat become lines of kind p (phantom), and a coat that
@@ -128,7 +125,10 @@ After a line
 messages about the records that follow give line
 .I n
 of
-.IR name .
+.IR name ,
+and so on, up to a view record, which the messages about the view as a
+whole name; the lines after it are named by their lines on the
+standard input.
 .PP
 The ends of a
 .B lin
@@ -144,6 +144,6 @@ The lengths of the records are in inches, as
 .IR smsheet (1)
 works them out from the drawing file.
 .SH EXAMPLES
-smview top part.st | smdim \-s .5 \-u mm,in >top.dim
+smsheet \-v part.draw | smview part.st | smdim >part.dim
 .SH SEE ALSO
-smview(1), smsheet(1), smdraw(1), draw(5)
+smview(1), smsheet(1), draw(5)

@@ -4,9 +4,8 @@
 
 units mm
 template plain_c.ps
-scale 1
 field Title TEXTURED BLOCK
 material ABS.
 finish SEE TEXTURES.
-view top
-view front
+view top scale 1
+view front scale 1

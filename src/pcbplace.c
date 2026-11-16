@@ -19,15 +19,22 @@
 //                                        off (0), centered on it
 //   place PART WAY from PIN [rot R]     its pad of the pin's net next
 //                                        to the pin, lying out WAY
+//   place GROUP WAY from PIN            a block whole, as one part of two
+//                                        sides: its pads of the pin's net
+//                                        centered on the pin, toward it
 // The fixed parts are placed first, the rest in the order their
 // anchors allow.  A part
 // without rot is turned the way, of four, that brings its pads nearest
 // to the pads of their nets already placed; then it is moved out the
-// way it lies until its courtyard is clear of all placed and inside
-// the board.  With -v each placement is told on stderr, with the line
-// and the rule it came from, and the difficulty of the group laid out:
-// the number of its parts, the parts alike on the same nets counted
-// once, and each block one.
+// way it lies until its courtyard is clear of all placed, of the
+// keep-outs of the holes (pcbfp(5)) and inside the board.  A group
+// laid out alone whose root is fixed keeps clear of the parts fixed
+// outside it, where they stand from its root.  What is not moved, a
+// part fixed or kept, or a block fixed by its root, and comes on
+// another part or a keep-out is a fault.  With -v each placement is
+// told on stderr, with the line and the rule it came from, and the
+// difficulty of the group laid out: the number of its parts, the parts
+// alike on the same nets counted once, and each block one.
 //
 // A layout is made by groups (blocks): a run lays out every group of a
 // block statement alone, the deepest first, then the board, each
@@ -61,6 +68,7 @@ struct block {
 	char *group;
 	struct pcb lock;
 	long root;
+	int whole; // Placed whole by place GROUP WAY from PIN.
 };
 
 static struct block *blocks;
@@ -113,47 +121,89 @@ static int overlap(const double a[4], const double b[4])
 	       b[1] < a[3] - 1e-9;
 }
 
+// The parts the mechanics fix outside a group laid out alone whose root
+// they fix too, where they stand from the group's origin: a group laid
+// out alone keeps clear of them as the board will.
+static struct pcb_part *fixed_out;
+static size_t nfixed_out;
+
+// Whether courtyard c of part k comes on the copper of a plated hole
+// of part o, which is copper on both sides.
+static int on_hole(const double c[4], const struct pcb_part *o)
+{
+	for (size_t p = 0; o->placed && o->fp && p < o->fp->npad; p++) {
+		struct pcb_spot s;
+		double h[4];
+
+		if (!o->fp->pad[p].hole) {
+			continue;
+		}
+		pcb_spot(&B, o, p, &s);
+		h[0] = s.x - s.w / 2 - B.clearance;
+		h[1] = s.y - s.h / 2 - B.clearance;
+		h[2] = s.x + s.w / 2 + B.clearance;
+		h[3] = s.y + s.h / 2 + B.clearance;
+		if (overlap(c, h)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 // Whether part k stands clear: its courtyard off every other placed
-// part's on its side and off every plated hole, and inside the board.
-static int clear(size_t k)
+// part's on its side, off the keep-out of every hole and off every
+// plated hole, and inside the board; the fault, if not, goes to why.
+static int clear_on(size_t k, int board, char *why, size_t n)
 {
 	double c[4];
 
 	pcb_court(&B.part[k], c);
-	if (!scope && (c[0] < B.board[0] || c[1] < B.board[1] ||
+	if (board && !scope && (c[0] < B.board[0] || c[1] < B.board[1] ||
 		       c[2] > B.board[2] || c[3] > B.board[3])) {
+		snprintf(why, n, "off the board");
 		return 0;
 	}
 	for (size_t i = 0; i < B.npart; i++) {
-		double d[4];
+		const struct pcb_part *o = &B.part[i];
 
-		if (i == k || !B.part[i].placed || !B.part[i].fp ||
+		if (i == k || !o->placed || !o->fp ||
 		    (block_of[k] >= 0 && block_of[i] == block_of[k])) {
 			continue;
 		}
-		pcb_court(&B.part[i], d);
-		if (B.part[i].bottom == B.part[k].bottom && overlap(c, d)) {
+		if (pcb_clash(&B, &B.part[k], o, why, n)) {
 			return 0;
 		}
-		// A plated hole is copper on both sides.
-		for (size_t p = 0; p < B.part[i].fp->npad; p++) {
-			struct pcb_spot s;
-			double h[4];
-
-			if (!B.part[i].fp->pad[p].hole) {
-				continue;
-			}
-			pcb_spot(&B, &B.part[i], p, &s);
-			h[0] = s.x - s.w / 2 - B.clearance;
-			h[1] = s.y - s.h / 2 - B.clearance;
-			h[2] = s.x + s.w / 2 + B.clearance;
-			h[3] = s.y + s.h / 2 + B.clearance;
-			if (overlap(c, h)) {
-				return 0;
-			}
+		if (on_hole(c, o)) {
+			snprintf(why, n, "on a plated hole of %s (%s)", o->name,
+				 pcb_ref(o));
+			return 0;
+		}
+	}
+	for (size_t i = 0; i < nfixed_out; i++) {
+		if (pcb_clash(&B, &B.part[k], &fixed_out[i], why, n)) {
+			return 0;
+		}
+		if (on_hole(c, &fixed_out[i])) {
+			snprintf(why, n, "on a plated hole of %s (%s)",
+				 fixed_out[i].name, pcb_ref(&fixed_out[i]));
+			return 0;
 		}
 	}
 	return 1;
+}
+
+static int clear(size_t k)
+{
+	char why[1024];
+
+	return clear_on(k, 1, why, sizeof why);
+}
+
+// Whether part k, which is not moved, comes on no other part or
+// keep-out: the board's edge is pcbcheck's, by its rule.
+static int clear_why(size_t k, char *why, size_t n)
+{
+	return clear_on(k, 0, why, n);
 }
 
 // The length of the ratsnest of part k as it stands: from each of its
@@ -208,15 +258,82 @@ static int push(size_t k, int way)
 	return 1;
 }
 
-// Whether every part of block b stands clear of all outside it.
-static int block_clear(size_t b)
+// Whether every part of block b stands clear of all outside it (the
+// board's edge too, if board is set); the fault, if not, goes to why.
+// Whether a pad of block b comes within the clearance of a via of
+// another block placed, as that block's lock has the via, moved with it;
+// the fault, if so, goes to why.
+static int on_via(size_t b, char *why, size_t n)
 {
+	for (size_t o = 0; o < nblocks; o++) {
+		const struct block *ob = &blocks[o];
+		long r = ob->root;
+		double dx, dy;
+
+		if (o == b || r < 0 || !B.part[r].placed ||
+		    !ob->lock.part[r].placed) {
+			continue;
+		}
+		dx = B.part[r].x - ob->lock.part[r].x;
+		dy = B.part[r].y - ob->lock.part[r].y;
+		for (size_t v = 0; v < ob->lock.nvia; v++) {
+			const struct pcb_via *w = &ob->lock.via[v];
+
+			for (size_t i = 0; i < B.npart; i++) {
+				for (size_t p = 0;
+				     block_of[i] == (long)b && p < B.part[i].fp->npad;
+				     p++) {
+					struct pcb_spot s;
+
+					pcb_spot(&B, &B.part[i], p, &s);
+					if (pcb_net_of(&B, i, p) != w->net &&
+					    pcb_spot_dist(&s, w->x + dx, w->y + dy) <
+						    w->dia / 2 + B.clearance) {
+						snprintf(why, n,
+							 "%s (%s): on a via of block %s",
+							 B.part[i].name,
+							 pcb_ref(&B.part[i]),
+							 ob->group);
+						return 1;
+					}
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+static int block_clear_on(size_t b, int board, char *why, size_t n)
+{
+	if (on_via(b, why, n)) {
+		return 0;
+	}
 	for (size_t i = 0; i < B.npart; i++) {
-		if (block_of[i] == (long)b && !clear(i)) {
+		if (block_of[i] == (long)b && !clear_on(i, board, why, n)) {
+			char *own = pcb_alloc(strlen(B.part[i].name) +
+					      strlen(pcb_ref(&B.part[i])) +
+					      strlen(why) + 8);
+
+			sprintf(own, "%s (%s): %s", B.part[i].name,
+				pcb_ref(&B.part[i]), why);
+			snprintf(why, n, "%s", own);
+			free(own);
 			return 0;
 		}
 	}
 	return 1;
+}
+
+static int block_clear(size_t b)
+{
+	char why[1200];
+
+	return block_clear_on(b, 1, why, sizeof why);
+}
+
+static int block_clear_why(size_t b, char *why, size_t n)
+{
+	return block_clear_on(b, 0, why, n);
 }
 
 // Moves block b out the way, rigidly, until it stands clear; returns 0
@@ -456,6 +573,7 @@ static int place(size_t k, int block_rot, int *way_out)
 			  q->name, pcb_ref(q), ways[way]);
 		return 0;
 	}
+	free(q->by);
 	q->by = pcb_by(&B, k, st);
 	if (verbose) {
 		fprintf(stderr, "%s:%d: %s (%s) at %.3f %.3f rot %d: %s\n",
@@ -463,6 +581,67 @@ static int place(size_t k, int block_rot, int *way_out)
 			how);
 	}
 	return 1;
+}
+
+// Moves block b, placed whole from a pin by statement st the way way,
+// to stand as one part of two sides would: its pads of the pin's net
+// centered on the pin across the way, its courtyards starting at the
+// anchor's along it.
+static void center_block(size_t b, const struct pcb_stmt *st, int way)
+{
+	size_t a, ap;
+	struct pcb_spot pin;
+	double c[4] = { 1e300, 1e300, -1e300, -1e300 }, d[4];
+	double sx = 0, sy = 0, dx, dy;
+	int net, n = 0;
+
+	if (!pcb_pin(&B, st->w[4], &a, &ap) || way < 0) {
+		return;
+	}
+	net = pcb_net_of(&B, a, ap);
+	pcb_spot(&B, &B.part[a], ap, &pin);
+	pcb_court(&B.part[a], d);
+	for (size_t i = 0; i < B.npart; i++) {
+		double e[4];
+
+		if (block_of[i] != (long)b) {
+			continue;
+		}
+		pcb_court(&B.part[i], e);
+		c[0] = fmin(c[0], e[0]);
+		c[1] = fmin(c[1], e[1]);
+		c[2] = fmax(c[2], e[2]);
+		c[3] = fmax(c[3], e[3]);
+		for (size_t p = 0; p < B.part[i].fp->npad; p++) {
+			struct pcb_spot o;
+
+			if (net >= 0 && pcb_net_of(&B, i, p) == net) {
+				pcb_spot(&B, &B.part[i], p, &o);
+				sx += o.x;
+				sy += o.y;
+				n++;
+			}
+		}
+	}
+	if (!n) {
+		return;
+	}
+	if (way == 1 || way == 3) {
+		dx = pin.x - sx / n;
+		dy = way == 1 ? d[3] + GAP - c[1] : d[1] - GAP - c[3];
+	} else {
+		dy = pin.y - sy / n;
+		dx = way == 0 ? d[2] + GAP - c[0] : d[0] - GAP - c[2];
+	}
+	// By whole steps of the lock's 0.1 um, as the block moves.
+	dx = round(dx * 1e4) / 1e4;
+	dy = round(dy * 1e4) / 1e4;
+	for (size_t i = 0; i < B.npart; i++) {
+		if (block_of[i] == (long)b) {
+			B.part[i].x += dx;
+			B.part[i].y += dy;
+		}
+	}
 }
 
 // Places block b: its root by its statement, turned as its lock has it;
@@ -508,10 +687,22 @@ static int place_block(size_t b)
 		free(B.part[i].by);
 		B.part[i].by = pcb_strdup(l->by ? l->by : "by");
 	}
-	// A fixed root is the mechanics': the block stays where it puts it.
+	if (bl->whole) {
+		center_block(b, &B.stmt[stmt_of[r]], way);
+	}
+	// A fixed root is the mechanics': the block stays where it puts it,
+	// and what it comes on is a fault.
 	if (way >= 0 && !block_clear(b) && !push_block(b, way)) {
 		pcb_error(&B, B.stmt[stmt_of[r]].line, "no room for block %s",
 			  bl->group);
+	} else if (way < 0) {
+		char why[1200];
+
+		if (!block_clear_why(b, why, sizeof why)) {
+			pcb_error(&B, B.stmt[stmt_of[r]].line,
+				  "block %s, fixed by its root, is not clear: %s",
+				  bl->group, why);
+		}
 	}
 	if (verbose) {
 		fprintf(stderr, "%s:%d: block %s at %.4f %.4f by its root %s (%s)\n",
@@ -646,11 +837,108 @@ static size_t difficulty(void)
 
 // One pass: the parts of the group (the board, for NULL) placed, from
 // its section of the lock read from in; the whole lock written to out.
+// Whether a block statement names the group.
+static int is_block(const char *group)
+{
+	for (size_t s = 0; s < B.nstmt; s++) {
+		if (!strcmp(B.stmt[s].w[0], "block") && B.stmt[s].n == 2 &&
+		    !strcmp(B.stmt[s].w[1], group)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// Carries out each statement place GROUP WAY from PIN that this pass
+// lays out: of the group laid out alone, or of a block in it.  The
+// group's part that no statement places is its root, placed by the
+// statement: alone, at the origin with its pad of the pin's net toward
+// the pin; as a block, the block is centered on the pin (place_block).
+static void place_groups(void)
+{
+	for (size_t s = 0; s < B.nstmt; s++) {
+		const struct pcb_stmt *st = &B.stmt[s];
+		long b = -1, root = -1;
+		size_t a, ap, n = 0;
+
+		if (strcmp(st->w[0], "place") || st->n < 5 ||
+		    strcmp(st->w[3], "from") || part_named(st->w[1]) >= 0 ||
+		    !is_block(st->w[1])) {
+			continue;
+		}
+		for (size_t i = 0; i < nblocks; i++) {
+			b = strcmp(blocks[i].group, st->w[1]) ? b : (long)i;
+		}
+		if (b < 0 && (!scope || strcmp(scope, st->w[1]))) {
+			continue; // Not laid out in this pass.
+		}
+		for (size_t k = 0; k < B.npart; k++) {
+			if (of_group(B.part[k].name, st->w[1]) &&
+			    stmt_of[k] < 0 && B.part[k].fp) {
+				root = (long)k;
+				n++;
+			}
+		}
+		if (n != 1 || !pcb_pin(&B, st->w[4], &a, &ap)) {
+			pcb_error(&B, st->line,
+				  "place GROUP WAY from PIN: the group needs one "
+				  "part placed by no statement, and the pin");
+			continue;
+		}
+		stmt_of[root] = (long)s;
+		anchor[root] = (long)a;
+		if (b >= 0) {
+			blocks[b].whole = 1;
+		}
+	}
+}
+
+// In a group laid out alone whose root is fixed, the parts fixed
+// outside it, where they stand from the root: the group's origin.
+static void fixed_outside(void)
+{
+	const struct pcb_stmt *root = NULL;
+
+	for (size_t k = 0; scope && k < B.npart; k++) {
+		if (in_scope(k) && stmt_of[k] >= 0 &&
+		    (anchor[k] < 0 || !in_scope((size_t)anchor[k]))) {
+			root = &B.stmt[stmt_of[k]];
+		}
+	}
+	if (!root || strcmp(root->w[0], "fix") || root->n < 5) {
+		return;
+	}
+	for (size_t s = 0; s < B.nstmt; s++) {
+		const struct pcb_stmt *st = &B.stmt[s];
+		long k;
+		struct pcb_part o;
+
+		if (strcmp(st->w[0], "fix") || st->n < 5 ||
+		    (k = part_named(st->w[1])) < 0 || in_scope((size_t)k) ||
+		    !B.part[k].fp) {
+			continue;
+		}
+		o = B.part[k];
+		o.x = atof(st->w[3]) - atof(root->w[3]);
+		o.y = atof(st->w[4]) - atof(root->w[4]);
+		o.rot = 0;
+		for (int i = 5; i + 1 < st->n; i++) {
+			if (!strcmp(st->w[i], "rot")) {
+				o.rot = atoi(st->w[i + 1]);
+			}
+		}
+		o.bottom = !strcmp(st->w[st->n - 1], "bottom");
+		o.placed = 1;
+		fixed_out = pcb_grow(fixed_out, nfixed_out, sizeof *fixed_out);
+		fixed_out[nfixed_out++] = o;
+	}
+}
+
 static int pass(const char *file, char **lib, size_t nlib, const char *group,
 		FILE *in, FILE *out)
 {
 	size_t nfixed = 0;
-	int *kept, *done;
+	int *kept, *done, failed;
 
 	scope = group;
 	blocks = NULL;
@@ -673,6 +961,10 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 			continue;
 		}
 		k = st->n >= 2 ? part_named(st->w[1]) : -1;
+		if (k < 0 && is_block(st->w[1]) && st->n >= 5 &&
+		    !strcmp(st->w[0], "place") && !strcmp(st->w[3], "from")) {
+			continue; // A block placed whole: place_groups.
+		}
 		if (k < 0 || !B.part[k].fp) {
 			pcb_error(&B, st->line, "no part %s",
 				  st->n >= 2 ? st->w[1] : "");
@@ -709,6 +1001,7 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 			}
 		}
 	}
+	place_groups();
 	// The root of each block: its part placed by no part of it.
 	for (size_t k = 0; k < B.npart; k++) {
 		long b = block_of[k];
@@ -724,6 +1017,7 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 				  blocks[b].group);
 		}
 	}
+	fixed_outside();
 	// Which parts keep their place: the lock's, by the same statement
 	// and the same nets on its pads, against parts that kept theirs.  A
 	// block is placed anew each time, from its own lock; the rest are
@@ -790,18 +1084,46 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 		}
 	}
 	for (size_t k = 0; k < B.npart; k++) {
+		char why[1200];
+
 		if (B.part[k].fp && !B.part[k].placed && in_scope(k)) {
 			pcb_error(&B, 0, "%s (%s) is not placed", B.part[k].name,
 				  pcb_ref(&B.part[k]));
 		}
+		// What stays as it was, kept or fixed, is not moved: what it
+		// comes on is a fault.
+		if (B.part[k].placed && in_scope(k) && block_of[k] < 0 &&
+		    stmt_of[k] >= 0 &&
+		    (kept[k] || !strcmp(B.stmt[stmt_of[k]].w[0], "fix")) &&
+		    !clear_why(k, why, sizeof why)) {
+			pcb_error(&B, B.stmt[stmt_of[k]].line,
+				  "%s (%s), %s, is not clear: %s", B.part[k].name,
+				  pcb_ref(&B.part[k]), kept[k] ? "kept" : "fixed",
+				  why);
+		}
 	}
+	free(fixed_out);
+	fixed_out = NULL;
+	nfixed_out = 0;
 	if (verbose) {
 		fprintf(stderr,
 			"%s: %zu parts kept from the lock; %s: difficulty %zu\n",
 			B.file, nfixed, scope ? scope : "the board", difficulty());
 	}
 	pcb_write_lock(&B, out);
-	return B.failed;
+	failed = B.failed;
+	for (size_t b = 0; b < nblocks; b++) {
+		free(blocks[b].group);
+		pcb_free(&blocks[b].lock);
+	}
+	free(blocks);
+	free(stmt_of);
+	free(anchor);
+	free(kept);
+	free(done);
+	free(block_of);
+	pcb_free(&B);
+	return failed;
 }
 
 int main(int argc, char **argv)
@@ -812,6 +1134,8 @@ int main(int argc, char **argv)
 	const char *group = NULL;
 	const char *usage = "usage: pcbplace [-v] [-g GROUP] [-L LIB]... "
 			    "board.pcb [LOCK] > new.lock";
+	FILE *in;
+	int failed;
 
 	for (; i < argc && argv[i][0] == '-'; i++) {
 		if (!strcmp(argv[i], "-v")) {
@@ -829,7 +1153,14 @@ int main(int argc, char **argv)
 	if (i != argc - 1 && i != argc - 2) {
 		pcb_die("%s", usage);
 	}
-	return pcb_passes(argv[i], lib, nlib, group,
-			  pcb_open_lock(i + 1 < argc ? argv[i + 1] : NULL),
-			  stdout, pass);
+	in = pcb_open_lock(i + 1 < argc ? argv[i + 1] : NULL);
+	failed = pcb_passes(argv[i], lib, nlib, group, in, stdout, pass);
+	if (in && in != stdin) {
+		fclose(in);
+	}
+	for (size_t k = 0; k < nlib; k++) {
+		free(lib[k]);
+	}
+	free(lib);
+	return failed;
 }

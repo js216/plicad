@@ -465,7 +465,16 @@ void vg_load_stream(struct vg_file *f, FILE *in, double via)
 					w > 0 && !vg_hair ? w / 2 : -0.75);
 			}
 		} else if (n >= 6) {
+			double keep[4];
+
 			polygon(xy, n / 2);
+			// A rim of a pixel along its edge, for the edge the
+			// smoothness of a stroke; the box stays the polygon's.
+			memcpy(keep, rb, sizeof keep);
+			for (int k = 0; k < n; k += 2) {
+				segment(&xy[k], &xy[(k + 2) % n], -0.5);
+			}
+			memcpy(rb, keep, sizeof keep);
 			// A zone's outline, for drawing the zones as outlines.
 			state.edge = state.zone && state.dark;
 			run();
@@ -548,7 +557,9 @@ static const char *const fs =
 	"  vec2 p = gl_FragCoord.xy, d = b - a;\n"
 	"  float l = dot(d, d);\n"
 	"  float t = l > 0.0 ? clamp(dot(p - a, d) / l, 0.0, 1.0) : 0.0;\n"
-	"  float c = clamp(hw + 0.5 - length(p - a - t * d), 0.0, 1.0);\n"
+	"  float r = length(p - a - t * d);\n"
+	"  float c = clamp(hw + 0.5 - r, 0.0, 1.0);\n"
+	"  if (c <= 0.0) discard;\n"
 	"  gl_FragColor = vec4(gl_Color.rgb, gl_Color.a * c * fade);\n"
 	"}\n";
 static GLuint prog;
@@ -653,6 +664,7 @@ void vg_init(const char *argv0)
 	u_view = glGetUniformLocation(prog, "view");
 	u_zoom = glGetUniformLocation(prog, "zoom");
 	u_solid = glGetUniformLocation(prog, "solid");
+
 	a_seg = glGetAttribLocation(prog, "seg");
 	a_hc = glGetAttribLocation(prog, "hc");
 }

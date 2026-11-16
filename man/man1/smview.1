@@ -3,30 +3,52 @@
 .\" Copyright (c) 2026 Jakob Kastelic
 .TH SMVIEW 1
 .SH NAME
-smview \- project a part into the lines of a drawing view
+smview \- project a part into the lines of its drawing views
 .SH SYNOPSIS
 .B smview
-[
-.B \-h
-] [
-.B \-c
-.I depth
-] [
-.B \-t
-.I chord
-] [
-.B \-u
-.I material
-]
-.I view part.st
+.I part.st
+<
+.I views
 .SH DESCRIPTION
 .I Smview
-writes one view of a part, in mm, x to the right and y up,
+reads on the standard input the views to make of a part, as
+.B smsheet \-v
+writes them for a drawing
+.RI ( smsheet (1)),
 one record per line:
 .PP
 .RS
 .nf
-view VIEW PART
+units U1 U2
+unmarked MATERIAL|\-
+view VIEW \-h|\- SCALE DEPTH|\-
+#line N FILE
+ RECORD
+.fi
+.RE
+.PP
+For each view record it writes the view of the part, with its hidden
+lines for
+.BR \-h ,
+and for a depth a section; its curves keep within .001 in on the
+paper, a chord of 0.0254 /
+.I scale
+mm.
+The units record, each #line record and the records that start with a
+blank, those for
+.IR smdim (1)
+under the view above them, pass through.
+An unmarked record names the material of the faces that no mark names,
+for the views after it.
+A message about a view names the file and the line of its view record,
+as the #line record before it gives them, or else its line on the
+standard input.
+.PP
+Each view is in mm, x to the right and y up, one record per line:
+.PP
+.RS
+.nf
+view VIEW PART SCALE
 thick T
 box X0 Y0 X1 Y1
 fill [cut I], then m X Y, l X Y, a CX CY R A0 A1, z
@@ -95,23 +117,16 @@ A line, an arc or a hole names the feature of the part it comes from,
 as the stream gives it, if it has one.
 .B Radius
 is the inside radius of the first bend.
-.TP
-.B \-h
-Include hidden lines.
 .PP
 The stream holds one folded part, with the bodies of its inserts, or
 solid parts: one, or the parts of an assembly in place
 .RI ( place (1)),
 which smview sees as solids, the folded ones too, as it does one
-folded part with
-.BR \-c .
+folded part in a section.
 Of solids, smview writes each edge, cut where it goes behind
 material: a line as a line, a circle seen face on as an arc, and any
 other curve as a poly record, a line through N points that keeps within
-.I chord
-mm of the curve (.01 without
-.BR \-t ),
-which no ordinate takes; the edges where two faces meet smoothly, as
+the chord of the curve, which no ordinate takes; the edges where two faces meet smoothly, as
 a round meets its faces, are of the kind
 .BR s ,
 and those of a hole
@@ -140,15 +155,11 @@ after the texture record of its finish.
 The textures of solids take marks for all the views alike: each its
 own, or else the first letter from T on that no other has, so that no
 two share one.
-Where every face has a texture and there are two or more, that of
-.B \-u
-.IR material ,
-or else the one of the most area, is the texture of all the faces that
+Where every face has a texture and there are two or more, that of the
+unmarked record, or else the one of the most area, is the texture of all the faces that
 the others leave: its texture record, first in every view, has the
 mark \-, and its faces no coat records.
-With
-.B \-c
-the view is a section: the solids cut by the plane at
+With a depth the view is a section: the solids cut by the plane at
 .I depth
 mm along the axis toward the eye, without what lies nearer; the faces
 cut hide what lies behind them, and those of part I of the stream,
@@ -159,7 +170,7 @@ A solid view gives
 .B thick
 1.
 .SH SEE ALSO
-smdim(1), smdraw(1), stream(5)
+smdim(1), smsheet(1), stream(5)
 .SH DIAGNOSTICS
 A circle seen at an angle (an ellipse) cannot be written; the input is
 refused, with the view and the place of the circle.

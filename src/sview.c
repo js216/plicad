@@ -626,7 +626,7 @@ static size_t textures(const struct sv *s, struct tex **out)
 	if (s->v.unmarked && all != 2) {
 		die("%s: view %s: the texture %s is none of every face that the "
 		    "others leave",
-		    s->ps[0].name, s->v.name, s->v.unmarked);
+		    s->v.where, s->v.name, s->v.unmarked);
 	}
 	if (all && (n > 1 || s->v.unmarked)) {
 		t[most].mark = '-';
@@ -1070,7 +1070,8 @@ void sview_print(const struct part *ps, size_t n, struct sview v)
 		box_add(&b, s.c.fbox[f].hi);
 	}
 	s.reach = 2 * len(sub(b.hi, b.lo)) + 1;
-	printf("view %s %s\nthick %g\n", v.name, ps[0].name, THICK);
+	printf("view %s %s %.9g\nthick %g\n", v.name, ps[0].name, v.scale,
+	       THICK);
 	put_box(&s);
 	if (v.section) {
 		put_section(&s);

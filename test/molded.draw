@@ -4,9 +4,8 @@
 
 units mm
 template plain_c.ps
-scale 1
 field Title MOLDED BLOCK
 material ABS.
 finish SEE TEXTURE.
-view top
-view front
+view top scale 1
+view front scale 1

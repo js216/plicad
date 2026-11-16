@@ -4,9 +4,8 @@
 
 units mm
 template plain_c.ps
-scale 2
 field Title TAPPED PLATE
 material 6061-T6 ALUMINUM ALLOY.
 finish NONE.
-view top
-view front hidden
+view top scale 2
+view front scale 2 hidden

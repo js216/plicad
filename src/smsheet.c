@@ -2,26 +2,24 @@
 // smsheet.c -- Lay the views of a drawing on sheets, as PostScript
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: smsheet part.draw [views] > part.ps
-//        smsheet -r part.draw
-//        smsheet -v part.draw
+// Usage: smsheet part.draw views|- > part.ps
+//        smsheet -v part.draw > views
 //
-// Reads the drawing file and the views of smdim, from a file or the
-// standard input: one for each view record of the drawing file and in
-// the same order, and then, if more than one scale is on offer, all of
-// them again at each further scale, the largest scale first.  Each
-// sheet takes the largest scale at which its views have room in the
-// template and no ordinate stands more than CROWD inches from its
-// place at a scale under 1.  If there is none, smsheet dies and says
-// how large the views are at the smallest scale against the room of
-// the template.  Writes one page for each sheet, in inches: the
-// template, the views, and on sheet 1 the notes, with one for each
-// texture record of the views (texture_note).  The lettering is the
-// font named osifont, which Ghostscript finds with -sFONTPATH=DIR.
-// With -r it prints the width and the height of the room for the views
-// in the template, in inches, and reads no views.  With -v it prints
-// what smdraw needs: the units, the scale, and each view with its
-// records for smdim, their lengths in inches.
+// A drawing is one pipe:
+//   smsheet -v part.draw | smview part.st | smdim | smsheet part.draw -
+// Reads the drawing file and the views of smdim, from a file or, for -,
+// the standard input: one for each view record of the drawing file and
+// in the same order, each at the scale its record gives.  The scale of
+// a sheet is that of its first view.  The views of a sheet must have
+// room in the template, and at a scale under 1 no ordinate may stand
+// more than CROWD inches from its place; else smsheet dies and says
+// how large the views are against the room of the template.  Writes
+// one page for each sheet, in inches: the template, the views, and on
+// sheet 1 the notes, with one for each texture record of the views
+// (texture_note).  The lettering is the font named osifont, which
+// Ghostscript finds with -sFONTPATH=DIR.  With -v it prints the views
+// for smview: the units, the unmarked texture, and each view with its
+// records for smdim, their lengths in inches (print_views).
 //
 // The drawing file is in the language of plicad(7): comments, a
 // backslash that runs a line on into the next, and NAME = EXPR.  It has
@@ -31,7 +29,6 @@
 //                           brackets; needed)
 //   template FILE          (the paper, next to the drawing file or in
 //                           the templates of the library; needed)
-//   scale S                (the one scale of the views, for smdraw)
 //   field NAME TEXT        (a text of the template, which lists NAME)
 //   material TEXT          (note 1, with a box round its number; %%t
 //                           in a note is the thickness of the sheet
@@ -47,8 +44,9 @@
 //                           for smview)
 //   unhatched MATERIAL...  (the materials whose coats get no hatch, for
 //                           smdim)
-//   view NAME [hidden] [scale S] [sheet N] [at X Y] [cut D]
-//        [title TEXT]
+//   view NAME scale S [hidden] [sheet N] [at X Y] [cut D]
+//        [title TEXT]          (a view at scale S; the options in any
+//                               order, the scale needed)
 // The front, back, left, right, top and bottom views of a sheet stand
 // together by third-angle projection, their datums in line; a view
 // with at X Y has its datum there, in mm (or with in, inches) from the
@@ -94,7 +92,7 @@
 // and a drawing file for it:
 //   template title_c.ps
 //   field Title BRACKET (L), 2X
-//   view top
+//   view top scale 1
 
 #include "expr.h"
 #include "font.h"
@@ -233,18 +231,6 @@ struct rec {
 	int hatched;
 };
 
-// A view at one scale: its records, its box, and the farthest that an
-// ordinate stands from its place.
-struct variant {
-	double scale, crowd;
-	struct rect box;
-	struct rec *rec;
-	size_t nrec;
-};
-
-// A view: what the drawing file says of it, the same view at each
-// scale on offer, and the one in use, which the fields from scale on
-// are a copy of.
 // A record for smdim under a view: its line and its text, its lengths
 // worked out in inches.
 struct rule {
@@ -258,15 +244,14 @@ struct view {
 	int hidden; // Whether it shows the hidden lines.
 	int section; // Whether it is a section, by the plane at cut,
 	double cut; // in mm along the axis toward the eye.
-	double own_scale; // The scale it gives, or 0.
+	double own_scale; // The scale it gives.
 	struct rule *rule;
 	size_t nrule, caprule;
 	const char *title;
 	int sheet, fixed;
-	int own; // Whether the drawing file gives its scale.
 	double x, y; // Where its datum stands on the sheet.
-	struct variant *var;
-	size_t nvar, capvar;
+	// The view of smdim: its scale, the farthest that an ordinate
+	// stands from its place, its box and its records.
 	double scale, crowd;
 	struct rect box;
 	struct rec *rec;
@@ -314,7 +299,6 @@ struct drawing {
 	struct names nm; // The names the drawing file defines.
 	char where[WHERE_LEN];
 	int units[2]; // The units, primary and secondary: U_IN, U_MM, U_NONE.
-	double fixed_scale; // That of a scale record, or 0.
 	struct src_line *ls; // The lines of the drawing file.
 	size_t nls;
 };
@@ -643,15 +627,6 @@ static void read_template(struct drawing *d, struct cursor *c)
 	d->size = t;
 }
 
-// The scale record is for smdraw, which makes the views at that scale.
-static void read_scale(struct drawing *d, struct cursor *c)
-{
-	d->fixed_scale = num(c);
-	if (!(d->fixed_scale > 0)) {
-		die("%s:%u: a scale is above 0", c->what, c->line);
-	}
-}
-
 // The unit of the word w: U_IN or U_MM.
 static int unit_of(const struct cursor *c, const char *w)
 {
@@ -720,8 +695,7 @@ static void read_option(struct view *v, struct cursor *c, const char *o)
 {
 	if (strcmp(o, "scale") == 0) {
 		v->own_scale = num(c);
-		v->own = v->own_scale > 0;
-		if (!v->own) {
+		if (!(v->own_scale > 0)) {
 			die("%s:%u: a scale is above 0", c->what, c->line);
 		}
 	} else if (strcmp(o, "sheet") == 0) {
@@ -780,6 +754,10 @@ static void read_view(struct drawing *d, struct cursor *c)
 	if (v.sheet < 1) {
 		die("%s:%u: a sheet is above 0", c->what, c->line);
 	}
+	if (!(v.own_scale > 0)) {
+		die("%s:%u: view %s: no scale; give it one, as scale 1",
+		    c->what, c->line, v.name);
+	}
 	d->sheets = v.sheet > d->sheets ? v.sheet : d->sheets;
 	PUSH(d->view, d->nview, d->capview, v);
 }
@@ -826,12 +804,12 @@ static void read_record(struct drawing *d, struct cursor *c, const char *k)
 		void (*read)(struct drawing *d, struct cursor *c);
 	} kinds[] = {
 		{ "view", read_view },	       { "template", read_template },
-		{ "scale", read_scale },       { "material", read_material },
-		{ "finish", read_finish },     { "boxed", read_boxed },
-		{ "note", read_note },	       { "units", read_units },
-		{ "revision", read_revision }, { "field", read_field },
-		{ "inserts", read_inserts },   { "hatching", read_hatching },
-		{ "unmarked", read_unmarked }, { "unhatched", read_unhatched },
+		{ "material", read_material }, { "finish", read_finish },
+		{ "boxed", read_boxed },       { "note", read_note },
+		{ "units", read_units },       { "revision", read_revision },
+		{ "field", read_field },       { "inserts", read_inserts },
+		{ "hatching", read_hatching }, { "unmarked", read_unmarked },
+		{ "unhatched", read_unhatched },
 	};
 	size_t i = 0;
 
@@ -1230,29 +1208,8 @@ static void read_other(struct drawing *d, struct view *v, struct cursor *c,
 	}
 }
 
-// Keeps what was read into view v as one more of its variants.
-static void keep_variant(struct view *v)
-{
-	struct variant x = { v->scale, v->crowd, v->box, v->rec, v->nrec };
-
-	PUSH(v->var, v->nvar, v->capvar, x);
-	v->rec = NULL;
-	v->nrec = v->caprec = 0;
-	v->crowd = 0;
-}
-
-// Takes variant r of view v into use.
-static void use_variant(struct view *v, size_t r)
-{
-	v->scale = v->var[r].scale;
-	v->crowd = v->var[r].crowd;
-	v->box = v->var[r].box;
-	v->rec = v->var[r].rec;
-	v->nrec = v->var[r].nrec;
-}
-
-// Reads the views of smdim into the views of the drawing: a round of
-// all the views in order for each scale on offer.
+// Reads the views of smdim into the views of the drawing, one for each
+// and in their order.
 static void read_views(struct drawing *d, const char *path, char *input)
 {
 	struct names none = { NULL, 0, 0, 0, NULL, NULL, 0, 0, NULL, NULL, 0 };
@@ -1271,10 +1228,12 @@ static void read_views(struct drawing *d, const char *path, char *input)
 		if (strcmp(k, "view") == 0) {
 			const char *name = word(&c);
 
-			if (v) {
-				keep_variant(v);
+			if (n == d->nview) {
+				die("%s:%u: the view %s is one more than %s "
+				    "names",
+				    path, c.line, name, d->path);
 			}
-			v = &d->view[n++ % d->nview];
+			v = &d->view[n++];
 			if (strcmp(name, v->name) != 0) {
 				die("%s:%u: the view %s is not the next of %s",
 				    path, c.line, name, d->path);
@@ -1288,12 +1247,9 @@ static void read_views(struct drawing *d, const char *path, char *input)
 			read_other(d, v, &c, k);
 		}
 	}
-	if (v) {
-		keep_variant(v);
-	}
-	if (!n || n % d->nview) {
-		die("%s: no view %s, which %s names", path,
-		    d->view[n % d->nview].name, d->path);
+	if (n < d->nview) {
+		die("%s: no view %s, which %s names", path, d->view[n].name,
+		    d->path);
 	}
 }
 
@@ -1306,14 +1262,13 @@ static void check_flags(const struct drawing *d)
 
 	for (size_t i = 0; i < d->nview; i++) {
 		const struct view *v = &d->view[i];
-		const struct variant *x = &v->var[0];
 
-		for (size_t k = 0; k < x->nrec; k++) {
-			const char *s = x->rec[k].s;
+		for (size_t k = 0; k < v->nrec; k++) {
+			const char *s = v->rec[k].s;
 			char *end = NULL;
 			unsigned long n = 0;
 
-			if (x->rec[k].op != O_FLAG) {
+			if (v->rec[k].op != O_FLAG) {
 				continue;
 			}
 			n = strtoul(s, &end, DECIMAL);
@@ -1860,25 +1815,23 @@ static void move_views(struct drawing *d, int sheet, const struct layout *l)
 	}
 }
 
-// Takes round r into use for the views of a sheet; the scale of the
-// sheet is that of its first view without a scale of its own, or of
-// its first view.  Returns whether a view of the sheet is crowded: at
-// a scale under 1, an ordinate stands more than CROWD from its place.
-static int use_round(size_t r, struct drawing *d, int sheet)
+// Gives a sheet the scale of its first view.  Returns whether a view of
+// the sheet is crowded: at a scale under 1, an ordinate stands more
+// than CROWD from its place.
+static int sheet_scale(struct drawing *d, int sheet)
 {
 	int crowded = 0;
 	int found = 0;
 
 	for (size_t i = 0; i < d->nview; i++) {
-		struct view *v = &d->view[i];
+		const struct view *v = &d->view[i];
 
 		if (v->sheet != sheet) {
 			continue;
 		}
-		use_variant(v, r);
-		if (!found || (found < 2 && !v->own)) {
+		if (!found) {
 			d->scale[sheet] = v->scale;
-			found = 1 + !v->own;
+			found = 1;
 		}
 		if (v->scale < 1 && v->crowd > CROWD) {
 			crowded = 1;
@@ -1887,25 +1840,19 @@ static int use_round(size_t r, struct drawing *d, int sheet)
 	return crowded;
 }
 
-// Finds the first round, the largest scale, at which the views of a
-// sheet have room on size sz and are not crowded; leaves it in use,
-// and the views in their places.  Returns 0 if there is none.
-static int best_round(struct drawing *d, const struct paper *sz, int sheet)
+// Puts the views of a sheet in their places, if they have room on size
+// sz and are not crowded.  Returns 0 if not.
+static int place_sheet(struct drawing *d, const struct paper *sz, int sheet)
 {
-	for (size_t r = 0; r < d->view[0].nvar; r++) {
-		int crowded = use_round(r, d, sheet);
-		struct layout l = lay_sheet(d, sz, sheet);
-		int ok = l.ok && !crowded;
+	int crowded = sheet_scale(d, sheet);
+	struct layout l = lay_sheet(d, sz, sheet);
+	int ok = l.ok && !crowded;
 
-		if (ok) {
-			move_views(d, sheet, &l);
-		}
-		free(l.v);
-		if (ok) {
-			return 1;
-		}
+	if (ok) {
+		move_views(d, sheet, &l);
 	}
-	return 0;
+	free(l.v);
+	return ok;
 }
 
 // The width and the height of rectangle r.
@@ -1924,9 +1871,9 @@ static double excess(double length, double room)
 				     0;
 }
 
-// Dies with what keeps the views of a sheet off the paper at the
-// smallest scale on offer: a crowded view, a view larger than the room
-// of the paper, or the views together.
+// Dies with what keeps the views of a sheet off the paper: a crowded
+// view, a view larger than the room of the paper, or the views
+// together.
 static void explain(struct drawing *d, int sheet)
 {
 	const struct paper *sz = d->size;
@@ -1945,7 +1892,7 @@ static void explain(struct drawing *d, int sheet)
 		    sz->notes.y1 - sz->notes.y0);
 	}
 
-	use_round(d->view[0].nvar - 1, d, sheet);
+	sheet_scale(d, sheet);
 	for (size_t i = 0; i < d->nview; i++) {
 		const struct view *v = &d->view[i];
 		struct rect e = dims(extent(d, v));
@@ -1978,13 +1925,12 @@ static void explain(struct drawing *d, int sheet)
 	    in.y0);
 }
 
-// Gives each sheet the largest scale on offer at which its views have
-// room on the paper of the drawing file, and puts them in their places
-// there; dies, with the reason, for a sheet that has none.
+// Puts the views of each sheet in their places on the paper of the
+// drawing file; dies, with the reason, for a sheet without room.
 static void fit_sheets(struct drawing *d)
 {
 	for (int s = 1; s <= d->sheets; s++) {
-		if (!best_round(d, d->size, s)) {
+		if (!place_sheet(d, d->size, s)) {
 			explain(d, s);
 		}
 	}
@@ -2418,35 +2364,25 @@ static void draw_sheet(struct drawing *d, int sheet)
 
 static const char *const unit_names[] = { "-", "in", "mm" };
 
-// Prints what smdraw needs of the drawing file: its units, its one scale
-// or -, its unmarked texture or -, and each view, with its line, its
-// name, -h or - for its hidden lines, its own scale or -, the depth of
-// its cut in mm or -, and the records for smdim under it, each after a
-// line #line N FILE.
+// Prints the views of the drawing file for smview: its units, its
+// unmarked texture or -, and each view after a line #line N FILE of its
+// record, with its name, -h or - for its hidden lines, its scale, the
+// depth of its cut in mm or -, and the records for smdim under it, each
+// after a line #line N FILE.
 static void print_views(const struct drawing *d)
 {
 	printf("units %s %s\n", unit_names[d->units[0]],
 	       unit_names[d->units[1]]);
-	if (d->fixed_scale > 0) {
-		printf("scale %.9g\n", d->fixed_scale);
-	} else {
-		printf("scale -\n");
-	}
 	printf("unmarked %s\n", d->unmarked ? d->unmarked : "-");
 	for (size_t i = 0; i < d->nview; i++) {
 		const struct view *v = &d->view[i];
 
-		printf("view %u %s %s ", v->line, v->name,
-		       v->hidden ? "-h" : "-");
-		if (v->own) {
-			printf("%.9g", v->own_scale);
-		} else {
-			printf("-");
-		}
+		printf("#line %u %s\nview %s %s %.9g ", v->line, d->path,
+		       v->name, v->hidden ? "-h" : "-", v->own_scale);
 		if (v->section) {
-			printf(" %.9g\n", v->cut);
+			printf("%.9g\n", v->cut);
 		} else {
-			printf(" -\n");
+			printf("-\n");
 		}
 		for (size_t k = 0; k < v->nrule; k++) {
 			printf("#line %u %s\n %s\n", v->rule[k].line, d->path,
@@ -2471,13 +2407,10 @@ static void free_drawing(struct drawing *d)
 	free(d->unmarked);
 	free(d->unhatched);
 	for (size_t i = 0; i < d->nview; i++) {
-		for (size_t k = 0; k < d->view[i].nvar; k++) {
-			for (size_t j = 0; j < d->view[i].var[k].nrec; j++) {
-				free(d->view[i].var[k].rec[j].pt);
-			}
-			free(d->view[i].var[k].rec);
+		for (size_t j = 0; j < d->view[i].nrec; j++) {
+			free(d->view[i].rec[j].pt);
 		}
-		free(d->view[i].var);
+		free(d->view[i].rec);
 		for (size_t k = 0; k < d->view[i].nrule; k++) {
 			free(d->view[i].rule[k].text);
 		}
@@ -2508,20 +2441,6 @@ int main(int argc, char **argv)
 
 	memset(&d, 0, sizeof(d));
 	d.sheets = 1;
-	if (argc == 3 && strcmp(argv[1], "-r") == 0) {
-		struct rect in;
-
-		d.path = argv[2];
-		check_ascii(argv[2]);
-		file = read_file(argv[2]);
-		read_drawing(&d, file);
-		in = dims(room(d.size));
-		printf("%.4f %.4f\n", in.x0, in.y0);
-		free_drawing(&d);
-		free(file);
-		close_stdout();
-		return 0;
-	}
 	if (argc == 3 && strcmp(argv[1], "-v") == 0) {
 		d.path = argv[2];
 		check_ascii(argv[2]);
@@ -2533,16 +2452,16 @@ int main(int argc, char **argv)
 		close_stdout();
 		return 0;
 	}
-	if ((argc != 2 && argc != 3) || argv[1][0] == '-') {
-		die("usage: smsheet part.draw [views] > part.ps\n"
-		    "       smsheet -r|-v part.draw");
+	if (argc != 3 || argv[1][0] == '-') {
+		die("usage: smsheet part.draw views|- > part.ps\n"
+		    "       smsheet -v part.draw > views");
 	}
 	d.path = argv[1];
 	check_ascii(argv[1]);
 	file = read_file(argv[1]);
 	read_drawing(&d, file);
-	views = read_file(argc == 3 ? argv[2] : "-");
-	read_views(&d, argc == 3 ? argv[2] : "stdin", views);
+	views = read_file(argv[2]);
+	read_views(&d, strcmp(argv[2], "-") == 0 ? "stdin" : argv[2], views);
 	if (d.other) {
 		struct note nt = { d.other, 0 };
 

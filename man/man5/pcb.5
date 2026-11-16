@@ -26,6 +26,7 @@ footprint MPN FP                     the footprint of a part number
 fix PART at X Y [rot R] [bottom]     where the mechanics put it
 place PART WAY of PART [GAP] [rot R] next to the part, centered
 place PART WAY from PIN [rot R]     its pad of the pin's net by the pin
+place GROUP WAY from PIN             a block, whole, as one part of two sides
 width NET W                          its tracks
 width PIN PIN W                      the copper between two of its pins
 path NET PIN PIN...                  its pins wired in this order
@@ -67,6 +68,17 @@ of its pads; the nets to its ports wait for the layout round it.
 In any layout round it the block is one rigid body: its parts and its
 copper as its section has them, moved, unturned, to where its root's statement
 puts the root, and pushed out the root's way until clear.
+A block placed by
+.B place
+.I GROUP WAY
+.B from
+.I PIN
+stands as one part of two sides: its pads of the pin's net face the
+pin, centered on it across the way, and its other side faces away; its
+root is its one part that no statement places, its other parts placed
+against each other only.
+In a layout round it, a block's pads keep the clearance from the vias of
+the other blocks.
 So a board is made inside out: the leaf blocks, then the groups of
 blocks, each its own section, then the board; and a block of the same
 statements, renamed, has the same layout, copper for copper.

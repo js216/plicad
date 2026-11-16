@@ -5,7 +5,7 @@
 
 # Usage: test/schtest.sh DIR
 # The programs are those in DIR, and schconn (test/schconn.c), built
-# there by eda.mk.  Each test/sch_*.sch must give the netlist of its
+# there by make.  Each test/sch_*.sch must give the netlist of its
 # .expected, draw without a word on stderr, and its drawing must join
 # what its netlist joins (schconn); a drawing with a wire taken out, or
 # with two pins traded, must not; each test/bad_sch_*.sch must fail

@@ -11,7 +11,9 @@
 # else; the lock must say in words what it was made from, and pcbcheck
 # tell from them a statement changed, a pad moved and a pad's net
 # changed; a via tangent to its pad, one inside it, a mask sliver, silk
-# on a pad and a small part's pads heated unevenly must be told, and the
+# on a pad, a small part's pads heated unevenly, two courtyards on one
+# side overlapping and a part over the keep-out of a hole must be told,
+# and the
 # fanout must neck a small part's plane pads, on the plane's own layer
 # too; a track must end at a pad's center, pads in line be joined by
 # one straight track, and a connection take its own width, an edit of
@@ -135,6 +137,31 @@ name="pcbcheck tells silk on a pad"
 check sh -c '! "$1/pcbcheck" "$2/s/pcb_filter.pcb" < "$2/a" > "$2/out" &&
 	grep -q "the silkscreen of lpf.c (C[0-9]*) runs over pad lpf.c.[12] (C[0-9]*)" "$2/out"' \
 	- "$P" "$tmp"
+# Parts against each other, whatever their nets: two courtyards on one
+# side must not overlap, and a hole a screw goes through keeps the parts
+# of both sides off its keep-out (pcbfp(5)): a ferrite of a footprint
+# with such a hole, moved to the bottom, and a capacitor on the top over
+# it, must be told, and so must the capacitor moved onto another.
+mkdir "$tmp/h"
+cp test/sch_filter.expected "$B" "$tmp/h"
+cp -r test/footprints "$tmp/h"
+echo "hole 1 0 0 1 0.5 keep 4" >> "$tmp/h/footprints/l0603"
+awk '$1 == "part" && $2 == "vneg.fb" { $4 = 10; $5 = 5; $7 = "bottom" }
+	$1 == "part" && $2 == "lpf.c2" { $4 = 11; $5 = 5; $7 = "top" }
+	{ print }' "$tmp/a" > "$tmp/over"
+name="pcbcheck tells a part over the keep-out of a hole"
+check sh -c '! "$1/pcbcheck" "$2/h/pcb_filter.pcb" < "$2/over" > "$2/out" &&
+	grep -q "the courtyard of lpf.c2 (C[0-9]*) in the keep-out of hole vneg.fb.1/[0-9] (FB[0-9]*)" "$2/out"' \
+	- "$P" "$tmp"
+awk -v lock="$tmp/a" 'BEGIN { while ((getline l < lock) > 0) {
+		split(l, w, " "); if (w[1] == "part" && w[2] == "lpf.c") {
+			x = w[4]; y = w[5] } } }
+	$1 == "part" && $2 == "lpf.c2" { $4 = x; $5 = y }
+	{ print }' "$tmp/a" > "$tmp/onto"
+name="pcbcheck tells two courtyards on one side overlapping"
+check sh -c '! "$1/pcbcheck" "$2" < "$3/onto" > "$3/out" &&
+	grep -q "the courtyards of lpf.c (C[0-9]*) and lpf.c2 (C[0-9]*) overlap" "$3/out"' \
+	- "$P" "$B" "$tmp"
 # The fanout keeps a small part's pads alike however wide its plane's
 # net: its necks no wider than a track; and its pad on the plane's own
 # layer (the bottom) is relieved, joined by a neck.

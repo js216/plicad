@@ -12,7 +12,7 @@ line; # starts a comment.
 .RS
 .nf
 pad NAME rect|rrect|circle X Y W H [nopaste]
-hole NAME X Y D DRILL
+hole NAME X Y D DRILL [keep K]
 court X0 Y0 X1 Y1
 silk W X Y X Y ...
 .fi
@@ -24,8 +24,15 @@ soldered (a spring's or a block's ground contact), which a via may
 stand in (pcb(5), rule viagap).
 A hole is plated, of diameter
 D on every layer, drilled DRILL.
+A hole a screw goes through says
+.B keep
+K, the diameter of its head or washer: a circle of diameter K round
+the hole keeps the courtyards of the parts of both sides off, and the
+vias, whatever their nets; a hole without keep keeps nothing but its
+copper clear.
 The pads of one name are one pin and join inside the part.
-The courtyard keeps the parts of its side off.
+The courtyard keeps the parts of its side off: no two courtyards on
+one side may overlap.
 A silk line, of width W, goes on the silkscreen of the part's side.
 Footprints are found in the directory footprints next to the board
 source, then in the libraries.

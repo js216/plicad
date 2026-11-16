@@ -6,8 +6,8 @@
 # Usage: test/run.sh [GROUP...]
 # The groups are arith, parts, solids, fillet, place, bad, tools, docs,
 # args, draw, mesh, viewer, occt, eda and sizes;
-# with none it runs all of them.  It builds the programs with make
-# first, and the tests run the sanitized ones in build/san.  It prints
+# with none it runs all of them, on the programs in build, which
+# test/Makefile builds first, all of them sanitized.  It prints
 # ok or FAIL for each group and exits non-zero if any fails.  The occt
 # group needs FreeCAD (FREECAD, see test/freecad.sh).
 # Each run of a program is a case that build/budget (test/budget.c)
@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.." || exit 1
 # PLICAD_BIN names other programs to test, made elsewhere.  The tests
 # run each through a runner of the same name in build/run, S, which
 # holds that run to its budget (runners).
-R=${PLICAD_BIN:-build/san}
+R=${PLICAD_BIN:-build}
 S=build/run
 TOL="-t volume=rel:1e-3 -t area=rel:1e-3 -t bbox=abs:0.01 \
 -t hole=abs:0.01 -t d=abs:0.001 -t axis=abs:0.001 -t flat=abs:0.01"
@@ -38,14 +38,6 @@ SOLIDS=$(for f in test/*.part; do
 done)
 STOL="-t volume=rel:1e-9 -t area=rel:1e-9 -t center=abs:2e-4 \
 -t bbox=abs:2e-4"
-
-build() {
-	targets="all build/budget $R/test_arith $R/smdraw"
-	for p in $PROGS; do
-		targets="$targets $R/$p"
-	done
-	make -s -j2 $targets
-}
 
 # The arithmetic of the expressions and of the bends.
 arith() {
@@ -91,8 +83,10 @@ inserts() {
 		grep -q '^material stainless ' $st &&
 		test "$($S/smflat -f dxf $st | grep -c '^CIRCLE$')" -eq 8 ||
 		{ echo "FAIL insert stream"; return 1; }
-	m="$(cd "$S" && pwd)/measure"
-	(cd build/far && PLICAD=/nonexistent "$m" ins.st) \
+	# A copy of measure with no library beside it.
+	mkdir -p build/far/bin && cp "$R/measure" build/far/bin/ || return 1
+	(cd build/far && name="$group measure ins.st" \
+		../budget ../../test/run.budget bin/measure ins.st) \
 		> build/far/ins.measure ||
 		{ echo "FAIL inserts read without a library"; return 1; }
 	awk 'function r2(d) { return d * d / 4 }
@@ -389,8 +383,7 @@ bad() {
 
 # family writes the source of a pan head screw M3 by 10 of the table
 # screws of the library, a head and a shank of their volume.
-# The programs numdiff and lint accept good input and reject bad, lint
-# takes the Makefile and the dot files without a header, smfold -M lists
+# The program numdiff accepts good input and rejects bad, smfold -M lists
 # the parameters a part uses through others too, param prints the values
 # of names and expressions of a source file and refuses a name it lacks,
 # and a second fuzzer in one WORK directory fails at once.
@@ -435,24 +428,6 @@ tools() {
 		! $S/numdiff $TOL build/nd.a build/nd.c > /dev/null &&
 		! $S/numdiff build/nd.a build/nd.b > /dev/null &&
 		$S/numdiff -t volume=abs:0.3 build/nd.a build/nd.c || return 1
-	printf '%s\n' '// SPDX-License-Identifier: GPL-3.0-only' \
-		'// ok.c -- x' '// Copyright (c) 2026 Jakob Kastelic' '' \
-		'int x;' > build/ok.c
-	sed 's/ok.c/no.c/' build/ok.c > build/bad.c
-	sed 's|int x;|int x; /''* y *''/|; s/ok.c/bad2.c/' build/ok.c \
-		> build/bad2.c
-	printf '%s\n' '#!/bin/sh' '# SPDX-License-Identifier: GPL-3.0-only' \
-		'# ok.sh -- x' '# Copyright (c) 2026 Jakob Kastelic' '' \
-		'# The language is that of plicad(7).' 'true' > build/ok.sh
-	printf '%s\n' '# SPDX-License-Identifier: GPL-3.0-only' \
-		'# no.txt -- x' '# Copyright (c) 2026 Jakob Kastelic' '' \
-		'a # plicad is a word - not a path -- here' > build/no.txt
-	mkdir -p build/bare
-	printf '%s\n' '# Build it.' 'all:' '	true' > build/bare/Makefile
-	printf '%s\n' '# Leave the build out.' 'build/' > build/bare/.ignore
-	sed 's|^#!/bin/sh|#!/bin/sh|; 2,4d' build/ok.sh > build/bare/no.sh
-	$S/lint build/bare/Makefile build/bare/.ignore &&
-		! $S/lint build/bare/no.sh > /dev/null || return 1
 	fz=$(mktemp -d) || return 1
 	flock "$fz/fuzz.lock" sleep 5 &
 	sleep 1
@@ -463,10 +438,6 @@ tools() {
 	fi
 	wait
 	rm -rf "$fz"
-	$S/lint build/ok.c build/ok.sh &&
-		! $S/lint build/bad.c > /dev/null &&
-		! $S/lint build/bad2.c > /dev/null &&
-		test "$($S/lint build/no.txt | wc -l)" -eq 3
 }
 
 # README.md shows the cube of test/cube.sm, statement for statement, and
@@ -499,7 +470,7 @@ docs() {
 	build/smfold test/cube.sm > build/cube.st &&
 		build/tostep build/cube.st | cmp -s - test/cube.step ||
 		return 1
-	test/mancheck.sh $S $PROGS smdraw ||
+	test/mancheck.sh $S $PROGS ||
 		{ echo "FAIL manual pages"; return 1; }
 }
 
@@ -533,6 +504,21 @@ args() {
 # of the bracket with their hidden lines, and the drawings of the cube
 # and the bracket, come out as checked in.  Bad input is refused
 # (drawbad.sh), and the faults once found stay away (drawfix.sh).
+# drawing part.draw part.st makes the drawing of a part by the pipe of
+# the programs.
+drawing() {
+	$S/smsheet -v "$1" | $S/smview "$2" | $S/smdim | $S/smsheet "$1" -
+}
+# sv RECORD part.st writes the view of the part that the view record
+# RECORD, VIEW -h|- SCALE DEPTH|-, asks smview for; at scale 2.54 its
+# curves keep within .01 mm.  unscaled sets the scale of the view
+# record of a view to 1, for smdim.
+sv() {
+	printf 'view %s\n' "$1" | $S/smview "$2"
+}
+unscaled() {
+	sed '1s/ [^ ]*$/ 1/' "$@"
+}
 draw() {
 	parts > /dev/null && place > /dev/null || return 1
 	for t in $TESTS; do
@@ -542,12 +528,12 @@ draw() {
 			{ echo "FAIL dimensions $t"; return 1; }
 	done
 	for v in top front right flat; do
-		$S/smview -h $v build/bracket.st |
+		sv "$v -h 1 -" build/bracket.st |
 			cmp -s - test/bracket.$v.expected ||
 			{ echo "FAIL view bracket $v"; return 1; }
 	done
 	for t in cube bracket; do
-		PLICAD_BIN=$S build/smdraw test/$t.draw build/$t.st \
+		drawing test/$t.draw build/$t.st \
 			> build/$t.ps &&
 			cmp -s build/$t.ps test/$t.ps.expected ||
 			{ echo "FAIL drawing $t"; return 1; }
@@ -557,16 +543,16 @@ draw() {
 	# in phantom lines, and a linear dimension spans the black band of
 	# test/coat.sm from side to side (test/coat.draw).
 	$S/smfold test/coat.sm > build/coat.st &&
-		PLICAD_BIN=$S build/smdraw test/coat.draw build/coat.st \
+		drawing test/coat.draw build/coat.st \
 			> build/coatdraw.ps &&
-		$S/smview front build/coat.st | $S/smdim > build/coat.dim &&
+		sv 'front - 1 -' build/coat.st | $S/smdim > build/coat.dim &&
 		test "$(grep -c '^line p v' build/coat.dim)" -eq 8 &&
 		test "$(grep -c '^hatch' build/coat.dim)" -eq 2 ||
 		{ echo "FAIL drawing coats"; return 1; }
 	# The coats of a material that an unhatched record names get no
 	# hatch, their sides drawn as before; smsheet passes the record to
 	# smdim under each view.
-	{ $S/smview front build/coat.st; echo 'unhatched clear black'; } |
+	{ sv 'front - 1 -' build/coat.st; echo 'unhatched clear black'; } |
 		$S/smdim > build/coat.unhatched.dim &&
 		test "$(grep -c '^hatch' build/coat.unhatched.dim)" -eq 0 &&
 		test "$(grep -c '^line p v' build/coat.unhatched.dim)" -eq 8 &&
@@ -576,7 +562,7 @@ draw() {
 		{ echo "FAIL drawing coats unhatched"; return 1; }
 	# A textured coat bears its mark, and its callout goes into the
 	# notes (test/patch.draw).
-	PLICAD_BIN=$S build/smdraw test/patch.draw build/patch.st \
+	drawing test/patch.draw build/patch.st \
 		> build/patch.ps &&
 		grep -q 'TEXTURE: VDI 3400 REF 30 ON SURFACES MARKED' \
 			build/patch.ps &&
@@ -594,17 +580,18 @@ draw() {
 	# drawing notes it.
 	solid test/block.part build/part_block.st &&
 		solid test/textured.part build/part_textured.st &&
-		$S/smview top build/part_block.st > build/block.top &&
+		sv 'top - 2.54 -' build/part_block.st > build/block.top &&
 		test "$(grep -c '^hole ' build/block.top)" -eq 2 &&
-		$S/smdim < build/block.top | grep -q '^dim hole' &&
-		$S/smview -h front build/part_block.st | grep -q '^line o h ' &&
-		$S/smview -c -15 front build/part_block.st |
+		unscaled build/block.top | $S/smdim | grep -q '^dim hole' &&
+		sv 'front -h 2.54 -' build/part_block.st |
+		grep -q '^line o h ' &&
+		sv 'front - 2.54 -15' build/part_block.st |
 		grep -qx 'fill cut 0' &&
-		PLICAD_BIN=$S build/smdraw test/block.draw build/part_block.st \
+		drawing test/block.draw build/part_block.st \
 			> build/block.ps &&
-		$S/smview front build/part_textured.st |
+		sv 'front - 2.54 -' build/part_textured.st |
 		grep -q '^texture vdi30 T VDI 3400 REF 30$' &&
-		PLICAD_BIN=$S build/smdraw test/molded.draw \
+		drawing test/molded.draw \
 			build/part_textured.st | grep -q 'VDI 3400 REF 30' ||
 		{ echo "FAIL drawings of solids"; return 1; }
 	# The threads and the countersinks of the holes of a solid
@@ -618,18 +605,19 @@ draw() {
 	b="$b csink 2.794000 82.000 near thread 6.000000 4-40 UNC-2B by blind"
 	c='hole 20.000000 15.000000 3.400000 csink 6.400000 90.000 near'
 	solid test/tapped.part build/part_tapped.st &&
-		$S/smview top build/part_tapped.st > build/tapped.top &&
+		sv 'top - 2.54 -' build/part_tapped.st > build/tapped.top &&
 		test "$(grep -c "^hole .* $t\$" build/tapped.top)" -eq 2 &&
 		grep -qx "$b" build/tapped.top &&
 		grep -qx "$c by plain" build/tapped.top &&
-		$S/smdim -u mm < build/tapped.top > build/tapped.dim &&
+		{ echo 'units mm'; unscaled build/tapped.top; } | $S/smdim \
+			> build/tapped.dim &&
 		grep -qx 'dim hole 2.5000 2 M3X0.5-6H THRU' build/tapped.dim &&
 		grep -q ' %%v%%c3.50 X 90%%d FARSIDE, 2X$' build/tapped.dim &&
 		grep -qx 'dim hole 2.2600 1 4-40 UNC-2B X 6.00 DEEP' \
 			build/tapped.dim &&
 		grep -q ' %%v%%c2.79 X 82%%d$' build/tapped.dim &&
 		grep -qx 'dim hole 3.4000 1 %%c3.40 THRU' build/tapped.dim &&
-		PLICAD_BIN=$S build/smdraw test/tapped.draw build/part_tapped.st \
+		drawing test/tapped.draw build/part_tapped.st \
 			> build/tapped.ps &&
 		grep -q '^\[(M3X0.5-6H THRU)\]' build/tapped.ps ||
 		{ echo "FAIL drawing threads"; return 1; }
@@ -640,14 +628,15 @@ draw() {
 	printf '%s\n' 'part lower part_tapped.st' \
 		'part upper part_tapped.st move 0 0 8' > build/stack.txt &&
 		$S/place build/stack.txt > build/stack.st &&
-		$S/smview -c -10 front build/stack.st > build/stack.view &&
+		sv 'front - 2.54 -10' build/stack.st > build/stack.view &&
 		grep -qx 'fill cut 0' build/stack.view &&
 		grep -qx 'fill cut 1' build/stack.view &&
 		! grep -q '^line o v 18.300000 ' build/stack.view &&
-		$S/smdim -u mm < build/stack.view > build/stack.dim &&
+		{ echo 'units mm'; unscaled build/stack.view; } | $S/smdim \
+			> build/stack.dim &&
 		grep -qx 'fill hatch 45 0.0800' build/stack.dim &&
 		grep -qx 'fill hatch 135 0.0800' build/stack.dim &&
-		PLICAD_BIN=$S build/smdraw test/stack.draw build/stack.st \
+		drawing test/stack.draw build/stack.st \
 			> build/stack.ps &&
 		grep -qx '45.0000 0.0591 SECT grestore newpath' build/stack.ps &&
 		grep -qx '135.0000 0.0591 SECT grestore newpath' build/stack.ps ||
@@ -662,19 +651,20 @@ draw() {
 		printf '%s\n' 'part disc part_coatdisc.st turn z 30' \
 			> build/tilt.txt &&
 		$S/place build/tilt.txt > build/tilt.st &&
-		$S/smview -t 0.1 front build/tilt.st > build/tilt.coarse &&
-		$S/smview -t 0.001 front build/tilt.st > build/tilt.fine &&
+		sv 'front - 0.254 -' build/tilt.st > build/tilt.coarse &&
+		sv 'front - 25.4 -' build/tilt.st > build/tilt.fine &&
 		test "$(grep -c '^poly e v ' build/tilt.fine)" -ge 2 &&
 		! grep -q '^line u ' build/tilt.fine &&
 		test "$(awk '$1 == "poly" { n += $4 } END { print n }' \
 			build/tilt.coarse)" -lt \
 			"$(awk '$1 == "poly" { n += $4 } END { print n }' \
 				build/tilt.fine)" &&
-		$S/smdim < build/tilt.fine | grep -q '^poly e v ' &&
-		$S/smview front build/part_coatdisc.st > build/coatdisc.view &&
+		unscaled build/tilt.fine | $S/smdim | grep -q '^poly e v ' &&
+		sv 'front - 2.54 -' build/part_coatdisc.st \
+			> build/coatdisc.view &&
 		test "$(awk '$1 == "coat" { print $4 }' build/coatdisc.view)" \
 			-gt 12 &&
-		$S/smdim < build/coatdisc.view > build/coatdisc.dim &&
+		unscaled build/coatdisc.view | $S/smdim > build/coatdisc.dim &&
 		grep -q '^text .* T$' build/coatdisc.dim &&
 		! grep -q '^dim radius' build/coatdisc.dim ||
 		{ echo "FAIL drawing curves of solids"; return 1; }
@@ -686,8 +676,8 @@ draw() {
 	# The drawing notes the marked ones, and last ALL OTHER SURFACES; with
 	# -u, Ref 18 is the one not marked instead.
 	solid test/twotex.part build/part_twotex.st &&
-		$S/smview top build/part_twotex.st > build/twotex.top &&
-		$S/smview front build/part_twotex.st > build/twotex.front &&
+		sv 'top - 2.54 -' build/part_twotex.st > build/twotex.top &&
+		sv 'front - 2.54 -' build/part_twotex.st > build/twotex.front &&
 		test "$(grep -m 1 '^texture' build/twotex.top)" = \
 			'texture vdi30 - VDI 3400 REF 30' &&
 		! grep -q '^coat vdi30 ' build/twotex.top build/twotex.front &&
@@ -697,17 +687,19 @@ draw() {
 		r24=$(awk '$1 == "texture" && $2 == "vdi24" { print $3 }' \
 			build/twotex.front) &&
 		{ test "$r18$r24" = UT || test "$r18$r24" = TU; } &&
-		$S/smdim < build/twotex.top > build/twotex.top.dim &&
+		unscaled build/twotex.top | $S/smdim > build/twotex.top.dim &&
 		test "$(grep -c "^text .* $r18\$" build/twotex.top.dim)" -eq 1 &&
-		$S/smdim < build/twotex.front > build/twotex.front.dim &&
+		unscaled build/twotex.front | $S/smdim \
+			> build/twotex.front.dim &&
 		test "$(grep -c "^text .* $r24\$" build/twotex.front.dim)" -eq 1 &&
-		PLICAD_BIN=$S build/smdraw test/twotex.draw build/part_twotex.st \
+		drawing test/twotex.draw build/part_twotex.st \
 			> build/twotex.ps &&
 		grep -o 'TEXTURE: [^)]*' build/twotex.ps | tail -1 |
 		grep -qx 'TEXTURE: ALL OTHER SURFACES VDI 3400 REF 30' &&
 		grep -q "REF 18 ON SURFACES MARKED \"$r18\"" build/twotex.ps &&
 		grep -q "REF 24 ON SURFACES MARKED \"$r24\"" build/twotex.ps &&
-		$S/smview -u vdi18 top build/part_twotex.st |
+		printf '%s\n' 'unmarked vdi18' 'view top - 2.54 -' |
+		$S/smview build/part_twotex.st |
 		grep -qx 'texture vdi18 - VDI 3400 REF 18' ||
 		{ echo "FAIL drawing marks of textures"; return 1; }
 	# A section keeps each flat side that runs into rounds as one line,
@@ -716,28 +708,30 @@ draw() {
 	# short sides once leaned into the rounds and no lin found them.
 	solid test/roundsect.part build/part_roundsect.st || return 1
 	for t in 0.01 0.1; do
-		$S/smview -t $t -c -10 front build/part_roundsect.st \
-			> build/roundsect.view &&
+		sv "front - $(echo "0.0254 / $t" | bc -l) -10" \
+			build/part_roundsect.st > build/roundsect.view &&
 			awk '$1 == "line" && $2 == "e" && $4 == $6 &&
 				($4 == "0.000000" || $4 == "30.000000") &&
 				$5 + $7 == 10 && ($5 == "4.600000" ||
 				$7 == "4.600000") { n++ }
 				END { exit n != 2 }' build/roundsect.view &&
-			{ cat build/roundsect.view; echo 'lin x 0 1.181102'; } |
+			{ unscaled build/roundsect.view
+				echo 'lin x 0 1.181102'; } |
 			$S/smdim | grep -qx 'dim lin x 30.0000 1.181' ||
 			{ echo "FAIL drawing lin on a section, chord $t"; return 1; }
 	done
-	PLICAD_BIN=$S build/smdraw test/inserts.draw build/inserts.st \
+	drawing test/inserts.draw build/inserts.st \
 		> build/inserts.ps &&
 		grep -q '3 X NUT-M3, INSTALL FAR SIDE' build/inserts.ps &&
 		grep -q '1 X STANDOFF-M3, INSTALL NEAR SIDE' build/inserts.ps &&
-		$S/smview top build/inserts.st | $S/smdim > build/inserts.dim &&
+		sv 'top - 2.54 -' build/inserts.st | unscaled | $S/smdim \
+			> build/inserts.dim &&
 		! grep -q '^dim hole' build/inserts.dim &&
 		test "$($S/tostep build/inserts.st | grep -c MANIFOLD)" -eq 5 ||
 		{ echo "FAIL drawing inserts"; return 1; }
 	# A drawing in mm gives each size in mm and in inches after it in
 	# brackets, and tells the template so (test/metric.draw).
-	PLICAD_BIN=$S build/smdraw test/metric.draw build/plate.st \
+	drawing test/metric.draw build/plate.st \
 		> build/metric.ps &&
 		grep -q '(100.00 \[3.937\])' build/metric.ps &&
 		grep -q '(50.00 \[1.969\])' build/metric.ps &&
@@ -748,7 +742,7 @@ draw() {
 	# title block in its cell, whatever font Ghostscript draws them in;
 	# a linear dimension spans the inside of a notch, from edges that the
 	# view sees on end; and the Filename field keeps the extension.
-	PLICAD_BIN=$S build/smdraw test/inside.draw build/profile.st \
+	drawing test/inside.draw build/profile.st \
 		> build/inside.ps &&
 		grep -q '/Filename (inside.draw) def' build/inside.ps ||
 		{ echo "FAIL drawing inside"; return 1; }
@@ -804,7 +798,7 @@ occt() {
 		awk -F'"symdiff": ' '{ split($2, v, "}"); d = v[1] + 0
 			exit !(d < 1e-6 && d > -1e-6) }' build/nearhem.ref ||
 		return 1
-	$S/smview bottom build/shortline.st > build/shortline.view &&
+	sv 'bottom - 2.54 -' build/shortline.st > build/shortline.view &&
 		printf '{"step": "%s", "view": [0, 0, -1], "lines": "%s"}\n' \
 			build/shortline.step build/shortline.view |
 		OCCTWORKER_FD=3 test/freecad.sh test/occtworker.py \
@@ -1137,7 +1131,6 @@ view_play() {
 # window: resized from outside before a key, a button or a command
 # sets the view, it draws what fit draws.
 view_fit() {
-	make -s build/xresize || return 1
 	rm -f build/fit.fifo
 	mkfifo build/fit.fifo || return 1
 	ASAN_OPTIONS=detect_leaks=0 timeout 30 $S/view test/view.scene \
@@ -1195,15 +1188,14 @@ view_names() {
 		{ echo "FAIL view window names: $props"; return 1; }
 }
 
-# The programs of schematics and boards (eda.mk), by their own tests:
-# test/schtest.sh, test/pcbtest.sh and test/viewtest.sh, on build/eda.
+# The programs of schematics and boards, by their own tests:
+# test/schtest.sh, test/pcbtest.sh and test/viewtest.sh, on build.
 # Each case of them runs through build/budget with its own file of
 # budgets, test/SCRIPT.budget; sh -a hands it the name of the case.
 eda() {
-	make -s -f eda.mk eda san || return 1
 	for t in schtest pcbtest viewtest; do
 		RUN="$PWD/build/budget $PWD/test/$t.budget" \
-			sh -a test/$t.sh build/eda || return 1
+			sh -a test/$t.sh build || return 1
 	done
 }
 
@@ -1211,25 +1203,17 @@ eda() {
 # stripped, held to their budgets, those of schematics and boards too;
 # the library of the programs counts as one, lib.
 sizes() {
-	for p in $PROGS smdraw lib; do
+	for p in $PROGS lib; do
 		case $p in
 		lib) lines=$(for l in $(printf 'l:\n\t@echo $(LIB)\n' |
 			make -s -f Makefile -f - l); do
 				cat src/$l.c src/$l.h; done | wc -l)
 			bytes=0 ;;
-		smdraw) lines=$(wc -l < src/smdraw.sh)
-			bytes=$(wc -c < build/smdraw) ;;
 		*) lines=$(wc -l < src/$p.c)
 			bytes=$(wc -c < build/$p) ;;
 		esac
 		build/budget -v test/size.budget "$p" lines "$lines" \
 			bytes "$bytes" || return 1
-	done
-	for p in $(printf 'e:\n\t@echo $(EDA)\n' |
-		make -s -f eda.mk -f - e); do
-		build/budget -v test/size.budget "$p" \
-			lines "$(wc -l < src/$p.c)" \
-			bytes "$(wc -c < build/eda/$p)" || return 1
 	done
 }
 
@@ -1240,7 +1224,7 @@ runners() {
 	root=$(pwd)
 	real=$(cd "$R" && pwd)
 	mkdir -p "$S"
-	for p in $PROGS test_arith smdraw; do
+	for p in $PROGS test_arith; do
 		printf '%s\n' '#!/bin/sh' "name=\"\$group $p \$*\"" \
 			'export name' \
 			"exec \"$root/build/budget\" \\" \
@@ -1252,7 +1236,6 @@ runners() {
 
 all_groups="arith parts solids fillet place bad tools docs args draw mesh \
 viewer occt eda sizes"
-test -n "$PLICAD_BIN" || build || { echo "FAIL build"; exit 1; }
 runners || { echo "FAIL runners"; exit 1; }
 groups=${*:-$all_groups}
 fail=0

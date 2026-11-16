@@ -1,16 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// smview.c -- Project a part into the lines of one drawing view
+// smview.c -- Project a part into the lines of its drawing views
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: smview [-h] [-c DEPTH] [-t CHORD] [-u MATERIAL] VIEW part.st
+// Usage: smview part.st < views > part.view
+//
+// Reads the views to make of the part, as smsheet -v lists them for a
+// drawing, and writes each one, for smdim.  The views are records, one
+// per line:
+//   units U1 U2            (passes through)
+//   unmarked MATERIAL|-    (the texture of the faces that no mark names,
+//                           for the views after it)
+//   view VIEW -h|- SCALE DEPTH|-
+//                          (a view, with its hidden lines or not, at
+//                           SCALE, and a section at DEPTH mm or none)
+//   #line N FILE           (the place of the next line; passes through)
+//    RECORD                (a line that starts with a blank, a record
+//                           for smdim under the view above it; passes
+//                           through)
+// Each view goes out with SCALE at the end of its view record, its
+// curves within .001 in on the paper (a chord of 0.0254 / SCALE mm),
+// and after it the records under it.  The messages about a view name
+// the line of its view record.
 //
 // Solid parts, one or the parts of an assembly in place, go to sview
 // (sview.h), which writes the same records and the poly records, its
-// curves within CHORD mm (CHORD_MM if no -t), and with -c a section of
-// them; so does one folded part with -c, or several parts.  Of the
-// textures of the faces, each with its own mark, the one of all the
-// faces that the others leave, if any, is unmarked: that of MATERIAL,
-// or else the one of the most area.
+// curves within the chord, and a section of them; so does one folded
+// part with a section, or several parts.  Of the textures of the faces,
+// each with its own mark, the one of all the faces that the others
+// leave, if any, is unmarked: that of MATERIAL, or else the one of the
+// most area.
 //
 // VIEW is front, back, left, right, top, bottom or flat.  The front view
 // looks along +y with z up, the top view looks down -z with y up, and the
@@ -18,7 +36,7 @@
 // of the unfolded blank, with a center line along each bend.
 //
 // The output has one record per line, in mm, x to the right and y up:
-//   view VIEW PART
+//   view VIEW PART SCALE
 //   thick T
 //   box X0 Y0 X1 Y1
 //   fill [cut I]           (the start of a region of material, or with
@@ -47,8 +65,8 @@
 // inside it, o for the rim of a hole and for an arc that is hidden in
 // part, b for an edge or the outline of a bend, s for the seam where a
 // bend leaves a flat face, and c for a center line.  VIS is v for
-// visible and h for hidden; the hidden lines are left out unless -h is
-// given.  A hole record stands for each hole
+// visible and h for hidden; the hidden lines are left out but with
+// -h.  A hole record stands for each hole
 // seen along its axis and not covered, and a coat record for each coat
 // on a slab whose side of the coat looks at the eye, cut to the box of
 // the slab, unless something covers its middle.  Of a solid, a hole
@@ -79,10 +97,14 @@
 #define ZERO 5e-7 // Numbers closer to 0 than this print as 0.
 #define SLIVER 1e-3 // No curve or piece of one is shorter, in mm,
 #define PRINTED 2e-6 // even after its ends are rounded to six places.
-#define CHORD_MM 0.01 // The chord of a poly record without -t, in mm.
+#define THOU 1000.0 // Thousandths in one inch.
 
 enum { K_EDGE, K_INNER, K_HOLE, K_BEND, K_SEAM, K_CENTER };
-enum { COAT_ROOM = 256 }; // The most corners of a coat cut to a slab.
+enum {
+	COAT_ROOM = 256, // The most corners of a coat cut to a slab.
+	NVIEWS = 6, // The views of views, all but flat.
+	DECIMAL = 10 // The base of the number of a #line record.
+};
 static const char kind_code[] = "eiobsc";
 
 // A view: x to the right and y up on the paper, z toward the eye.
@@ -91,13 +113,19 @@ struct view {
 	struct vec x, y, z;
 };
 
-static const struct view views[] = {
+static const struct view views[NVIEWS] = {
 	{ "front", { 1, 0, 0 }, { 0, 0, 1 }, { 0, -1, 0 } },
 	{ "back", { -1, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 } },
 	{ "right", { 0, 1, 0 }, { 0, 0, 1 }, { 1, 0, 0 } },
 	{ "left", { 0, -1, 0 }, { 0, 0, 1 }, { -1, 0, 0 } },
 	{ "top", { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } },
 	{ "bottom", { 1, 0, 0 }, { 0, -1, 0 }, { 0, 0, -1 } },
+};
+
+// A place in the input, for the messages: a file and a line of it.
+struct place {
+	const char *what;
+	unsigned line;
 };
 
 // A projected curve.  A segment runs from a to b, with the depth za at a
@@ -142,6 +170,8 @@ struct scene {
 	size_t (*ef)[2]; // The two faces at each edge.
 	int *inner; // Whether each edge of the flat part is on a cut-out.
 	int show_hidden;
+	double scale; // That of the view record.
+	const char *where; // What the messages name the part by.
 };
 
 static struct vec to_view(const struct view *vw, struct vec p)
@@ -423,7 +453,7 @@ static void add_edges(struct scene *sc)
 		} else {
 			die("%s: view %s: the circle about (%g, %g, %g) is "
 			    "seen at an angle",
-			    sc->p->name, sc->vw.name, zero(e->c.x),
+			    sc->where, sc->vw.name, zero(e->c.x),
 			    zero(e->c.y), zero(e->c.z));
 		}
 	}
@@ -1324,7 +1354,7 @@ static void print_pieces(const struct scene *sc)
 		i = j;
 	}
 	if (x.lo.x > x.hi.x) {
-		die("%s: view %s: nothing to see", sc->p->name, sc->vw.name);
+		die("%s: view %s: nothing to see", sc->where, sc->vw.name);
 	}
 	printf("box %.6f %.6f %.6f %.6f\n", zero(x.lo.x), zero(x.lo.y),
 	       zero(x.hi.x), zero(x.hi.y));
@@ -1567,7 +1597,8 @@ static void print_coats(const struct scene *sc)
 // Prints the view of part p.
 static void print_view(struct scene *sc)
 {
-	printf("view %s %s\nthick %.6f\n", sc->vw.name, sc->p->name, sc->p->t);
+	printf("view %s %s %.9g\nthick %.6f\n", sc->vw.name, sc->p->name,
+	       sc->scale, sc->p->t);
 	for (size_t i = 0; i < sc->radius->nmaps; i++) {
 		if (sc->radius->maps[i].bend) {
 			printf("radius %.6f\n", sc->radius->maps[i].r);
@@ -1623,9 +1654,9 @@ static void bend_line(const struct part *p, size_t f)
 	       zero(b.y), m->ang);
 }
 
-// Prints the flat view of p: the top view of the blank, every face in
-// the plane z = 0, and the center lines of the bends.
-static void print_flat(const struct part *p, int show_hidden)
+// Prints the flat view of p, as of view v: the top view of the blank,
+// every face in the plane z = 0, and the center lines of the bends.
+static void print_flat(const struct part *p, struct sview v)
 {
 	struct part flat = *p;
 	struct map one;
@@ -1638,7 +1669,9 @@ static void print_flat(const struct part *p, int show_hidden)
 	flat.nmaps = 1;
 	flat.faces = xcalloc(p->nfaces + 1, sizeof(*flat.faces));
 	memset(&sc, 0, sizeof(sc));
-	sc.show_hidden = show_hidden;
+	sc.show_hidden = v.hidden;
+	sc.scale = v.scale;
+	sc.where = v.where;
 	sc.p = &flat;
 	sc.radius = p;
 	sc.vw = views[4];
@@ -1652,96 +1685,172 @@ static void print_flat(const struct part *p, int show_hidden)
 	free(flat.faces);
 }
 
-// Reads the number of option o, its argument w, above 0 unless any is
-// set.
-static double option_num(const char *o, const char *w, int any)
+// Prints view v of the n parts ps: of solids, of an assembly or a
+// section by sview_print, else of the one folded part.  Each message
+// names v.where.
+static void print_one(const struct part *ps, size_t n, struct sview v)
 {
-	char *end = NULL;
-	double x = strtod(w, &end);
-
-	if (*end || end == w || !num_ok(x) || (!any && !(x > 0))) {
-		die("smview: %s takes %s in mm: %s", o,
-		    any ? "a depth" : "a chord above 0", w);
-	}
-	return x;
-}
-
-int main(int argc, char **argv)
-{
-	struct part *ps = NULL;
-	struct scene sc;
-	size_t n = 0;
 	size_t k = 0;
-	int a = 1;
-	int section = 0;
-	double cut = 0;
-	double chord = CHORD_MM;
-	const char *unmarked = NULL;
+	const char *at = v.where;
 
-	memset(&sc, 0, sizeof(sc));
-	for (; a < argc && argv[a][0] == '-' && argv[a][1]; a++) {
-		if (strcmp(argv[a], "-h") == 0) {
-			sc.show_hidden = 1;
-		} else if (strcmp(argv[a], "-c") == 0 && a + 1 < argc) {
-			cut = option_num("-c", argv[++a], 1);
-			section = 1;
-		} else if (strcmp(argv[a], "-t") == 0 && a + 1 < argc) {
-			chord = option_num("-t", argv[++a], 0);
-		} else if (strcmp(argv[a], "-u") == 0 && a + 1 < argc) {
-			unmarked = argv[++a];
-		} else {
-			break;
-		}
-	}
-	if (argc != a + 2 || argv[a][0] == '-') {
-		die("usage: smview [-h] [-c DEPTH] [-t CHORD] [-u MATERIAL] VIEW "
-		    "part.st > part.view");
-	}
-	while (k < sizeof(views) / sizeof(*views) &&
-	       strcmp(argv[a], views[k].name) != 0) {
+	while (k < NVIEWS && strcmp(v.name, views[k].name) != 0) {
 		k++;
 	}
-	if (k == sizeof(views) / sizeof(*views) &&
-	    strcmp(argv[a], "flat") != 0) {
-		die("%s: the views are front, back, left, right, top, bottom "
-		    "and flat",
-		    argv[a]);
+	if (k == NVIEWS && strcmp(v.name, "flat") != 0) {
+		die("%s: %s: the views are front, back, left, right, top, "
+		    "bottom and flat",
+		    at, v.name);
 	}
-	n = read_parts(argv[a + 1], &ps);
-	if (!n) {
-		die("%s: smview takes a file with a part", argv[a + 1]);
-	}
-	if (section || ps[0].solid || n != 1 + ps[0].nins) {
-		struct sview v;
-
-		if (k == sizeof(views) / sizeof(*views)) {
+	if (v.section || ps[0].solid || n != 1 + ps[0].nins) {
+		if (k == NVIEWS) {
 			die("%s: the flat view is of one folded part, without "
-			    "-c",
-			    argv[a + 1]);
+			    "a cut",
+			    at);
 		}
-		v.name = views[k].name;
 		v.x = views[k].x;
 		v.y = views[k].y;
 		v.z = views[k].z;
-		v.hidden = sc.show_hidden;
-		v.section = section;
-		v.cut = cut;
-		v.chord = chord;
-		v.unmarked = unmarked;
 		sview_print(ps, n, v);
-		free_parts(ps, n);
-		close_stdout();
-		return 0;
-	}
-	if (k == sizeof(views) / sizeof(*views)) {
-		print_flat(&ps[0], sc.show_hidden);
+	} else if (k == NVIEWS) {
+		print_flat(&ps[0], v);
 	} else {
+		struct scene sc;
+
+		memset(&sc, 0, sizeof(sc));
+		sc.show_hidden = v.hidden;
+		sc.scale = v.scale;
+		sc.where = v.where;
 		sc.p = &ps[0];
 		sc.radius = &ps[0];
 		sc.vw = views[k];
 		print_view(&sc);
 	}
+}
+
+// Reads a number of a view record at c, above 0 unless any is set.
+static double field_num(const struct place *c, const char *w, int any)
+{
+	char *end = NULL;
+	double x = w ? strtod(w, &end) : 0;
+
+	if (!w || *end || end == w || !num_ok(x) || (!any && !(x > 0))) {
+		die("%s:%u: expected view VIEW -h|- SCALE DEPTH|-", c->what,
+		    c->line);
+	}
+	return x;
+}
+
+// Reads the view record l, at c, into v: its name, whether it shows the
+// hidden lines, its scale and its cut.
+static void read_view(const struct place *c, char *l, struct sview *v)
+{
+	char *name = split_first(&l);
+	char *hidden = split_first(&l);
+	char *scale = split_first(&l);
+	char *cut = split_first(&l);
+
+	if (!name || !hidden || !cut || split_first(&l) ||
+	    (strcmp(hidden, "-h") != 0 && strcmp(hidden, "-") != 0)) {
+		die("%s:%u: expected view VIEW -h|- SCALE DEPTH|-", c->what,
+		    c->line);
+	}
+	v->name = name;
+	v->hidden = strcmp(hidden, "-h") == 0;
+	v->scale = field_num(c, scale, 0);
+	v->chord = INCH / THOU / v->scale;
+	v->section = strcmp(cut, "-") != 0;
+	v->cut = v->section ? field_num(c, cut, 1) : 0;
+}
+
+// Prints each view that the records of input ask for, of the n parts
+// ps, and passes on the records for smdim.
+static void print_views(const struct part *ps, size_t n, char *input)
+{
+	static const char head[] = "#line ";
+	struct place c = { "stdin", 0 };
+	const char *unmarked = NULL;
+	int seen = 0;
+	char *rest = input;
+	char *l = NULL;
+
+	while ((l = next_line(&rest)) != NULL) {
+		char *w = NULL;
+
+		c.line++;
+		if (strncmp(l, head, sizeof(head) - 1) == 0) {
+			char *end = NULL;
+			unsigned long k = strtoul(l + sizeof(head) - 1, &end,
+						  DECIMAL);
+
+			if (end == l + sizeof(head) - 1 || *end != ' ' || !k) {
+				die("%s:%u: expected #line N NAME", c.what,
+				    c.line);
+			}
+			printf("%s\n", l);
+			c.what = end + 1;
+			c.line = (unsigned)(k - 1);
+			continue;
+		}
+		if (l[0] == ' ' || l[0] == '\t') {
+			if (!seen) {
+				die("%s:%u: a record before the first view",
+				    c.what, c.line);
+			}
+			printf("%s\n", l);
+			continue;
+		}
+		if (strncmp(l, "units ", strlen("units ")) == 0) {
+			printf("%s\n", l);
+			continue;
+		}
+		w = split_first(&l);
+		if (!w) {
+			continue;
+		}
+		if (strcmp(w, "unmarked") == 0) {
+			w = split_first(&l);
+			if (!w || split_first(&l)) {
+				die("%s:%u: expected unmarked MATERIAL|-",
+				    c.what, c.line);
+			}
+			unmarked = strcmp(w, "-") != 0 ? w : NULL;
+		} else if (strcmp(w, "view") == 0) {
+			struct sview v;
+			char where[WHERE_LEN];
+
+			memset(&v, 0, sizeof(v));
+			xsnprintf(where, "%s:%u", c.what, c.line);
+			read_view(&c, l, &v);
+			v.unmarked = unmarked;
+			v.where = where;
+			print_one(ps, n, v);
+			seen = 1;
+		} else {
+			die("%s:%u: unknown record %s", c.what, c.line, w);
+		}
+	}
+	if (!seen) {
+		die("stdin: no view");
+	}
+}
+
+int main(int argc, char **argv)
+{
+	struct part *ps = NULL;
+	char *input = NULL;
+	size_t n = 0;
+
+	if (argc != 2 || argv[1][0] == '-') {
+		die("usage: smview part.st < views > part.view");
+	}
+	n = read_parts(argv[1], &ps);
+	if (!n) {
+		die("%s: smview takes a file with a part", argv[1]);
+	}
+	input = read_file("-");
+	print_views(ps, n, input);
 	free_parts(ps, n);
+	free(input);
 	close_stdout();
 	return 0;
 }

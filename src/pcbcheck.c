@@ -23,6 +23,9 @@
 //   it, so its pads heat alike;
 //   no silkscreen (a footprint's lines, a designator) runs over an
 //   opening of the solder mask, where it would be cut;
+//   no two courtyards on one side overlap, and no courtyard on either
+//   side, nor any via, comes into the keep-out of a hole (pcbfp(5)),
+//   whatever the nets;
 //   every part is placed by a current statement, with the nets of its
 //   pads as they are, and each net's copper was made by its current
 //   statements for its pads where they stand; the lock tells these in
@@ -122,13 +125,22 @@ static int same_layer(const struct item *a, const struct item *b)
 	return a->layer < 0 || b->layer < 0 || a->layer == b->layer;
 }
 
-// A part for a message: NAME (REF), kept.
+// The name of each part for the messages, NAME (REF), made once.
+static char **labels;
+
+// A part for a message: NAME (REF), kept till the end.
 static const char *label(const struct pcb_part *p)
 {
-	char *s = pcb_alloc(strlen(p->name) + strlen(pcb_ref(p)) + 4);
+	size_t k = (size_t)(p - B.part);
 
-	sprintf(s, "%s (%s)", p->name, pcb_ref(p));
-	return s;
+	if (!labels) {
+		labels = pcb_alloc((B.npart + 1) * sizeof *labels);
+	}
+	if (!labels[k]) {
+		labels[k] = pcb_alloc(strlen(p->name) + strlen(pcb_ref(p)) + 4);
+		sprintf(labels[k], "%s (%s)", p->name, pcb_ref(p));
+	}
+	return labels[k];
 }
 
 // The name of pad k of part q for a message: PART.PAD (REF).
@@ -245,6 +257,33 @@ static int stroke_in(const struct pcb_stroke *s, const double o[4])
 		}
 	}
 	return 0;
+}
+
+// The parts against each other: no two courtyards on one side overlap,
+// and no courtyard on either side, nor any via, comes into the keep-out
+// of a hole a screw goes through, whatever the nets.
+static void check_parts(void)
+{
+	char why[1024];
+
+	for (size_t q = 0; q < B.npart; q++) {
+		for (size_t o = q + 1; o < B.npart; o++) {
+			if (pcb_clash(&B, &B.part[q], &B.part[o], why,
+				      sizeof why)) {
+				fault(why, B.part[q].x, B.part[q].y);
+			}
+		}
+	}
+	for (size_t v = 0; v < B.nvia; v++) {
+		char msg[1200];
+
+		if (pcb_in_keepout(&B, B.via[v].x, B.via[v].y,
+				   B.via[v].dia / 2, why, sizeof why)) {
+			snprintf(msg, sizeof msg, "a via of %s in %s",
+				 B.net[B.via[v].net].name, why);
+			fault(msg, B.via[v].x, B.via[v].y);
+		}
+	}
 }
 
 // The silkscreen against the openings of the mask: one fault a part.
@@ -800,6 +839,19 @@ static void check_lock(void)
 				by = pcb_by(&B, q, st);
 			}
 		}
+		// The part of a group placed whole that no statement places
+		// is placed by the group's (pcb(5)).
+		for (size_t s = 0; !by && s < B.nstmt; s++) {
+			const struct pcb_stmt *st = &B.stmt[s];
+			size_t n = st->n >= 2 ? strlen(st->w[1]) : 0;
+
+			if (!strcmp(st->w[0], "place") && st->n >= 5 &&
+			    !strcmp(st->w[3], "from") &&
+			    !strncmp(p->name, st->w[1], n) && n &&
+			    p->name[n] == '.') {
+				by = pcb_by(&B, q, st);
+			}
+		}
 		if (!p->fp) {
 			continue;
 		}
@@ -1090,6 +1142,7 @@ int main(int argc, char **argv)
 	check_ends();
 	check_widths();
 	check_silk();
+	check_parts();
 	check_lock();
 	check_nets();
 	if (lengths) {
@@ -1116,5 +1169,13 @@ int main(int argc, char **argv)
 		}
 		loops();
 	}
+	for (size_t k = 0; k < nlib; k++) {
+		free(lib[k]);
+	}
+	free(lib);
+	for (size_t k = 0; labels && k < B.npart; k++) {
+		free(labels[k]);
+	}
+	free(labels);
 	return faults || B.failed;
 }

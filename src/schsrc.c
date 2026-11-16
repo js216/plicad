@@ -573,6 +573,7 @@ static int faults; // The faults of the source told so far.
 // past them (STEP); the labels widen it.  FAR is as far as a part is
 // pushed to find room.
 enum { FIRST = 2, HANG = 3, STEP = 2, BESIDE_OFF = 3, OF_GAP = 2, FAR = 80 };
+enum { PAIR_GAP = 2 }; // Between parts in parallel, in grid units.
 
 // Reads the room the drawing keeps from the clear records of the sheet
 // template: clear body, text, label and flag, each in points.
@@ -1071,8 +1072,8 @@ static void tell_traces(void)
 	for (size_t i = 0; i < ntraces; i++) {
 		const struct sch_part *q = &R->part[trace_part[i]];
 
-		fprintf(stderr, "%s:%d: %s (%s) %s\n", R->file, q->line, q->name,
-			q->ref ? q->ref : "-", trace_text[i]);
+		fprintf(stderr, "%s:%d: %s (%s) %s\n", R->file, q->line,
+			q->name, q->ref ? q->ref : "-", trace_text[i]);
 		free(trace_text[i]);
 	}
 	free(trace_text);
@@ -1093,7 +1094,8 @@ static void commit(size_t k)
 		char t[256];
 
 		snprintf(t, sizeof t, "at %d %d, turned %d: %s", R->part[k].x,
-			 R->part[k].y, R->part[k].rot * 90, how[places[k].kind]);
+			 R->part[k].y, R->part[k].rot * 90,
+			 how[places[k].kind]);
 		trace(k, t);
 	}
 	R->part[k].side = side >= 0 ? side : R->part[k].side;
@@ -1711,12 +1713,137 @@ static void place_flags(void)
 // Places all: the parts against others, the flags at the ends of
 // lines, then the parts between pins, which keep out past them, and the
 // flags of those.
+// Moves part k, and the flags of its pins, by (dx, dy).
+static void move_unit(size_t k, int dx, int dy)
+{
+	R->part[k].x += dx;
+	R->part[k].y += dy;
+	for (size_t p = 0; p < R->part[k].dev->shape->npin; p++) {
+		long f = pins[base[k] + p].flagpart;
+
+		if (f >= 0) {
+			R->part[f].x += dx;
+			R->part[f].y += dy;
+		}
+	}
+}
+
+// Whether part k, placed and then moved, stands clear of the others,
+// its flags too: as clear_unit, the part and its flags out of the
+// placed while they are tried.
+static int clear_moved(size_t k)
+{
+	int ok;
+
+	placed[k] = 0;
+	for (size_t p = 0; p < R->part[k].dev->shape->npin; p++) {
+		long f = pins[base[k] + p].flagpart;
+
+		if (f >= 0) {
+			placed[f] = 0;
+		}
+	}
+	ok = clear_unit(k);
+	placed[k] = 1;
+	for (size_t p = 0; p < R->part[k].dev->shape->npin; p++) {
+		long f = pins[base[k] + p].flagpart;
+
+		if (f >= 0) {
+			placed[f] = 1;
+		}
+	}
+	return ok;
+}
+
+// Lays each part and the parts beside it as an even row in parallel
+// about the line the part was placed on: PAIR_GAP apart, the row's
+// middle on the line, so no one of two stands on it; and joins their
+// pins of a kind by wires, the bars, which the line meets in their
+// middle.  If the row is not clear, it stays as it was placed.
+static void center_besides(void)
+{
+	size_t *row = sch_alloc((R->npart + 1) * sizeof *row);
+
+	for (size_t b = 0; b < R->npart; b++) {
+		size_t n = 1;
+		int across = 0, ok = 1, line;
+		int *was;
+
+		row[0] = b;
+		for (size_t k = 0; placed[b] && k < R->npart; k++) {
+			if (placed[k] && places[k].kind == BESIDE &&
+			    places[k].part == b) {
+				row[n++] = k;
+			}
+		}
+		if (n < 2) {
+			continue;
+		}
+		// Across the line: along x if the twin stands beside it so.
+		across = R->part[row[1]].x != R->part[b].x;
+		// In the order they stand, from low to high across the line.
+		for (size_t i = 1; i < n; i++) {
+			for (size_t j = i; j > 0; j--) {
+				const struct sch_part *p = &R->part[row[j - 1]];
+				const struct sch_part *q = &R->part[row[j]];
+
+				if ((across ? q->x - p->x : q->y - p->y) >= 0) {
+					break;
+				}
+				size_t t = row[j - 1];
+
+				row[j - 1] = row[j];
+				row[j] = t;
+			}
+		}
+		was = sch_alloc(2 * n * sizeof *was);
+		line = across ? R->part[b].x : R->part[b].y;
+		for (size_t i = 0; i < n; i++) {
+			const struct sch_part *q = &R->part[row[i]];
+			int to = line +
+				 (2 * (int)i - (int)(n - 1)) * PAIR_GAP / 2;
+			int d = to - (across ? q->x : q->y);
+
+			was[2 * i] = q->x;
+			was[2 * i + 1] = q->y;
+			move_unit(row[i], across ? d : 0, across ? 0 : d);
+		}
+		for (size_t i = 0; i < n && ok; i++) {
+			ok = clear_moved(row[i]);
+		}
+		for (size_t i = 0; i < n && !ok; i++) {
+			const struct sch_part *q = &R->part[row[i]];
+
+			move_unit(row[i], was[2 * i] - q->x,
+				  was[2 * i + 1] - q->y);
+		}
+		for (size_t i = 0; ok && i + 1 < n; i++) {
+			for (size_t p = 0; p < R->part[b].dev->shape->npin;
+			     p++) {
+				struct sch_hint h = { { row[i], row[i + 1] },
+						      { p, p },
+						      -1 };
+
+				R->hint = grow(R->hint, R->nhint,
+					       sizeof *R->hint);
+				R->hint[R->nhint++] = h;
+			}
+		}
+		if (ok && sch_verbose) {
+			trace(b, "its parts in parallel about its line");
+		}
+		free(was);
+	}
+	free(row);
+}
+
 static void place_all(void)
 {
 	place_ready(0);
 	place_flags();
 	place_ready(1);
 	place_flags();
+	center_besides();
 	for (size_t k = 0; k < R->npart; k++) {
 		if (!placed[k] && !dead[k] && !R->part[k].dev->shape->flag) {
 			at_line(places[k].line);
@@ -1734,7 +1861,8 @@ static void read_part(struct sch_shape *sh, char **w, int n)
 	struct sch_part q;
 	struct place pl;
 	int i;
-	const char *value = NULL, *table = NULL;
+	const char *value = NULL;
+	char *table = NULL;
 
 	memset(&q, 0, sizeof q);
 	memset(&pl, 0, sizeof pl);
@@ -1813,6 +1941,7 @@ static void read_part(struct sch_shape *sh, char **w, int n)
 	}
 	if (table) {
 		q.dev = device(R->lib, R->nlib, table, where);
+		free(table);
 		if (q.dev->shape != sh) {
 			fault("%s: %s is drawn as %s, not %s", where, value,
 			      q.dev->shape->name, sh->name);
@@ -2244,9 +2373,10 @@ static void make_nets(void)
 
 			sprintf(s, "%s.%s", q->name,
 				q->dev->shape->pin[pins[i].pin].name);
-			name = s;
+			t.name = s;
+		} else {
+			t.name = sch_strdup(name);
 		}
-		t.name = sch_strdup(name);
 		R->net = grow(R->net, R->nnet, sizeof *R->net);
 		R->net[R->nnet++] = t;
 	}

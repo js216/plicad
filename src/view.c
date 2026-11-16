@@ -16,7 +16,8 @@
 // all in the view, and the keys i, f, b, l, r, t and u (iso, front,
 // back, left, right, top, underside) set it; c centers the view on the
 // picked part, and c again, with no change of the view or the pick
-// between, zooms in two times about it; q quits (Escape does not).
+// between, zooms in two times about it; F5 reads the scene again;
+// Escape deselects and hides the help; q quits.
 // The keys h, o and s act on the part under the pointer: h hides it, o
 // shows it alone (or, with one part alone, all again, wherever the
 // pointer is) and s turns it see-through or back; H, O and S do the same
@@ -769,6 +770,16 @@ static int arrange_key(struct gui *g, const char *buf, KeySym ks, int ctrl,
 
 	if (ctrl && (ks == XK_z || ks == XK_y)) {
 		(void)(ks == XK_z ? scene_undo(s) : scene_redo(s));
+		return 0;
+	}
+	if (ks == XK_F5) {
+		reload_scene(g);
+		return 0;
+	}
+	if (ks == XK_Escape) {
+		scene_select(s, NONE);
+		g->help = 0;
+		relabel(g);
 		return 0;
 	}
 	if (show_key(g, buf, at) == 0) {

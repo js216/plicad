@@ -6,8 +6,6 @@
 draw \- drawing file and template
 .SH DESCRIPTION
 A drawing file, for
-.IR smdraw (1)
-and
 .IR smsheet (1),
 is ASCII, in the language of
 .IR plicad (7),
@@ -18,7 +16,6 @@ line, and a long one may run on over lines that end in a backslash.
 .nf
 units in|mm [in|mm]
 template FILE
-scale S
 field NAME TEXT
 material TEXT
 finish TEXT
@@ -29,7 +26,7 @@ inserts FORMAT
 hatching GAP
 unmarked MATERIAL
 unhatched MATERIAL...
-view NAME [hidden] [scale S] [sheet N] [at X Y] [cut D] [title TEXT]
+view NAME scale S [hidden] [sheet N] [at X Y] [cut D] [title TEXT]
 .fi
 .RE
 .PP
@@ -48,7 +45,7 @@ origin of the part, in mm unless D says in
 .RI ( smview (1)):
 the faces cut get section lines, of another angle for each part of an
 assembly.
-A scale record sets one scale for all views.
+Each view needs its scale; the options of a view come in any order.
 A field sets a text listed by the template.
 The material is note 1 and the finish note 2, both with boxed numbers;
 .B boxed
@@ -149,8 +146,8 @@ A C template with a title, and a drawing for it:
 units in
 template title_c.ps
 field Title BRACKET (L), 2X
-view top
+view top scale 1
 .fi
 .RE
 .SH SEE ALSO
-smdraw(1), smsheet(1), smdim(1)
+smsheet(1), smview(1), smdim(1)
