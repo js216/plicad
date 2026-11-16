@@ -200,7 +200,8 @@ static struct fp *footprint(struct pcb *b, char **dirs, size_t ndirs,
 			continue;
 		}
 		memset(&p, 0, sizeof p);
-		if (!strcmp(w[0], "pad") && (n == 7 || (n == 8 && !strcmp(w[7], "nopaste"))) &&
+		if (!strcmp(w[0], "pad") &&
+		    (n == 7 || (n == 8 && !strcmp(w[7], "nopaste"))) &&
 		    number(w[3], &v[0]) && number(w[4], &v[1]) &&
 		    number(w[5], &v[2]) && number(w[6], &v[3])) {
 			p.nopaste = n == 8;
@@ -213,8 +214,7 @@ static struct fp *footprint(struct pcb *b, char **dirs, size_t ndirs,
 			p.h = v[3];
 		} else if (!strcmp(w[0], "hole") &&
 			   (n == 6 || (n == 8 && !strcmp(w[6], "keep") &&
-				       number(w[7], &p.keep) &&
-				       p.keep > 0)) &&
+				       number(w[7], &p.keep) && p.keep > 0)) &&
 			   number(w[2], &v[0]) && number(w[3], &v[1]) &&
 			   number(w[4], &v[2]) && number(w[5], &v[3])) {
 			p.shape = PAD_CIRCLE;
@@ -356,6 +356,37 @@ static void read_netlist(struct pcb *b, const char *path, int line)
 
 // Gives each net the pads of its pins: every pad of the footprint that
 // bears the pin number.
+// The parts of each group an unplaced statement names (by its name at a
+// dot) are not on the board: no footprint, so no pads, so no copper; a
+// net that had pins on them waits for them.
+static void leave_unplaced(struct pcb *b)
+{
+	for (size_t s = 0; s < b->nstmt; s++) {
+		const struct pcb_stmt *st = &b->stmt[s];
+		size_t n = st->n == 2 ? strlen(st->w[1]) : 0, hit = 0;
+
+		if (strcmp(st->w[0], "unplaced")) {
+			continue;
+		}
+		for (size_t i = 0; n && i < b->npart; i++) {
+			if (!strncmp(b->part[i].name, st->w[1], n) &&
+			    b->part[i].name[n] == '.') {
+				b->part[i].fp = NULL;
+				b->part[i].unplaced = 1;
+				hit++;
+			}
+		}
+		if (!hit) {
+			pcb_error(b, st->line, "unplaced GROUP, of parts");
+		}
+	}
+	for (size_t k = 0; k < b->nnet; k++) {
+		for (size_t j = 0; j < pend_n[k]; j++) {
+			b->net[k].waits |= b->part[pend_part[k][j]].unplaced;
+		}
+	}
+}
+
 static void give_pads(struct pcb *b)
 {
 	for (size_t k = 0; k < b->nnet; k++) {
@@ -552,15 +583,16 @@ int pcb_clash(const struct pcb *b, const struct pcb_part *q,
 	pcb_court(o, d);
 	if (q->bottom == o->bottom && c[0] < d[2] - 1e-9 &&
 	    d[0] < c[2] - 1e-9 && c[1] < d[3] - 1e-9 && d[1] < c[3] - 1e-9) {
-		snprintf(why, n, "the courtyards of %s (%s) and %s (%s) overlap",
+		snprintf(why, n,
+			 "the courtyards of %s (%s) and %s (%s) overlap",
 			 q->name, pcb_ref(q), o->name, pcb_ref(o));
 		return 1;
 	}
 	return keep_in(b, o, q, c, why, n) || keep_in(b, q, o, d, why, n);
 }
 
-int pcb_keeps(const struct pcb *b, const struct pcb_part *o, double x,
-	      double y, double rad, char *why, size_t n)
+int pcb_keeps(const struct pcb *b, const struct pcb_part *o, double x, double y,
+	      double rad, char *why, size_t n)
 {
 	for (size_t k = 0; o->placed && o->fp && k < o->fp->npad; k++) {
 		double cx, cy, r;
@@ -583,6 +615,19 @@ int pcb_in_keepout(const struct pcb *b, double x, double y, double rad,
 {
 	for (size_t i = 0; i < b->npart; i++) {
 		if (pcb_keeps(b, &b->part[i], x, y, rad, why, n)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+int pcb_in_cut(const struct pcb *b, const double box[4], double d)
+{
+	for (size_t i = 0; i < b->ncut; i++) {
+		const double *c = b->cut[i];
+
+		if (box[0] < c[2] + d && box[2] > c[0] - d &&
+		    box[1] < c[3] + d && box[3] > c[1] - d) {
 			return 1;
 		}
 	}
@@ -672,8 +717,7 @@ static int pin_is(const struct pcb *b, const char *s, const char *key)
 	return same;
 }
 
-double pcb_link_width(const struct pcb *b, int n, const char *a,
-		      const char *bb)
+double pcb_link_width(const struct pcb *b, int n, const char *a, const char *bb)
 {
 	for (size_t i = 0; i < b->nstmt; i++) {
 		const struct pcb_stmt *st = &b->stmt[i];
@@ -783,6 +827,34 @@ double pcb_seg_dist(double x, double y, double ax, double ay, double bx,
 	return hypot(x - (ax + t * dx), y - (ay + t * dy));
 }
 
+// The words of a ref statement: whether they are as pcb(5) says.
+static int ref_words(char **w, int n)
+{
+	int k = 3;
+
+	if (n < 3 || (strcmp(w[2], "above") && strcmp(w[2], "below") &&
+		      strcmp(w[2], "left") && strcmp(w[2], "right"))) {
+		return 0;
+	}
+	if (k < n && (!strcmp(w[k], "start") || !strcmp(w[k], "middle") ||
+		      !strcmp(w[k], "end"))) {
+		k++;
+	}
+	if (k + 1 < n && !strcmp(w[k], "rot") && !strcmp(w[k + 1], "90")) {
+		k += 2;
+	}
+	if (k + 1 < n && !strcmp(w[k], "size")) {
+		char *e = NULL;
+		double h = strtod(w[k + 1], &e);
+
+		if (*e || h < 0.5 || h > 0.8) {
+			return 0;
+		}
+		k += 2;
+	}
+	return k == n;
+}
+
 // Reads one statement of the source that the reader itself carries out:
 // the netlist, the board, layers, rules, footprints and widths.  The
 // rest are kept for the programs.
@@ -798,6 +870,30 @@ static void statement(struct pcb *b, char **w, int n, int line, char **dirs,
 				pcb_error(b, line, "board rect X0 Y0 X1 Y1");
 			}
 		}
+		return;
+	}
+	if (!strcmp(w[0], "cutout") && (n == 6 || n == 8) &&
+	    !strcmp(w[1], "rect")) {
+		size_t k = b->ncut < 8 ? b->ncut : 7;
+		double *c = b->cut[k];
+
+		b->cutr[k] = 0;
+		for (int i = 0; i < 4; i++) {
+			if (!number(w[i + 2], &c[i])) {
+				pcb_error(b, line,
+					  "cutout rect X0 Y0 X1 Y1 [round R]");
+			}
+		}
+		if (n == 8 &&
+		    (strcmp(w[6], "round") || !number(w[7], &b->cutr[k]) ||
+		     b->cutr[k] < 0 ||
+		     2 * b->cutr[k] > fmin(c[2] - c[0], c[3] - c[1]))) {
+			pcb_error(b, line, "cutout rect X0 Y0 X1 Y1 [round R]");
+		}
+		if (b->ncut == 8) {
+			pcb_error(b, line, "more than 8 cutouts");
+		}
+		b->ncut += b->ncut < 8;
 		return;
 	}
 	if (!strcmp(w[0], "layer") && n >= 3) {
@@ -843,8 +939,9 @@ static void statement(struct pcb *b, char **w, int n, int line, char **dirs,
 				b->edge_except[b->nexcept++] = pcb_strdup(w[i]);
 			}
 		} else {
-			pcb_error(b, line,
-				  "rule clearance|track|via|viagap|maskweb|edge ...");
+			pcb_error(
+				b, line,
+				"rule clearance|track|via|viagap|maskweb|edge ...");
 		}
 		return;
 	}
@@ -884,6 +981,12 @@ static void statement(struct pcb *b, char **w, int n, int line, char **dirs,
 		return;
 	}
 	if (!strcmp(w[0], "note")) {
+		return;
+	}
+	if (!strcmp(w[0], "ref") && !ref_words(w, n)) {
+		pcb_error(b, line,
+			  "ref PART above|below|left|right "
+			  "[start|middle|end] [rot 90] [size 0.5 to 0.8]");
 		return;
 	}
 	st.w = pcb_alloc((size_t)n * sizeof *st.w);
@@ -936,15 +1039,18 @@ static void read_lock(struct pcb *b, FILE *f)
 		} else if (!strcmp(w[0], "link") && n == 5 &&
 			   number(w[4], &v[0])) {
 			k = net_named(b, w[1]);
-			link = k >= 0 ? pcb_add_link(b, (int)k, w[2], w[3], v[0]) :
+			link = k >= 0 ? pcb_add_link(b, (int)k, w[2], w[3],
+						     v[0]) :
 					-1;
 		} else if (!strcmp(w[0], "pad") && n == 9) {
 			// pad NET PART.PIN REF X Y W H LAYER, the REF left out.
 			k = net_named(b, w[1]);
 			if (k >= 0) {
-				char *t[6] = { w[2], w[4], w[5], w[6], w[7], w[8] };
+				char *t[6] = { w[2], w[4], w[5],
+					       w[6], w[7], w[8] };
 
-				b->netpad[k] = pcb_grow(b->netpad[k], b->nnetpad[k],
+				b->netpad[k] = pcb_grow(b->netpad[k],
+							b->nnetpad[k],
 							sizeof *b->netpad[k]);
 				b->netpad[k][b->nnetpad[k]++] = pcb_words(t, 6);
 			}
@@ -958,7 +1064,8 @@ static void read_lock(struct pcb *b, FILE *f)
 				continue;
 			}
 			t.net = (int)k;
-			t.link = link >= 0 && b->link[link].net == k ? link : -1;
+			t.link = link >= 0 && b->link[link].net == k ? link :
+								       -1;
 			t.layer = pcb_layer(b, w[2]);
 			t.w = v[0];
 			t.n = (size_t)(n - 4) / 2;
@@ -977,7 +1084,8 @@ static void read_lock(struct pcb *b, FILE *f)
 				continue;
 			}
 			vi.net = (int)k;
-			vi.link = link >= 0 && b->link[link].net == k ? link : -1;
+			vi.link = link >= 0 && b->link[link].net == k ? link :
+									-1;
 			vi.x = atof(w[2]);
 			vi.y = atof(w[3]);
 			vi.dia = atof(w[4]);
@@ -1007,8 +1115,8 @@ static size_t store_of(struct pcb *b, const char *name)
 
 // Splits the lock into its sections: the group's (the board's, "",
 // for none) goes to the stream returned, the rest to the stores.
-static FILE *sections(struct pcb *b, FILE *lock, const char *group,
-		      char **text, size_t *len)
+static FILE *sections(struct pcb *b, FILE *lock, const char *group, char **text,
+		      size_t *len)
 {
 	char *line = pcb_alloc(LINE), name[1024] = "";
 	FILE *mine = open_memstream(text, len);
@@ -1158,8 +1266,9 @@ void pcb_read(struct pcb *b, const char *file, char **lib, size_t nlib,
 		}
 	}
 	fclose(f);
+	leave_unplaced(b);
 	for (size_t i = 0; i < b->npart; i++) {
-		if (!b->part[i].fp) {
+		if (!b->part[i].fp && !b->part[i].unplaced) {
 			pcb_error(b, 0, "%s (%s, %s) has no footprint",
 				  b->part[i].name, pcb_ref(&b->part[i]),
 				  b->part[i].mpn ? b->part[i].mpn :
@@ -1195,16 +1304,18 @@ void pcb_read(struct pcb *b, const char *file, char **lib, size_t nlib,
 			    pcb_net_of(b, q[0], p[0]) !=
 				    pcb_net_of(b, q[1], p[1]) ||
 			    !number(st->w[3], &v)) {
-				pcb_error(b, st->line,
-					  "width PIN PIN W, of two pins of one net");
+				pcb_error(
+					b, st->line,
+					"width PIN PIN W, of two pins of one net");
 			}
 			continue;
 		}
 		k = st->n == 3 ? net_named(b, st->w[1]) : -1;
 		if (k < 0 || !number(st->w[2], &v)) {
-			pcb_error(b, st->line,
-				  "width NET W, of a net of the netlist; or width "
-				  "PIN PIN W");
+			pcb_error(
+				b, st->line,
+				"width NET W, of a net of the netlist; or width "
+				"PIN PIN W");
 			continue;
 		}
 		b->net[k].width = v;
@@ -1335,7 +1446,8 @@ static void write_copper(const struct pcb *b, FILE *f, int k, int l)
 		fprintf(f, "track %s %s %.4f", b->net[k].name,
 			b->layer[t->layer].name, t->w);
 		for (size_t j = 0; j < t->n; j++) {
-			fprintf(f, " %.4f %.4f", t->xy[2 * j], t->xy[2 * j + 1]);
+			fprintf(f, " %.4f %.4f", t->xy[2 * j],
+				t->xy[2 * j + 1]);
 		}
 		fprintf(f, "\n");
 	}
@@ -1343,8 +1455,8 @@ static void write_copper(const struct pcb *b, FILE *f, int k, int l)
 		const struct pcb_via *v = &b->via[i];
 
 		if (v->net == k && v->link == l) {
-			fprintf(f, "via %s %.4f %.4f %.4f %.4f\n", b->net[k].name,
-				v->x, v->y, v->dia, v->drill);
+			fprintf(f, "via %s %.4f %.4f %.4f %.4f\n",
+				b->net[k].name, v->x, v->y, v->dia, v->drill);
 		}
 	}
 }
@@ -1437,8 +1549,9 @@ static void write_section(const struct pcb *b, FILE *f)
 				continue;
 			}
 			if (l >= 0) {
-				fprintf(f, "link %s %s %s %.4f\n", b->net[k].name,
-					b->link[l].a, b->link[l].b, b->link[l].w);
+				fprintf(f, "link %s %s %s %.4f\n",
+					b->net[k].name, b->link[l].a,
+					b->link[l].b, b->link[l].w);
 			}
 			write_copper(b, f, (int)k, (int)l);
 		}
@@ -1565,9 +1678,10 @@ static int text_clear(const struct pcb *b, size_t q, const double t[4],
 }
 
 static void stroke(struct pcb_stroke **s, size_t *n, size_t q, double w,
-		   const double xy[4])
+		   const double xy[4], int ref)
 {
 	*s = pcb_grow(*s, *n, sizeof **s);
+	(*s)[*n].ref = ref;
 	(*s)[*n].w = w;
 	(*s)[*n].x0 = xy[0];
 	(*s)[*n].y0 = xy[1];
@@ -1576,21 +1690,86 @@ static void stroke(struct pcb_stroke **s, size_t *n, size_t q, double w,
 	(*s)[(*n)++].part = q;
 }
 
+// The ref statement of the part of the name, or NULL.
+static const struct pcb_stmt *ref_of(const struct pcb *b, const char *name)
+{
+	for (size_t i = 0; i < b->nstmt; i++) {
+		if (!strcmp(b->stmt[i].w[0], "ref") &&
+		    !strcmp(b->stmt[i].w[1], name)) {
+			return &b->stmt[i];
+		}
+	}
+	return NULL;
+}
+
+// The height of the designator of a ref statement: its size, or else
+// SILK_H.
+static double ref_size(const struct pcb_stmt *rs)
+{
+	for (int k = 3; k + 1 < rs->n; k++) {
+		if (!strcmp(rs->w[k], "size")) {
+			return strtod(rs->w[k + 1], NULL);
+		}
+	}
+	return SILK_H;
+}
+
+// Whether a ref statement turns its designator.
+static int ref_turned(const struct pcb_stmt *rs)
+{
+	for (int k = 3; k < rs->n; k++) {
+		if (!strcmp(rs->w[k], "rot")) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// The lower left corner of a designator's box, bw by bh, where its ref
+// statement puts it by the courtyard c: on the side, at the gap, from
+// the start of the side (its left or top end), its middle or its end.
+static void ref_at(const struct pcb_stmt *rs, const double c[4], double bw,
+		   double bh, double at[2])
+{
+	const char *sd = rs->w[2];
+	const char *al = rs->n > 3 && strcmp(rs->w[3], "rot") &&
+					 strcmp(rs->w[3], "size") ?
+				 rs->w[3] :
+				 "middle";
+	int across = !strcmp(sd, "above") || !strcmp(sd, "below");
+	int a = !strcmp(al, "start") ? 0 : !strcmp(al, "end") ? 2 : 1;
+
+	if (across) {
+		at[0] = a == 0 ? c[0] :
+			a == 2 ? c[2] - bw :
+				 (c[0] + c[2] - bw) / 2;
+		at[1] = !strcmp(sd, "above") ? c[3] + SILK_GAP :
+					       c[1] - SILK_GAP - bh;
+	} else {
+		at[0] = !strcmp(sd, "left") ? c[0] - SILK_GAP - bw :
+					      c[2] + SILK_GAP;
+		at[1] = a == 0 ? c[3] - bh :
+			a == 2 ? c[1] :
+				 (c[1] + c[3] - bh) / 2;
+	}
+}
+
 size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 {
 	double(*done)[4] = pcb_alloc((b->npart + 1) * sizeof *done);
 	int *side = pcb_alloc((b->npart + 1) * sizeof *side);
 	size_t n = 0, ndone = 0;
-	double u = SILK_H / 6;
 
 	*s = NULL;
 	for (size_t q = 0; q < b->npart; q++) {
 		const struct pcb_part *p = &b->part[q];
 		const char *ref = p->ref ? p->ref : "";
 		size_t len = strlen(ref);
+		const struct pcb_stmt *rs = ref_of(b, p->name);
+		double h = rs ? ref_size(rs) : SILK_H, u = h / 6;
 		double c[4], t[4], tw = (5 * (double)len - 1) * u;
-		double at[12][2];
-		int pick = 0;
+		double at[12][2], bw = tw, bh = h;
+		int pick = 0, rot = 0;
 
 		if (!p->placed || !p->fp) {
 			continue;
@@ -1609,7 +1788,7 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 				xy[1] += p->y;
 				xy[2] += p->x;
 				xy[3] += p->y;
-				stroke(s, &n, q, ln->w, xy);
+				stroke(s, &n, q, ln->w, xy, 0);
 			}
 		}
 		if (!*ref) {
@@ -1618,7 +1797,13 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 		// The lower left corners of the places: the four sides, then
 		// the four 1 mm and 2 mm farther out.
 		pcb_court(p, c);
-		for (int i = 0; i < 12; i++) {
+		if (rs) {
+			rot = ref_turned(rs);
+			bw = rot ? h : tw;
+			bh = rot ? tw : h;
+			ref_at(rs, c, bw, bh, at[0]);
+		}
+		for (int i = 0; !rs && i < 12; i++) {
 			double g = SILK_GAP + i / 4;
 
 			at[i][0] = i % 4 < 2  ? (c[0] + c[2] - tw) / 2 :
@@ -1628,19 +1813,19 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 				   i % 4 == 1 ? c[1] - g - SILK_H :
 						(c[1] + c[3] - SILK_H) / 2;
 		}
-		for (int i = 11; i >= 0; i--) {
+		for (int i = 11; !rs && i >= 0; i--) {
 			t[0] = at[i][0] - SILK_W;
 			t[1] = at[i][1] - SILK_W;
 			t[2] = at[i][0] + tw + SILK_W;
-			t[3] = at[i][1] + SILK_H + SILK_W;
+			t[3] = at[i][1] + h + SILK_W;
 			if (text_clear(b, q, t, done, side, ndone)) {
 				pick = i;
 			}
 		}
 		t[0] = at[pick][0] - SILK_W;
 		t[1] = at[pick][1] - SILK_W;
-		t[2] = at[pick][0] + tw + SILK_W;
-		t[3] = at[pick][1] + SILK_H + SILK_W;
+		t[2] = at[pick][0] + bw + SILK_W;
+		t[3] = at[pick][1] + bh + SILK_W;
 		memcpy(done[ndone], t, sizeof t);
 		side[ndone++] = p->bottom;
 		for (size_t k = 0; ref[k]; k++) {
@@ -1658,11 +1843,19 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 				xy[1] = at[pick][1] + (g[1] - '0') * u;
 				xy[2] = x0 + (g[2] - '0') * u;
 				xy[3] = at[pick][1] + (g[3] - '0') * u;
-				if (p->bottom) {
-					xy[0] = 2 * at[pick][0] + tw - xy[0];
-					xy[2] = 2 * at[pick][0] + tw - xy[2];
+				// Turned, it reads upward in its box.
+				for (int e = 0; rot && e < 4; e += 2) {
+					double lx = xy[e] - at[pick][0];
+					double ly = xy[e + 1] - at[pick][1];
+
+					xy[e] = at[pick][0] + h - ly;
+					xy[e + 1] = at[pick][1] + lx;
 				}
-				stroke(s, &n, q, SILK_W, xy);
+				if (p->bottom) {
+					xy[0] = 2 * at[pick][0] + bw - xy[0];
+					xy[2] = 2 * at[pick][0] + bw - xy[2];
+				}
+				stroke(s, &n, q, SILK_W, xy, 1);
 				g++;
 			}
 		}

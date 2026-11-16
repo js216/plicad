@@ -713,6 +713,75 @@ static void read_face(struct shape *sh, const struct record *r)
 	shape_face(sh, s, sense, r->w[1]);
 }
 
+struct surf surf_read(char **w, size_t n, size_t *at, const char *where)
+{
+	struct record r = { w, n, where };
+	struct surf s;
+	size_t i = *at;
+	int k = i < n ? kind_of(w[i], surf_names, SF_KINDS) : -1;
+
+	if (k < 0) {
+		die("%s: unknown surface", where);
+	}
+	memset(&s, 0, sizeof(s));
+	s.kind = k;
+	s.o = word_vec(&r, i + 1);
+	s.n = word_vec(&r, i + 1 + VEC_WORDS);
+	s.x = word_vec(&r, i + 1 + (2 * VEC_WORDS));
+	check_frame(&r, s.n, s.x);
+	for (size_t j = 0; j < surf_sizes[k] && j < SIZES_MAX; j++) {
+		*surf_size(&s, j) = word_num(&r, i + 1 + FRAME_WORDS + j);
+	}
+	*at = i + 1 + FRAME_WORDS + surf_sizes[k];
+	return s;
+}
+
+int surfs_same(const struct surf *a, const struct surf *b)
+{
+	struct vec d = sub(b->o, a->o);
+
+	if (a->kind != b->kind) {
+		return 0;
+	}
+	if (a->kind == SF_PLANE) {
+		return len(cross(a->n, b->n)) < SH_EPS &&
+		       fabs(dot(a->n, d)) < SH_EPS;
+	}
+	if (a->kind == SF_CYL) {
+		return len(cross(a->n, b->n)) < SH_EPS &&
+		       len(cross(a->n, d)) < SH_EPS &&
+		       fabs(a->r - b->r) < SH_EPS;
+	}
+	return len(cross(a->n, b->n)) < SH_EPS && len(d) < SH_EPS &&
+	       fabs(a->r - b->r) < SH_EPS && fabs(a->r2 - b->r2) < SH_EPS &&
+	       fabs(a->r3 - b->r3) < SH_EPS;
+}
+
+void surf_text(char *buf, size_t room, const struct surf *s)
+{
+	struct surf c = *s;
+	const double v[FRAME_WORDS] = { s->o.x, s->o.y, s->o.z, s->n.x, s->n.y,
+					s->n.z, s->x.x, s->x.y, s->x.z };
+	size_t k = 0;
+	int w = snprintf(buf, room, "%s", surf_names[s->kind]);
+
+	for (size_t i = 0; w >= 0 && i < FRAME_WORDS + surf_sizes[s->kind];
+	     i++) {
+		k += (size_t)w;
+		if (k >= room) {
+			break;
+		}
+		w = snprintf(buf + k, room - k, " %.17g",
+			     (i < FRAME_WORDS ?
+				      v[i] :
+				      *surf_size(&c, i - FRAME_WORDS)) +
+				     0.0);
+	}
+	if (w < 0 || k + (size_t)w >= room) {
+		die("a surface does not fit its text");
+	}
+}
+
 // Reads the uses of a loop from the words of s, which follow "l", one
 // at a time, so that a loop takes any number of them.
 static void read_loop(struct shape *sh, char *s, const char *where)

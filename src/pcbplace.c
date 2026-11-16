@@ -158,9 +158,14 @@ static int clear_on(size_t k, int board, char *why, size_t n)
 	double c[4];
 
 	pcb_court(&B.part[k], c);
-	if (board && !scope && (c[0] < B.board[0] || c[1] < B.board[1] ||
-		       c[2] > B.board[2] || c[3] > B.board[3])) {
+	if (board && !scope &&
+	    (c[0] < B.board[0] || c[1] < B.board[1] || c[2] > B.board[2] ||
+	     c[3] > B.board[3])) {
 		snprintf(why, n, "off the board");
+		return 0;
+	}
+	if (board && !scope && pcb_in_cut(&B, c, 0)) {
+		snprintf(why, n, "in a cutout");
 		return 0;
 	}
 	for (size_t i = 0; i < B.npart; i++) {
@@ -280,20 +285,22 @@ static int on_via(size_t b, char *why, size_t n)
 			const struct pcb_via *w = &ob->lock.via[v];
 
 			for (size_t i = 0; i < B.npart; i++) {
-				for (size_t p = 0;
-				     block_of[i] == (long)b && p < B.part[i].fp->npad;
+				for (size_t p = 0; block_of[i] == (long)b &&
+						   p < B.part[i].fp->npad;
 				     p++) {
 					struct pcb_spot s;
 
 					pcb_spot(&B, &B.part[i], p, &s);
 					if (pcb_net_of(&B, i, p) != w->net &&
-					    pcb_spot_dist(&s, w->x + dx, w->y + dy) <
+					    pcb_spot_dist(&s, w->x + dx,
+							  w->y + dy) <
 						    w->dia / 2 + B.clearance) {
-						snprintf(why, n,
-							 "%s (%s): on a via of block %s",
-							 B.part[i].name,
-							 pcb_ref(&B.part[i]),
-							 ob->group);
+						snprintf(
+							why, n,
+							"%s (%s): on a via of block %s",
+							B.part[i].name,
+							pcb_ref(&B.part[i]),
+							ob->group);
 						return 1;
 					}
 				}
@@ -577,8 +584,8 @@ static int place(size_t k, int block_rot, int *way_out)
 	q->by = pcb_by(&B, k, st);
 	if (verbose) {
 		fprintf(stderr, "%s:%d: %s (%s) at %.3f %.3f rot %d: %s\n",
-			B.file, st->line, q->name, pcb_ref(q), q->x, q->y, q->rot,
-			how);
+			B.file, st->line, q->name, pcb_ref(q), q->x, q->y,
+			q->rot, how);
 	}
 	return 1;
 }
@@ -657,8 +664,8 @@ static int place_block(size_t b)
 
 	if (!lr->placed) {
 		pcb_error(&B, B.stmt[stmt_of[r]].line,
-			  "block %s: its lock does not place %s (%s)", bl->group,
-			  B.part[r].name, pcb_ref(&B.part[r]));
+			  "block %s: its lock does not place %s (%s)",
+			  bl->group, B.part[r].name, pcb_ref(&B.part[r]));
 		return 0;
 	}
 	if (!place(r, lr->rot, &way)) {
@@ -699,16 +706,18 @@ static int place_block(size_t b)
 		char why[1200];
 
 		if (!block_clear_why(b, why, sizeof why)) {
-			pcb_error(&B, B.stmt[stmt_of[r]].line,
-				  "block %s, fixed by its root, is not clear: %s",
-				  bl->group, why);
+			pcb_error(
+				&B, B.stmt[stmt_of[r]].line,
+				"block %s, fixed by its root, is not clear: %s",
+				bl->group, why);
 		}
 	}
 	if (verbose) {
-		fprintf(stderr, "%s:%d: block %s at %.4f %.4f by its root %s (%s)\n",
+		fprintf(stderr,
+			"%s:%d: block %s at %.4f %.4f by its root %s (%s)\n",
 			B.file, B.stmt[stmt_of[r]].line, bl->group,
-			B.part[r].x - lr->x, B.part[r].y - lr->y, B.part[r].name,
-			pcb_ref(&B.part[r]));
+			B.part[r].x - lr->x, B.part[r].y - lr->y,
+			B.part[r].name, pcb_ref(&B.part[r]));
 	}
 	return 1;
 }
@@ -738,8 +747,8 @@ static void read_blocks(char **lib, size_t nlib)
 		for (size_t o = 0; o < B.nstmt; o++) {
 			const struct pcb_stmt *ot = &B.stmt[o];
 
-			if (o != s && !strcmp(ot->w[0], "block") && ot->n == 2 &&
-			    of_group(st->w[1], ot->w[1]) &&
+			if (o != s && !strcmp(ot->w[0], "block") &&
+			    ot->n == 2 && of_group(st->w[1], ot->w[1]) &&
 			    (!scope || of_group(ot->w[1], scope))) {
 				top = 0; // Held by a larger block.
 			}
@@ -750,10 +759,11 @@ static void read_blocks(char **lib, size_t nlib)
 		text = pcb_section(&B, st->w[1]);
 		f = text ? fmemopen(text, strlen(text), "r") : NULL;
 		if (!f) {
-			pcb_error(&B, st->line,
-				  "block %s: no section of it in the lock; lay it "
-				  "out first",
-				  st->w[1]);
+			pcb_error(
+				&B, st->line,
+				"block %s: no section of it in the lock; lay it "
+				"out first",
+				st->w[1]);
 			continue;
 		}
 		memset(&bl, 0, sizeof bl);
@@ -880,9 +890,10 @@ static void place_groups(void)
 			}
 		}
 		if (n != 1 || !pcb_pin(&B, st->w[4], &a, &ap)) {
-			pcb_error(&B, st->line,
-				  "place GROUP WAY from PIN: the group needs one "
-				  "part placed by no statement, and the pin");
+			pcb_error(
+				&B, st->line,
+				"place GROUP WAY from PIN: the group needs one "
+				"part placed by no statement, and the pin");
 			continue;
 		}
 		stmt_of[root] = (long)s;
@@ -974,8 +985,8 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 			continue;
 		}
 		if (stmt_of[k] >= 0) {
-			pcb_error(&B, st->line, "%s (%s) is placed twice", st->w[1],
-				  pcb_ref(&B.part[k]));
+			pcb_error(&B, st->line, "%s (%s) is placed twice",
+				  st->w[1], pcb_ref(&B.part[k]));
 			continue;
 		}
 		stmt_of[k] = (long)s;
@@ -1013,7 +1024,8 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 	}
 	for (size_t b = 0; b < nblocks; b++) {
 		if (blocks[b].root < 0) {
-			pcb_error(&B, 0, "block %s has no part placed from outside it",
+			pcb_error(&B, 0,
+				  "block %s has no part placed from outside it",
 				  blocks[b].group);
 		}
 	}
@@ -1087,8 +1099,8 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 		char why[1200];
 
 		if (B.part[k].fp && !B.part[k].placed && in_scope(k)) {
-			pcb_error(&B, 0, "%s (%s) is not placed", B.part[k].name,
-				  pcb_ref(&B.part[k]));
+			pcb_error(&B, 0, "%s (%s) is not placed",
+				  B.part[k].name, pcb_ref(&B.part[k]));
 		}
 		// What stays as it was, kept or fixed, is not moved: what it
 		// comes on is a fault.
@@ -1097,9 +1109,9 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 		    (kept[k] || !strcmp(B.stmt[stmt_of[k]].w[0], "fix")) &&
 		    !clear_why(k, why, sizeof why)) {
 			pcb_error(&B, B.stmt[stmt_of[k]].line,
-				  "%s (%s), %s, is not clear: %s", B.part[k].name,
-				  pcb_ref(&B.part[k]), kept[k] ? "kept" : "fixed",
-				  why);
+				  "%s (%s), %s, is not clear: %s",
+				  B.part[k].name, pcb_ref(&B.part[k]),
+				  kept[k] ? "kept" : "fixed", why);
 		}
 	}
 	free(fixed_out);
@@ -1108,7 +1120,8 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 	if (verbose) {
 		fprintf(stderr,
 			"%s: %zu parts kept from the lock; %s: difficulty %zu\n",
-			B.file, nfixed, scope ? scope : "the board", difficulty());
+			B.file, nfixed, scope ? scope : "the board",
+			difficulty());
 	}
 	pcb_write_lock(&B, out);
 	failed = B.failed;

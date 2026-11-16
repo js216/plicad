@@ -4,15 +4,16 @@
 
 // Usage: schdraw [-v] [-L LIB]... sheet.sch > sheet.vec
 //
-// Reads the source (sch(5)), which the reader places, and the symbols
-// it names from the project (symbols and sheets next to the source) and
-// the library directories (LIB/symbols, LIB/sheets; by default ../lib
-// next to the program); routes the wires; and writes the page as
-// vec(5): the template of the sheet, each net's wires and dots, and each
-// part's symbol and text, the parts and nets named, the text as text,
-// and where each pin and flag meets its wire, so a test (schconn) can
-// tell from the drawing alone that it joins what the netlist joins.
-// vecps prints it.
+// Reads the source (sch(5)), page by page, which the reader places, and
+// the symbols it names from the project (symbols and sheets next to the
+// source) and the library directories (LIB/symbols, LIB/sheets; by
+// default ../lib next to the program); routes the wires; and writes the
+// pages as vec(5), each from its page record: the template of the sheet,
+// each net's wires and dots, and each part's symbol and text, the parts
+// and nets named, the text as text, and where each pin and flag meets
+// its wire, so a test (schconn) can tell from the drawing alone that it
+// joins what the netlist joins.  Each port of the sheet names the other
+// pages it is on, as BUF(2,5).  vecps prints it.
 //
 // The wires run on the grid of the source, 0.1 in at scale 1.  The pins
 // of a net are wired in groups: each pin with a flag of its own and the
@@ -27,7 +28,8 @@
 // no wire of another group, and may cross one at right angles; it joins
 // its own tree where that makes a T and nowhere else, so there are no
 // four-way junctions and no junctions on pins.  Bends, crossings, running
-// next to a body or a foreign wire, a junction next to another and, for
+// next to a body or a foreign wire, a junction next to another or next
+// to a pin and, for
 // a wire the source gives a side, straying off that side cost more than
 // length.  The smallest groups are routed first.  A group that finds no
 // way is put first and all are routed again (rip-up); once all are
@@ -109,7 +111,7 @@ struct group {
 	size_t nedge;
 };
 
-static struct sch S;
+static struct sch S, *pages; // The page drawn, and all pages read.
 static struct poly *polys;
 static size_t npolys;
 static struct label *labels; // One for each part, if it has one.
@@ -378,6 +380,20 @@ static int next_to_dot(int x, int y)
 	return 0;
 }
 
+// Whether a pin stands next to (x, y): a junction there would sit on its
+// lead, as if the branch came from the pin.
+static int next_to_pin(int x, int y)
+{
+	for (int d = 0; d < 4; d++) {
+		int nx = x + DX[d], ny = y + DY[d];
+
+		if (inside(nx, ny) && pinnet[idx(nx, ny)] != -1) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 // A side a path keeps to: the way, and the two pins it runs between.
 struct keep {
 	int side, x[2], y[2];
@@ -500,7 +516,8 @@ static int route(int g, int sx, int sy, int sd, int tx, int ty, int td,
 			c = cost[s] + STEP + (nd != d ? BEND : 0) +
 			    (crossing ? CROSS : 0) + near_cost(nx, ny, g) +
 			    stray(k, nx, ny);
-			if (bm && next_to_dot(nx, ny)) {
+			if (bm &&
+			    (next_to_dot(nx, ny) || next_to_pin(nx, ny))) {
 				c += CROWD;
 			}
 			ns = b * 4 + nd;
@@ -781,8 +798,8 @@ static void route_all(void)
 				const struct sch_net *t =
 					&S.net[groups[order[o]].net];
 
-				fprintf(stderr, "%s:%d: no way for net %s\n", S.file,
-					t->line, t->name);
+				fprintf(stderr, "%s:%d: no way for net %s\n",
+					S.file, t->line, t->name);
 				rip(order[o]);
 				failed = 1;
 			}
@@ -1254,7 +1271,8 @@ static void sheet(double room[4], double paper[2], int print)
 		buf[strcspn(buf, "\n")] = 0;
 		if (sscanf(buf, "paper %lf %lf", &paper[0], &paper[1]) == 2) {
 			if (print) {
-				printf("page %.0f %.0f\n", paper[0], paper[1]);
+				printf("page %.0f %.0f %d\n", paper[0],
+				       paper[1], S.page);
 			}
 		} else if (sscanf(buf, "room %lf %lf %lf %lf", &room[0],
 				  &room[1], &room[2], &room[3]) == 4 ||
@@ -1342,6 +1360,9 @@ static const char *field(const char *name)
 			return S.field[i][1];
 		}
 	}
+	if (strcmp(name, "Title") == 0) {
+		return S.name;
+	}
 	if (strcmp(name, "Page") == 0) {
 		static char page[16];
 
@@ -1425,7 +1446,7 @@ static void pin_ends(const struct sch_part *q)
 
 		sch_pin_at(q, p, &x, &y, &d);
 		if (q->dev->shape->flag) {
-			printf("flag %s", q->text);
+			printf("flag %s", q->name);
 		} else {
 			printf("pin %s.%s", q->ref, sch_pnum(q->dev, p));
 		}
@@ -1439,7 +1460,6 @@ static void write_vec(void)
 {
 	double room[4], paper[2], e[4];
 
-	printf("# vec of %s, by schdraw\n", S.file);
 	sheet(room, paper, 1);
 	extent(e);
 	SC = S.scale;
@@ -1701,8 +1721,9 @@ static size_t spans(size_t a, struct span *sp)
 			b[2] = fmax(b[2], t[2]);
 			b[3] = fmax(b[3], t[3]);
 		}
-		sp[n++] = (struct span){ b[a] / GRID, b[a + 2] / GRID, i, 0,
-					 flag, 0 };
+		sp[n++] = (struct span){ b[a] / GRID, b[a + 2] / GRID,
+					 i,	      0,
+					 flag,	      0 };
 	}
 	for (size_t i = 0; i < npolys; i++) {
 		struct span w = { 1e9, -1e9, i, 1, 0, 0 };
@@ -1762,7 +1783,7 @@ static void spread(size_t a)
 		double mid = (sp[k].lo + sp[k].hi) / 2, best = 1e9;
 
 		for (size_t m = 0; sp[k].flag && m < nb; m++) {
-			double d = sp[k].hi < lo[m] ? lo[m] - mid :
+			double d = sp[k].hi < lo[m]  ? lo[m] - mid :
 				   sp[k].lo > end[m] ? mid - end[m] :
 						       -1;
 
@@ -1843,10 +1864,85 @@ static void drop_unplaced(void)
 	free(to);
 }
 
+// Gives each port of the sheet the other pages it is on, by number, after
+// its name, in brackets: BUF(2,5).
+static void cross_refs(void)
+{
+	for (size_t i = 0; i < S.npart; i++) {
+		struct sch_part *q = &S.part[i];
+		char *t;
+		int any = 0;
+
+		if (!q->dev->shape->flag ||
+		    strcmp(q->dev->shape->flag, "port")) {
+			continue;
+		}
+		t = sch_alloc(strlen(q->name) + 8 + 4 * S.npages);
+		strcpy(t, q->name);
+		for (int n = 1; n <= 99; n++) {
+			int on = 0;
+
+			for (size_t p = 0; p < S.npages; p++) {
+				const struct sch_page *pg = &S.pages[p];
+
+				for (size_t j = 0;
+				     n != S.page && pg->num == n &&
+				     j < pg->nport;
+				     j++) {
+					on |= !strcmp(pg->port[j], q->name);
+				}
+			}
+			if (on) {
+				sprintf(t + strlen(t), "%c%d", any++ ? ',' : '(',
+					n);
+			}
+		}
+		if (any) {
+			strcat(t, ")");
+		}
+		q->text = t;
+	}
+}
+
+// Frees the drawing of a page, for the next.
+static void clear_page(void)
+{
+	for (size_t i = 0; i < npolys; i++) {
+		free(polys[i].xy);
+	}
+	for (size_t g = 0; g < ngroups; g++) {
+		free(groups[g].end);
+		free(groups[g].edge);
+	}
+	for (size_t i = 0; i < S.npart; i++) {
+		for (int l = 0; l < labels[i].nline; l++) {
+			for (int r = 0; r < labels[i].nrun[l]; r++) {
+				free(labels[i].run[l][r].s);
+			}
+		}
+	}
+	free(polys);
+	free(groups);
+	free(labels);
+	free(blocked);
+	free(pinnet);
+	free(eown);
+	free(heap);
+	free(cost);
+	free(from);
+	polys = NULL;
+	groups = NULL;
+	labels = NULL;
+	blocked = NULL;
+	pinnet = eown = NULL;
+	heap = cost = from = NULL;
+	npolys = ngroups = nheap = 0;
+}
+
 int main(int argc, char **argv)
 {
 	char **lib = NULL;
-	size_t nlib = 0;
+	size_t nlib = 0, npage;
 	int i = 1, faults;
 
 	for (; i < argc && argv[i][0] == '-'; i++) {
@@ -1868,17 +1964,29 @@ int main(int argc, char **argv)
 		lib[0] = sch_default_lib(argv[0]);
 		nlib = 1;
 	}
-	faults = sch_read(&S, argv[i], lib, nlib);
-	drop_unplaced();
-	grid();
-	make_groups();
-	route_all();
-	trace();
-	labels_all();
-	spread(0);
-	spread(1);
-	check_room();
-	write_vec();
+	pages = sch_alloc(sizeof *pages);
+	faults = sch_read(&pages[0], argv[i], 0, lib, nlib);
+	npage = pages[0].npages ? pages[0].npages : 1;
+	pages = xrealloc(pages, npage * sizeof *pages);
+	printf("# vec of %s, by schdraw\n", argv[i]);
+	for (size_t k = 0; k < npage; k++) {
+		if (k) {
+			faults += sch_read(&pages[k], argv[i], k, lib, nlib);
+		}
+		S = pages[k];
+		cross_refs();
+		drop_unplaced();
+		grid();
+		make_groups();
+		route_all();
+		trace();
+		labels_all();
+		spread(0);
+		spread(1);
+		check_room();
+		write_vec();
+		clear_page();
+	}
 	for (size_t k = 0; k < nlib; k++) {
 		free(lib[k]);
 	}

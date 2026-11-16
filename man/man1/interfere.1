@@ -29,6 +29,30 @@ A sample collides if it lies inside the other part, 1 um or more from
 its faces; parts that only touch do not collide.
 .I N
 is the number of colliding samples, counted up to a limit.
+A pair that does not collide prints
+.PP
+.RS
+.I "name name"
+.B gap
+.I g
+.B tolerance
+.I t
+.RE
+.PP
+if its tolerances may close the gap between the two: the least
+distance
+.I g
+between their exact solids, in mm, over 0.05 mm, is less than
+.IR t ,
+the sum of the drifts of the two.
+The drift of a part is the most that its tolerances can move any of
+it: over the parameters of its ranges
+.RI ( stream (5)),
+the sum of the most that either end of each moves a corner of its
+blank, on either face, or a hole, or a face of its solid (along its
+normal, by the turn of its axis across the solid, and by its sizes).
+Parts that touch have no gap, and parts closer than 0.05 mm count as
+touching.
 The pairs are counted by
 .I n
 processes, 4 by default, with the same output for any
@@ -63,7 +87,7 @@ diameter 1.2
 in particular wherever one part goes into or through another, however
 thin either is.
 .SH SEE ALSO
-place(1)
+place(1), stream(5)
 .SH BUGS
 Between two folded parts, an overlap thinner than the 1 mm grid may be
 missed.

@@ -95,7 +95,8 @@ static int net_in_scope(size_t n)
 static int net_here(size_t n)
 {
 	for (size_t j = 0; j < B.net[n].nend; j++) {
-		if (!scope || of_group(B.part[B.net[n].end[j].part].name, scope)) {
+		if (!scope ||
+		    of_group(B.part[B.net[n].end[j].part].name, scope)) {
 			return 1;
 		}
 	}
@@ -204,7 +205,9 @@ static int free_at(double x, double y, double r, int layer, int n,
 	}
 	if (!scope &&
 	    (x - r < B.board[0] + B.edge || x + r > B.board[2] - B.edge ||
-	     y - r < B.board[1] + B.edge || y + r > B.board[3] - B.edge)) {
+	     y - r < B.board[1] + B.edge || y + r > B.board[3] - B.edge ||
+	     pcb_in_cut(&B, (const double[4]){ x - r, y - r, x + r, y + r },
+			B.edge))) {
 		*who = "the edge";
 		return 0;
 	}
@@ -357,7 +360,9 @@ static void grid(int n, double w, double ox, double oy)
 			double x = cx(i), y = cy(j), e = B.edge + w / 2;
 
 			if (x < B.board[0] + e || x > B.board[2] - e ||
-			    y < B.board[1] + e || y > B.board[3] - e) {
+			    y < B.board[1] + e || y > B.board[3] - e ||
+			    pcb_in_cut(&B, (const double[4]){ x, y, x, y },
+				       e)) {
 				bad[j * W + i] = 1;
 			}
 		}
@@ -490,8 +495,10 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 		from[s] = -1;
 	}
 	for (int c = 0; c < W * H; c++) {
-		inp[c] = (unsigned char)inside_spot(&sa, cx(c % W), cy(c / W), 0);
-		inq[c] = (unsigned char)inside_spot(&sb, cx(c % W), cy(c / W), 0);
+		inp[c] = (unsigned char)inside_spot(&sa, cx(c % W), cy(c / W),
+						    0);
+		inq[c] = (unsigned char)inside_spot(&sb, cx(c % W), cy(c / W),
+						    0);
 	}
 	tb[0] = cb % W;
 	tb[1] = cb / W;
@@ -555,7 +562,8 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 			step = (nd % 2 ? 1.41421356 : 1) + turn * BEND;
 			if (cost[s] + step < cost[nc * 8 + nd]) {
 				cost[nc * 8 + nd] = cost[s] + step;
-				prio[nc * 8 + nd] = cost[s] + step + estimate(nc);
+				prio[nc * 8 + nd] =
+					cost[s] + step + estimate(nc);
 				from[nc * 8 + nd] = s;
 				push(nc * 8 + nd);
 			}
@@ -738,7 +746,8 @@ static int route_net(int n, const char **who)
 				size_t b = end_of(st->w[k], ends, m);
 
 				if (a == m || b == m) {
-					pcb_error(&B, st->line, "no pin %s on the top",
+					pcb_error(&B, st->line,
+						  "no pin %s on the top",
 						  st->w[a == m ? k - 1 : k]);
 					continue;
 				}
@@ -836,7 +845,8 @@ static int via_room(int n, double x, double y, double r, const char **who)
 			}
 			// A contact pad's opening: bare copper, no solder to
 			// bridge to the via.
-			for (int side = 0; pcb_soldered(p, k) && side < 2; side++) {
+			for (int side = 0; pcb_soldered(p, k) && side < 2;
+			     side++) {
 				if (pcb_opening(&B, q, k, side, o) &&
 				    hypot(fmax(fmax(o[0] - x, x - o[2]), 0),
 					  fmax(fmax(o[1] - y, y - o[3]), 0)) <
@@ -945,8 +955,8 @@ static int vias(int n)
 		w = neck_width(n, e->part);
 		if (s.layer == B.net[n].plane) {
 			if (!have && pcb_relieved(&B, e->part, e->pad)) {
-				neck(n, pcb_add_link(&B, n, key, "plane", w), q, &s,
-				     w);
+				neck(n, pcb_add_link(&B, n, key, "plane", w), q,
+				     &s, w);
 			}
 			free(key);
 			continue;
@@ -1009,7 +1019,8 @@ static int vias(int n)
 						clear = free_at(
 							s.x + (x - s.x) * f,
 							s.y + (y - s.y) * f,
-							w / 2, s.layer, n, &who);
+							w / 2, s.layer, n,
+							&who);
 					}
 					if (!clear) {
 						continue;
@@ -1036,8 +1047,8 @@ static int vias(int n)
 		}
 		{
 			int l = pcb_add_link(&B, n, key, "via", w);
-			struct pcb_via v = { n, l, bx, by, B.via_dia,
-					     B.via_drill };
+			struct pcb_via v = { n,	 l,	    bx,
+					     by, B.via_dia, B.via_drill };
 
 			free(key);
 			B.via = pcb_grow(B.via, B.nvia, sizeof *B.via);
@@ -1127,13 +1138,16 @@ static int link_clear(long l)
 
 			for (double f = 0; f <= len; f += CELL) {
 				double u = len > 0 ? f / len : 0;
-				double x = t->xy[2 * j - 2] +
-					   (t->xy[2 * j] - t->xy[2 * j - 2]) * u;
-				double y = t->xy[2 * j - 1] +
-					   (t->xy[2 * j + 1] - t->xy[2 * j - 1]) * u;
+				double x =
+					t->xy[2 * j - 2] +
+					(t->xy[2 * j] - t->xy[2 * j - 2]) * u;
+				double y =
+					t->xy[2 * j - 1] +
+					(t->xy[2 * j + 1] - t->xy[2 * j - 1]) *
+						u;
 
-				if (!pads_clear(x, y, t->w / 2 - 1e-6, t->layer, n,
-						&who)) {
+				if (!pads_clear(x, y, t->w / 2 - 1e-6, t->layer,
+						n, &who)) {
 					return 0;
 				}
 			}
@@ -1228,17 +1242,18 @@ static size_t block_copper(char **lib, size_t nlib)
 		text = pcb_section(&B, st->w[1]);
 		f = text ? fmemopen(text, strlen(text), "r") : NULL;
 		if (!f) {
-			pcb_error(&B, st->line,
-				  "block %s: no section of it in the lock; lay it "
-				  "out first",
-				  st->w[1]);
+			pcb_error(
+				&B, st->line,
+				"block %s: no section of it in the lock; lay it "
+				"out first",
+				st->w[1]);
 			continue;
 		}
 		pcb_read(&L, B.file, lib, nlib, f, NULL);
 		fclose(f);
 		for (size_t q = 0; q < B.npart && r < 0; q++) {
-			if (of_group(B.part[q].name, st->w[1]) && B.part[q].placed &&
-			    L.part[q].placed) {
+			if (of_group(B.part[q].name, st->w[1]) &&
+			    B.part[q].placed && L.part[q].placed) {
 				r = (long)q;
 			}
 		}
@@ -1251,11 +1266,11 @@ static size_t block_copper(char **lib, size_t nlib)
 		// What the lock had of the block's copper goes.
 		for (size_t l = 0; l < first; l++) {
 			long qa = B.link[l].net >= 0 ?
-					  part_of_key(B.link[l].net, B.link[l].a) :
+					  part_of_key(B.link[l].net,
+						      B.link[l].a) :
 					  -1;
 
-			if (qa >= 0 &&
-			    of_group(B.part[qa].name, st->w[1])) {
+			if (qa >= 0 && of_group(B.part[qa].name, st->w[1])) {
 				rip(B.link[l].net, (long)l);
 			}
 		}
@@ -1276,8 +1291,10 @@ static size_t block_copper(char **lib, size_t nlib)
 				t.link = (int)nl;
 				t.xy = pcb_alloc(2 * t.n * sizeof *t.xy);
 				for (size_t j = 0; j < t.n; j++) {
-					t.xy[2 * j] = L.track_[i].xy[2 * j] + tx;
-					t.xy[2 * j + 1] = L.track_[i].xy[2 * j + 1] + ty;
+					t.xy[2 * j] =
+						L.track_[i].xy[2 * j] + tx;
+					t.xy[2 * j + 1] =
+						L.track_[i].xy[2 * j + 1] + ty;
 				}
 				B.track_ = pcb_grow(B.track_, B.ntrack,
 						    sizeof *B.track_);
@@ -1297,7 +1314,8 @@ static size_t block_copper(char **lib, size_t nlib)
 			}
 		}
 		if (verbose) {
-			fprintf(stderr, "%s: the copper of block %s, moved %.4f %.4f\n",
+			fprintf(stderr,
+				"%s: the copper of block %s, moved %.4f %.4f\n",
 				B.file, st->w[1], tx, ty);
 		}
 		pcb_free(&L);

@@ -20,14 +20,18 @@ reads the source of a sheet metal part,
 and writes the folded part, its flat blank with the map of each face
 and the feature of each edge and hole, as a stream,
 .IR stream (5),
-on the standard output.
+on the standard output, with its ranges: for each parameter of a range
+that it leans on
+.RI ( plicad (7)),
+it folds the part again with the parameter moved and writes what each
+end of the range moves.
 .TP
 .BI \-D " name" = expr
 Set the parameter
 .I name
 to
 .IR expr ,
-overriding every definition of it.
+exact, overriding every definition of it.
 .TP
 .B \-M
 Instead, print the names of the included parameters used by the part.
@@ -35,4 +39,6 @@ Instead, print the names of the included parameters used by the part.
 plicad(7), sm(5), stream(5), smflat(1), tostep(1), measure(1),
 smview(1)
 .SH DIAGNOSTICS
-FILE:LINE: and the fault, for a statement that cannot be built.
+FILE:LINE: and the fault, for a statement that cannot be built, or a
+definition of a length or an angle without a tolerance; PART: and the
+parameter, for a part that takes another form as the parameter moves.

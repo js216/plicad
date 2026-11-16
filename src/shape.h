@@ -193,6 +193,16 @@ struct urange face_uses(const struct shape *sh, size_t f);
 // The point of an edge at the share s of its way from v0, s in [0, 1].
 struct vec edge_at(const struct sedge *e, double s);
 
+// Reads a surface of the text form from the words w[*at] on, of n, the
+// word of its kind first, and moves *at past it; dies on a bad one.
+struct surf surf_read(char **w, size_t n, size_t *at, const char *where);
+// Whether surfaces a and b are one surface, within SH_EPS: a plane or a
+// cylinder whatever its frame, another kind by its frame and sizes.
+int surfs_same(const struct surf *a, const struct surf *b);
+// Writes surface s into buf, of size room, as the text form has it:
+// the word of its kind, its frame and its sizes.
+void surf_text(char *buf, size_t room, const struct surf *s);
+
 // Writes the records of the text form, those of a part of a stream
 // (stream.h) between "part NAME" and "end".
 void shape_write(FILE *out, const struct shape *sh);

@@ -2,6 +2,6 @@
 # bad_sch_group.sch -- A group left open
 # Copyright (c) 2026 Jakob Kastelic
 
-page 1
+page 1 bad
 group a
   resistor r 1k

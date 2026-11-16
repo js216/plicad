@@ -49,6 +49,7 @@ struct pcb_part {
 	struct fp *fp;
 	double x, y;
 	int rot, bottom, placed, line;
+	int unplaced; // Of a group an unplaced statement names: no footprint.
 	char *by;
 };
 
@@ -62,6 +63,7 @@ struct pcb_end {
 struct pcb_net {
 	char *name;
 	int global, plane;
+	int waits; // It has pins on parts unplaced, and so is not whole.
 	double width;
 	struct pcb_end *end;
 	size_t nend;
@@ -103,6 +105,10 @@ struct pcb_stmt {
 struct pcb {
 	const char *file;
 	double board[4]; // The outline, a rectangle.
+	// The cutouts, rectangles through the board, which are edge like
+	// the outline, and the radii of their corners.
+	double cut[8][4], cutr[8];
+	size_t ncut;
 	double clearance, track, via_dia, via_drill, edge;
 	// From a pad's edge to the ring of a via of its net (the via joined
 	// to it by a neck track), and the least web of solder mask between
@@ -190,6 +196,8 @@ void pcb_spot(const struct pcb *b, const struct pcb_part *q, size_t k,
 	      struct pcb_spot *s);
 // The courtyard of a placed part, on the board.
 void pcb_court(const struct pcb_part *q, double c[4]);
+// Whether the box (x0 y0 x1 y1) comes within d of a cutout.
+int pcb_in_cut(const struct pcb *b, const double box[4], double d);
 // The keep-out of pad k of part q, a hole a screw goes through: its
 // center and radius on the board; returns 0 if it has none.
 int pcb_keepout(const struct pcb *b, const struct pcb_part *q, size_t k,
@@ -202,8 +210,8 @@ int pcb_clash(const struct pcb *b, const struct pcb_part *q,
 	      const struct pcb_part *o, char *why, size_t n);
 // Whether a circle at (x, y) of radius rad (a via) overlaps the keep-out
 // of a hole of placed part o; which goes to why, of room n.
-int pcb_keeps(const struct pcb *b, const struct pcb_part *o, double x,
-	      double y, double rad, char *why, size_t n);
+int pcb_keeps(const struct pcb *b, const struct pcb_part *o, double x, double y,
+	      double rad, char *why, size_t n);
 // Whether such a circle overlaps the keep-out of a hole of any placed
 // part of the board.
 int pcb_in_keepout(const struct pcb *b, double x, double y, double rad,
@@ -249,6 +257,7 @@ int pcb_layer(const struct pcb *b, const char *name);
 struct pcb_stroke {
 	double w, x0, y0, x1, y1;
 	size_t part;
+	int ref; // A stroke of the designator, not of the footprint.
 };
 // The silkscreen of the board: the lines of each placed part's footprint
 // and its designator.  A designator stands by its part's courtyard, at

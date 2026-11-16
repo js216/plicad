@@ -16,6 +16,11 @@
 // thinner than the grid.  A pair with a solid part (place(1)) is checked
 // on the exact solids of both instead, sampled on their faces and edges
 // (clash.h), and N counts those samples.
+//
+// A pair that does not collide, with a gap between them over the chord
+// of clash_gap, prints "NAME NAME gap G tolerance T" if the tolerances
+// of the two may close it: T, the sum of the drifts of the two (drift),
+// is more than G, the least distance between their exact solids.
 
 #include "clash.h"
 #include "fold.h"
@@ -40,7 +45,8 @@ enum {
 	WORKERS = 4, // The processes that count the pairs.
 	WORKERS_MAX = 64,
 	DECIMAL = 10,
-	LINE_LEN = 64 // Room for a line of a worker.
+	LINE_LEN = 96, // Room for a line of a worker.
+	RECORD_WORDS = 64 // The most words of a vary record of a face.
 };
 
 // A worker: its number w of nw, and the pipe it writes to.
@@ -57,6 +63,7 @@ struct body {
 	int solid; // Whether sh and cb hold the solid of the part.
 	struct shape sh; // Its exact solid in the world (clash.h).
 	struct clash_body cb;
+	double drift; // The most its tolerances move any of it (drift).
 };
 
 // Makes the exact solid of b, if it has none yet.
@@ -353,26 +360,155 @@ static unsigned long overlap(const struct body *a, const struct body *b,
 	return n;
 }
 
-// A pair of parts whose boxes meet, and its count.
+// The most that the end hi of parameter t of folded part p moves a
+// corner of its blank on either face, or a hole of it, in mm.
+static double blank_drift(const struct part *p, size_t t, int hi)
+{
+	struct part q;
+	double most = 0;
+
+	vary_part(p, t, hi, &q);
+	for (size_t f = 0; f < p->nfaces; f++) {
+		for (size_t k = p->fe_start[f]; k < p->fe_start[f + 1]; k++) {
+			const struct edge *e = &p->edges[p->fe[k]];
+
+			for (int end = 0; end < 4; end++) {
+				size_t v = end & 1 ? e->v1 : e->v0;
+				double z = end & 2 ? -p->t : 0;
+				struct vec a = fmap(p, f, p->verts[v].x,
+						    p->verts[v].y, z);
+				struct vec b = fmap(&q, f, q.verts[v].x,
+						    q.verts[v].y,
+						    end & 2 ? -q.t : 0);
+
+				most = fmax(most, len(sub(b, a)));
+			}
+		}
+	}
+	for (size_t i = 0; i < p->nholes; i++) {
+		const struct hole *a = &p->holes[i];
+		const struct hole *b = &q.holes[i];
+
+		most = fmax(most, hypot(b->cx - a->cx, b->cy - a->cy) +
+					  fabs(b->r - a->r) +
+					  fabs(b->rc - a->rc));
+	}
+	free_variant(&q);
+	return most;
+}
+
+// The most that the move of a face from surface a to b moves a point of
+// it within reach of the origin of a: along its normal, or round, by the
+// turn of its axis.
+static double face_drift(const struct surf *a, const struct surf *b,
+			 double reach)
+{
+	struct vec d = sub(b->o, a->o);
+	double turn = len(sub(b->n, a->n)) * reach;
+
+	if (a->kind == SF_PLANE) {
+		return fabs(dot(a->n, d)) + turn;
+	}
+	if (a->kind == SF_CYL) {
+		return len(sub(d, mul(a->n, dot(a->n, d)))) +
+		       fabs(b->r - a->r) + turn;
+	}
+	return len(d) + fabs(b->r - a->r) + (fabs(b->r2 - a->r2) * reach) +
+	       fabs(b->r3 - a->r3) + turn;
+}
+
+// The most that the vary record rec of a face of solid part p moves a
+// point of the face, the solid reach across.
+static double solid_drift(const struct part *p, const char *rec, double reach)
+{
+	char *copy = xstrdup(rec);
+	char *w[RECORD_WORDS + 1];
+	size_t n = split_words(copy, w, RECORD_WORDS);
+	size_t at = 2;
+	struct surf a;
+	struct surf b;
+
+	if (n < 3 || n > RECORD_WORDS || strcmp(w[0], "face") != 0) {
+		die("interfere: part %s: bad vary record %s", p->name, rec);
+	}
+	a = surf_read(w, n, &at, p->name);
+	b = surf_read(w, n, &at, p->name);
+	free(copy);
+	return face_drift(&a, &b, reach);
+}
+
+// The drift of part p: over the parameters of its ranges, the sum of the
+// most that either end of each moves any point of it.  Its tolerances
+// can move it no further.
+static double drift(const struct part *p)
+{
+	double sum = 0;
+	double reach = 0;
+
+	if (p->solid) {
+		struct box b = box_empty();
+
+		for (size_t i = 0; i < p->solid->nv; i++) {
+			box_add(&b, p->solid->v[i]);
+		}
+		reach = p->solid->nv ? len(sub(b.hi, b.lo)) : 0;
+	}
+	for (size_t t = 0; t < p->rg.ntol; t++) {
+		double most = 0;
+
+		for (int hi = 0; !p->solid && hi < 2; hi++) {
+			most = fmax(most, blank_drift(p, t, hi));
+		}
+		for (size_t v = 0; p->solid && v < p->rg.nvary; v++) {
+			if (p->rg.vary[v].tol == t) {
+				most = fmax(most,
+					    solid_drift(p, p->rg.vary[v].rec,
+							reach));
+			}
+		}
+		sum += most;
+	}
+	return sum;
+}
+
+// A pair of parts whose boxes meet, as far apart as the drifts of the
+// two, its count, and its gap, if its tolerances may close it, or else
+// HUGE_VAL.
 struct pair {
 	size_t i, j;
 	unsigned long k;
+	double gap;
 };
 
-// The count of colliding samples of pair q, up to POINTS_MAX.
-static unsigned long pair_count(struct body *bs, const struct pair *q)
+// The count of colliding samples of pair q, up to POINTS_MAX, and the
+// gap of a pair that does not collide, if their drifts may close it.
+static unsigned long pair_count(struct body *bs, struct pair *q)
 {
 	struct body *a = &bs[q->i];
 	struct body *b = &bs[q->j];
+	double close = a->drift + b->drift;
 	unsigned long k = 0;
 
-	if (a->p->solid || b->p->solid) {
+	q->gap = HUGE_VAL;
+	if (box_meet(a->box, b->box) && (a->p->solid || b->p->solid)) {
 		struct clash_pose x = { &a->cb, rig_id() };
 		struct clash_pose y = { &b->cb, rig_id() };
 
 		k = clash_count(x, y, POINTS_MAX);
-	} else {
+	} else if (box_meet(a->box, b->box)) {
 		k = overlap(b, a, overlap(a, b, 0));
+	}
+	if (!k && close > CLASH_CHORD) {
+		struct clash_pose x = { &a->cb, rig_id() };
+		struct clash_pose y = { &b->cb, rig_id() };
+		double g = 0;
+
+		make_solid(a);
+		make_solid(b);
+		g = clash_gap(x, y, close);
+		if (g > CLASH_CHORD && g < close) {
+			q->gap = g;
+		}
 	}
 	return k < POINTS_MAX ? k : POINTS_MAX;
 }
@@ -392,24 +528,25 @@ static void write_all(int fd, const char *b, size_t n)
 }
 
 // Counts the pairs w, w + nw, w + 2 nw ... of qs into the pipe of wk, a
-// line "INDEX COUNT" for each that collides.
+// line "INDEX COUNT GAP" for each that collides or whose drifts may
+// close its gap.
 static void count_some(struct body *bs, struct pair *qs, size_t nq,
 		       struct workers wk)
 {
 	for (size_t q = wk.w; q < nq; q += wk.nw) {
 		unsigned long k = pair_count(bs, &qs[q]);
 
-		if (k) {
+		if (k || isfinite(qs[q].gap)) {
 			char line[LINE_LEN];
 
-			xsnprintf(line, "%zu %lu\n", q, k);
+			xsnprintf(line, "%zu %lu %.17g\n", q, k, qs[q].gap);
 			write_all(wk.fd, line, strlen(line));
 		}
 	}
 	(void)close(wk.fd);
 }
 
-// Reads the lines "INDEX COUNT" of a worker from fd into qs.
+// Reads the lines "INDEX COUNT GAP" of a worker from fd into qs.
 static void read_counts(int fd, struct pair *qs, size_t nq)
 {
 	char *buf = NULL;
@@ -430,10 +567,12 @@ static void read_counts(int fd, struct pair *qs, size_t nq)
 	while (*s) {
 		char *end = NULL;
 		unsigned long q = strtoul(s, &end, DECIMAL);
-		unsigned long c = strtoul(end, &s, DECIMAL);
+		unsigned long c = strtoul(end, &end, DECIMAL);
+		double g = strtod(end, &s);
 
 		if (q < nq) {
 			qs[q].k = c;
+			qs[q].gap = g;
 		}
 		s += strspn(s, "\n");
 	}
@@ -495,9 +634,11 @@ static size_t list_pairs(struct body *bs, size_t n, struct pair **out)
 
 	for (size_t i = 0; i < n; i++) {
 		for (size_t j = i + 1; j < n; j++) {
-			struct pair q = { i, j, 0 };
+			struct pair q = { i, j, 0, HUGE_VAL };
+			struct box a = bs[i].box;
 
-			if (!box_meet(bs[i].box, bs[j].box)) {
+			box_pad(&a, bs[i].drift + bs[j].drift);
+			if (!box_meet(a, bs[j].box)) {
 				continue;
 			}
 			if (bs[i].p->solid || bs[j].p->solid) {
@@ -527,6 +668,11 @@ static void report_pairs(struct body *bs, size_t n, size_t nw)
 		if (qs[q].k) {
 			printf("%s %s points %lu\n", bs[qs[q].i].p->name,
 			       bs[qs[q].j].p->name, qs[q].k);
+		} else if (isfinite(qs[q].gap)) {
+			printf("%s %s gap %.3f tolerance %.3f\n",
+			       bs[qs[q].i].p->name, bs[qs[q].j].p->name,
+			       qs[q].gap,
+			       bs[qs[q].i].drift + bs[qs[q].j].drift);
 		}
 	}
 	free(qs);
@@ -564,6 +710,7 @@ int main(int argc, char **argv)
 			make_solid(&bs[i]);
 			bs[i].box = bs[i].cb.box;
 		}
+		bs[i].drift = drift(&ps[i]);
 	}
 	report_pairs(bs, n, nw);
 	for (size_t i = 0; i < n; i++) {

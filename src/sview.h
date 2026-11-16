@@ -18,7 +18,9 @@
 // nearer the eye: the faces cut of each part show filled, as fill
 // regions that name the part, edged by lines of the kind e.  The
 // outlines of spheres, tori and pipes are left out: rounds show by their
-// edges.
+// edges.  After each line and hole come its range records, by the moves
+// of the faces at the ends of the ranges of the parameters of the parts
+// (stream(5)).
 
 #ifndef SVIEW_H
 #define SVIEW_H

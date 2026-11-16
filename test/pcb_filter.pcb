@@ -21,14 +21,14 @@ footprint resistor r0603
 footprint capacitor c0603
 footprint ferrite l0603
 
-fix buf.amp at 20 18 rot 270
-place buf.rf left of buf.amp
-place buf.rg up from buf.amp.in-
-place vpos.c down from buf.amp.v+
-place vpos.fb right of vpos.c
-place vneg.c up from buf.amp.v-
-place vneg.fb left of vneg.c
-place lpf.r down from buf.amp.out
-place lpf.c down from lpf.r.2
-place lpf.c2 right of lpf.c
+fix filter.buf.amp at 20 18 rot 270
+place filter.buf.rf left of filter.buf.amp
+place filter.buf.rg up from filter.buf.amp.in-
+place filter.vpos.c down from filter.buf.amp.v+
+place filter.vpos.fb right of filter.vpos.c
+place filter.vneg.c up from filter.buf.amp.v-
+place filter.vneg.fb left of filter.vneg.c
+place filter.lpf.r down from filter.buf.amp.out
+place filter.lpf.c down from filter.lpf.r.2
+place filter.lpf.c2 right of filter.lpf.c
 width OUT 0.4

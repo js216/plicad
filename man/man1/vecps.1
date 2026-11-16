@@ -3,7 +3,7 @@
 .\" Copyright (c) 2026 Jakob Kastelic
 .TH VECPS 1
 .SH NAME
-vecps \- draw vector files as a page of PostScript
+vecps \- draw vector files as pages of PostScript
 .SH SYNOPSIS
 .B vecps
 [
@@ -27,8 +27,10 @@ draws each
 file, the first underneath, in its color (black by default), filled
 or, with
 .BR line ,
-as outlines, on a letter page, landscape; a first file with a page
-record (a sheet) is drawn as that page, at its size and scale 1.
+as outlines, on a letter page, landscape; a first file with page
+records (a sheet) is drawn as those pages, each at its size and scale
+1, a page of PostScript for each: on page k, the records of each file
+from its k-th page record to the next.
 Text is set in Helvetica and Helvetica-Oblique, in ISO Latin-1.
 The window
 .B \-w

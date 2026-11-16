@@ -46,6 +46,7 @@
 #define THICK 1.0 // The wall that a view of a solid gives smdim, in mm.
 #define SINK_FIT 1e-3 // A countersink meets its hole this near, in mm.
 #define PROBE 0.5 // The share of its radius off the axis of a ray down a hole.
+#define FLAT_PAIR 1e-9 // Below this, 1 - cos^2 of two normals is none.
 
 enum {
 	HALVINGS = 30, // To find where a curve goes behind material.
@@ -54,14 +55,19 @@ enum {
 	FACE_PTS = 16, // Points of each edge of a face, for its extent.
 	SEEN_GRID = 8, // The grid over a face where the eye may see it.
 	LETTERS = 26, // The letters that may mark a texture.
-	NAME_ROOM = 256 // Room for the name of a feature.
+	NAME_ROOM = 256, // Room for the name of a feature.
+	RECORD_WORDS = 64 // The most words of a vary record of a face.
 };
 
 // What a piece of a curve is: seen, behind material, or gone with the
 // part of the solid that a section takes away.
 enum { SEEN, BEHIND, GONE };
 
-// The parts, all in one shape, with the part of each face.
+struct moves;
+
+// The parts, all in one shape, with the part of each face, and the
+// parameters they lean on, with the moves of the faces at the two ends
+// of the range of each, mv[2 k] and mv[2 k + 1] for parameter k.
 struct sv {
 	const struct part *ps;
 	size_t np;
@@ -70,6 +76,9 @@ struct sv {
 	struct shape_cache c;
 	struct sview v;
 	double reach;
+	const char **param;
+	size_t nparam, capparam;
+	struct moves *mv;
 };
 
 // Points of the paper.
@@ -188,6 +197,254 @@ static void split_piece(const struct sv *s, const struct curve *c,
 	PUSH(l->p, l->n, l->cap, b);
 }
 
+// A parameter of the parts at one end of its range: the surface of each
+// face that it moves, NULL for one it leaves, and whether the place of
+// each face there is unknown, as of a folded part that takes another
+// form.
+struct moves {
+	struct surf **s;
+	unsigned char *unknown;
+};
+
+// The surface s moved by the rigid motion m.
+static struct surf surf_moved(struct surf s, struct rigid m)
+{
+	s.o = rig_pt(m, s.o);
+	s.n = rig_dir(m, s.n);
+	s.x = rig_dir(m, s.x);
+	return s;
+}
+
+// The index of parameter name among those of s, added if new.
+static size_t param_index(struct sv *s, const char *name)
+{
+	for (size_t i = 0; i < s->nparam; i++) {
+		if (strcmp(s->param[i], name) == 0) {
+			return i;
+		}
+	}
+	PUSH(s->param, s->nparam, s->capparam, name);
+	return s->nparam - 1;
+}
+
+// Notes in mv the faces of solid part i, its faces from f0 on, that the
+// record face FACE S0 S1 at text moves: the faces of that name on S0
+// take S1.
+static void solid_moves(struct sv *s, size_t i, size_t f0, const char *text,
+			struct moves *mv)
+{
+	const struct part *p = &s->ps[i];
+	char *copy = xstrdup(text);
+	char *w[RECORD_WORDS + 1];
+	size_t n = split_words(copy, w, RECORD_WORDS);
+	size_t at = 2;
+	struct surf a;
+	struct surf b;
+
+	if (n < 3 || n > RECORD_WORDS || strcmp(w[0], "face") != 0) {
+		die("%s: part %s: bad vary record %s", s->v.where, p->name,
+		    text);
+	}
+	a = surf_moved(surf_read(w, n, &at, p->name), p->place);
+	b = surf_moved(surf_read(w, n, &at, p->name), p->place);
+	for (size_t f = f0; f < s->sh.nf && s->fpart[f] == i; f++) {
+		if (strcmp(s->sh.f[f].name, w[1]) == 0 &&
+		    surfs_same(&s->sh.f[f].s, &a)) {
+			if (!mv->s[f]) {
+				mv->s[f] = xmalloc(sizeof(*mv->s[f]));
+			}
+			*mv->s[f] = b;
+		}
+	}
+	free(copy);
+}
+
+// Notes in mv the faces of folded part i, its faces from f0 on, that
+// the end hi of its parameter t moves: those of its blank there, or all
+// unknown if the blank there has other faces.
+static void folded_moves(struct sv *s, size_t i, size_t f0, size_t t, int hi,
+			 struct moves *mv)
+{
+	struct part q;
+	struct shape one;
+	size_t n = 0;
+
+	vary_part(&s->ps[i], t, hi, &q);
+	part_shape(&q, &one);
+	while (f0 + n < s->sh.nf && s->fpart[f0 + n] == i) {
+		n++;
+	}
+	for (size_t k = 0; k < n; k++) {
+		const struct surf *u = &one.f[k].s;
+
+		if (one.nf != n) {
+			mv->unknown[f0 + k] = 1;
+		} else if (!surfs_same(&s->sh.f[f0 + k].s, u)) {
+			mv->s[f0 + k] = xmalloc(sizeof(*mv->s[f0 + k]));
+			*mv->s[f0 + k] = *u;
+		}
+	}
+	shape_free(&one);
+	free_variant(&q);
+}
+
+// Makes the moves of the faces of the parts at each end of the range of
+// each parameter that they lean on, by name: of a solid, its vary
+// records of faces, and of a folded part, its blank there.
+static void make_moves(struct sv *s)
+{
+	size_t f0 = 0;
+
+	for (size_t i = 0; i < s->np; i++) {
+		for (size_t t = 0; t < s->ps[i].rg.ntol; t++) {
+			(void)param_index(s, s->ps[i].rg.tol[t].name);
+		}
+	}
+	s->mv = xcalloc((2 * s->nparam) + 1, sizeof(*s->mv));
+	for (size_t k = 0; k < 2 * s->nparam; k++) {
+		s->mv[k].s = xcalloc(s->sh.nf + 1, sizeof(*s->mv[k].s));
+		s->mv[k].unknown = xcalloc(s->sh.nf + 1, 1);
+	}
+	for (size_t i = 0; i < s->np; i++) {
+		const struct ranges *g = &s->ps[i].rg;
+
+		while (f0 < s->sh.nf && s->fpart[f0] < i) {
+			f0++;
+		}
+		for (size_t t = 0; t < g->ntol; t++) {
+			size_t k = 2 * param_index(s, g->tol[t].name);
+
+			for (int hi = 0; !s->ps[i].solid && hi < 2; hi++) {
+				folded_moves(s, i, f0, t, hi,
+					     &s->mv[k + (size_t)hi]);
+			}
+		}
+		for (size_t v = 0; s->ps[i].solid && v < g->nvary; v++) {
+			const struct part_vary *pv = &g->vary[v];
+			size_t k = 2 * param_index(s, g->tol[pv->tol].name);
+
+			solid_moves(s, i, f0, pv->rec,
+				    &s->mv[k + (size_t)pv->hi]);
+		}
+	}
+}
+
+static void free_moves(struct sv *s)
+{
+	for (size_t k = 0; k < 2 * s->nparam; k++) {
+		for (size_t f = 0; f < s->sh.nf; f++) {
+			free(s->mv[k].s[f]);
+		}
+		free(s->mv[k].s);
+		free(s->mv[k].unknown);
+	}
+	free(s->mv);
+	free(s->param);
+}
+
+// What the end k of a parameter moves the point q of face f: along the
+// normal of the face, to the moved surface.
+static struct vec face_move(const struct sv *s, size_t k, size_t f,
+			    struct vec q)
+{
+	const struct surf *m = s->mv[k].s[f];
+
+	if (!m) {
+		return v3(0, 0, 0);
+	}
+	return mul(surf_normal(m, q), -surf_dist(m, q));
+}
+
+// Where a point of the view lies, for its moves: on an edge between
+// the faces on[0] and on[1], the second NONE for a line on one face; or
+// with cut on the line where the plane of a section cuts face on[0]; or
+// with axis at the center of the hole of cylinder on[0].
+struct lies {
+	size_t on[2];
+	int cut, axis;
+};
+
+// What the end k of a parameter moves the point q of the view, as at
+// says: the least move that keeps it on its faces, as they move, in the
+// plane of a section with cut, or the move of the axis of a hole;
+// returns 0 if it is unknown, as at the tip of a cone.
+static int point_move(const struct sv *s, size_t k, struct lies at,
+		      struct vec q, struct vec *d)
+{
+	const struct surf *m = NULL;
+	struct vec da;
+	struct vec na;
+
+	if (at.on[0] == NONE || s->mv[k].unknown[at.on[0]] ||
+	    (at.on[1] != NONE && s->mv[k].unknown[at.on[1]])) {
+		return 0;
+	}
+	m = s->mv[k].s[at.on[0]];
+	da = face_move(s, k, at.on[0], q);
+	na = surf_normal(&s->sh.f[at.on[0]].s, q);
+	if (at.axis) {
+		struct vec o = m ? sub(m->o, s->sh.f[at.on[0]].s.o) : da;
+		struct vec n = s->sh.f[at.on[0]].s.n;
+
+		*d = sub(o, mul(n, dot(o, n)));
+	} else if (at.cut) {
+		struct vec np = sub(na, mul(s->v.z, dot(na, s->v.z)));
+		double l2 = dot(np, np);
+
+		*d = l2 > FLAT_PAIR ? mul(np, dot(na, da) / l2) : v3(0, 0, 0);
+		if (!(l2 > FLAT_PAIR) && m) {
+			return 0;
+		}
+	} else if (at.on[1] == NONE) {
+		*d = da;
+	} else {
+		struct vec db = face_move(s, k, at.on[1], q);
+		struct vec nb = surf_normal(&s->sh.f[at.on[1]].s, q);
+		double c = dot(na, nb);
+		double det = 1 - (c * c);
+		double a = dot(na, da);
+		double b = dot(nb, db);
+
+		*d = det < FLAT_PAIR ? mul(add(da, db), 0.5) :
+				       add(mul(na, (a - (c * b)) / det),
+					   mul(nb, (b - (c * a)) / det));
+	}
+	return isfinite(d->x) && isfinite(d->y) && isfinite(d->z);
+}
+
+// Prints a record range NAME N X Y ... for each parameter that moves the
+// n points q of a record of the view, which lie as at says: N, and the
+// moves on the paper at the low end and then at the high one; or range
+// NAME - where a move is unknown.
+static void put_ranges(const struct sv *s, const struct vec *q, size_t n,
+		       struct lies at)
+{
+	for (size_t g = 0; g < s->nparam; g++) {
+		struct vec d[2][2];
+		int ok = 1;
+		double most = 0;
+
+		for (size_t k = 0; k < 2 * n; k++) {
+			ok = ok && point_move(s, (2 * g) + (k / n), at,
+					      q[k % n], &d[k / n][k % n]);
+			most = ok ? fmax(most, len(d[k / n][k % n])) : most;
+		}
+		if (!ok) {
+			printf("range %s -\n", s->param[g]);
+			continue;
+		}
+		if (!(most > ZERO)) {
+			continue;
+		}
+		printf("range %s %zu", s->param[g], n);
+		for (size_t k = 0; k < 2 * n; k++) {
+			printf(" %.6f %.6f", pr(px(s, d[k / n][k % n])),
+			       pr(py(s, d[k / n][k % n])));
+		}
+		printf("\n");
+	}
+}
+
 // Prints the n points p as a poly record of the kind and visibility.
 static void put_points(const struct vec2 *p, size_t n, char kind, char vis)
 {
@@ -201,7 +458,7 @@ static void put_points(const struct vec2 *p, size_t n, char kind, char vis)
 // Prints the run of curve c from t.lo to t.hi, seen or not by vis, of
 // the kind: a line, an arc seen face on, or else a poly record.
 static void put_run(const struct sv *s, const struct curve *c, struct span t,
-		    char kind, char vis)
+		    char kind, char vis, struct lies at)
 {
 	struct vec p0 = curve_at(c, t.lo);
 	struct vec p1 = curve_at(c, t.hi);
@@ -210,9 +467,12 @@ static void put_run(const struct sv *s, const struct curve *c, struct span t,
 	size_t k = 0;
 
 	if (c->kind == CV_LINE) {
+		const struct vec q[2] = { p0, p1 };
+
 		printf("line %c %c %.6f %.6f %.6f %.6f\n", kind, vis,
 		       pr(px(s, p0)), pr(py(s, p0)), pr(px(s, p1)),
 		       pr(py(s, p1)));
+		put_ranges(s, q, 2, at);
 		return;
 	}
 	if (c->kind == CV_CIRCLE && len(cross(c->n, s->v.z)) < FACE_ON) {
@@ -243,7 +503,7 @@ static void put_run(const struct sv *s, const struct curve *c, struct span t,
 // Prints curve c from t0 to t1, of the kind: its runs of what it is,
 // those behind material only if the view shows hidden lines.
 static void put_curve(const struct sv *s, const struct curve *c, struct span t,
-		      char kind)
+		      char kind, struct lies at)
 {
 	double l = len(sub(curve_at(c, t.hi), curve_at(c, t.lo)));
 	double n = ceil(l / STEP_MM);
@@ -279,8 +539,8 @@ static void put_curve(const struct sv *s, const struct curve *c, struct span t,
 			struct span r = { run, end };
 
 			if (what == SEEN || (what == BEHIND && s->v.hidden)) {
-				put_run(s, c, r, kind,
-					what == SEEN ? 'v' : 'h');
+				put_run(s, c, r, kind, what == SEEN ? 'v' : 'h',
+					at);
 			}
 			run = end;
 			what = next;
@@ -315,13 +575,14 @@ static void put_edges(const struct sv *s)
 		struct vec na = surf_normal(&sh->f[ef[e][0]].s, m);
 		struct vec nb = surf_normal(&sh->f[ef[e][1]].s, m);
 		char kind = 'e';
+		struct lies at = { { ef[e][0], ef[e][1] }, 0, 0 };
 
 		if (len(cross(na, nb)) < FACE_ON) {
 			kind = 's';
 		} else if (hole_wall(sh, ef[e][0]) || hole_wall(sh, ef[e][1])) {
 			kind = 'o';
 		}
-		put_curve(s, &ed->c, (struct span){ ed->t0, ed->t1 }, kind);
+		put_curve(s, &ed->c, (struct span){ ed->t0, ed->t1 }, kind, at);
 	}
 	free(ef);
 }
@@ -383,8 +644,10 @@ static void put_outline(const struct sv *s, size_t f)
 			if (now && !in) {
 				from = t;
 			} else if (!now && in && t > from) {
+				struct lies at = { { f, NONE }, 0, 0 };
+
 				put_curve(s, &g, (struct span){ from, t },
-					  hole_wall(&s->sh, f) ? 'o' : 'e');
+					  hole_wall(&s->sh, f) ? 'o' : 'e', at);
 			}
 			in = now;
 		}
@@ -540,6 +803,11 @@ static void put_holes(const struct sv *s)
 		}
 		put_thread(s, f, deep);
 		printf(" by %s\n", name);
+		{
+			struct lies on = { { f, NONE }, 0, 1 };
+
+			put_ranges(s, &a, 1, on);
+		}
 	}
 	free(at);
 }
@@ -752,29 +1020,33 @@ static void put_textures(const struct sv *s)
 
 // A cut of a triangle by the plane of a section, on the paper, the
 // part of the triangle, and its face if that is a plane, else NONE: the
-// cuts of one plane face lie on one line.
+// cuts of one plane face lie on one line; and its face.
 struct cut {
 	struct vec2 a, b;
-	size_t part, flat;
+	size_t part, flat, face;
 	int used;
 };
 
 // A loop of cuts: its n points, and the plane face of the cut from each
-// to the next, or NONE.
+// to the next, or NONE, and its face.
 struct loop {
 	struct vec2 *p;
-	size_t *flat;
-	size_t n, cap, capf;
+	size_t *flat, *face;
+	size_t n, cap, capf, capface;
 };
 
-// Thins the closed loop l to the points that keep each point left out
-// within the chord of the line through the points kept.  The ends of
+// Thins the closed loop l, and the faces of its cuts, to the points that
+// keep each point left out within the chord of the line through the
+// points kept.  The ends of
 // each straight run stay, the cuts of one plane face, so that a straight
 // edge of a section is one line, as it is in the part, where an
 // ordinate or a lin may stand.  Between two points kept, or from the
 // first point and the one furthest from it if no face is a plane, each
 // stretch gains the point furthest from its chord, if further than the
-// chord.  Returns the number kept, first in l->p, in order.
+// chord.  Returns the number kept, first in l->p, in order, the face of
+// the cut from each in l->flat: that of the side to the next point
+// kept, where its cuts are of one plane face; and in l->face the face of
+// all the cuts of that side, or NONE.
 static size_t thin_loop(struct loop *l, double chord)
 {
 	struct vec2 *p = l->p;
@@ -834,7 +1106,18 @@ static size_t thin_loop(struct loop *l, double chord)
 		}
 	}
 	for (size_t k = 0; k < n; k++) {
+		size_t j = (k + 1) % n;
+
+		while (keep[k] && !keep[j] && l->face[k] != NONE) {
+			l->face[k] = l->face[j] == l->face[k] ? l->face[k] :
+								NONE;
+			j = (j + 1) % n;
+		}
+	}
+	for (size_t k = 0; k < n; k++) {
 		if (keep[k]) {
+			l->flat[m] = l->flat[k];
+			l->face[m] = l->face[k];
 			p[m++] = p[k];
 		}
 	}
@@ -850,11 +1133,13 @@ static void chain(struct cut *c, size_t n, size_t i, struct loop *l)
 {
 	struct vec2 at = c[i].b;
 	size_t nf = 0;
+	size_t nf2 = 0;
 	size_t last = NONE;
 
 	c[i].used = 1;
 	PUSH(l->p, l->n, l->cap, c[i].a);
 	PUSH(l->flat, nf, l->capf, c[i].flat);
+	PUSH(l->face, nf2, l->capface, c[i].face);
 	PUSH(l->p, l->n, l->cap, at);
 	for (int more = 1; more;) {
 		more = 0;
@@ -869,6 +1154,7 @@ static void chain(struct cut *c, size_t n, size_t i, struct loop *l)
 				c[j].used = 1;
 				at = fwd ? c[j].b : c[j].a;
 				PUSH(l->flat, nf, l->capf, c[j].flat);
+				PUSH(l->face, nf2, l->capface, c[j].face);
 				PUSH(l->p, l->n, l->cap, at);
 				more = 1;
 			}
@@ -878,6 +1164,7 @@ static void chain(struct cut *c, size_t n, size_t i, struct loop *l)
 		l->n--;
 	} else {
 		PUSH(l->flat, nf, l->capf, last);
+		PUSH(l->face, nf2, l->capface, last);
 	}
 }
 
@@ -911,10 +1198,14 @@ static size_t section_cuts(const struct sv *s, struct cut **out)
 		}
 		if (k == 2) {
 			size_t f = m.t[i].face;
-			struct cut x = { end[0], end[1], s->fpart[f],
-					 s->sh.f[f].s.kind == SF_PLANE ? f :
-									 NONE,
-					 0 };
+			struct cut x = {
+				end[0],
+				end[1],
+				s->fpart[f],
+				s->sh.f[f].s.kind == SF_PLANE ? f : NONE,
+				f,
+				0
+			};
 
 			PUSH(c, n, cap, x);
 		}
@@ -922,6 +1213,13 @@ static size_t section_cuts(const struct sv *s, struct cut **out)
 	mesh_free(&m);
 	*out = c;
 	return n;
+}
+
+// The point of the plane of the section at p on the paper.
+static struct vec in_cut(const struct sv *s, struct vec2 p)
+{
+	return add(add(mul(s->v.x, p.x), mul(s->v.y, p.y)),
+		   mul(s->v.z, s->v.cut));
 }
 
 // Prints the faces that the plane of the section cuts: for each part
@@ -934,15 +1232,18 @@ static void put_section(const struct sv *s)
 	struct cut *c = NULL;
 	size_t n = section_cuts(s, &c);
 	struct pts all = { NULL, 0, 0 }; // The loops, one after another,
-	size_t *ends = NULL; // and where each ends in all.
+	size_t *ends = NULL; // and where each ends in all,
 	size_t nends = 0;
 	size_t capends = 0;
+	size_t *fs = NULL; // and the face of the side from each point.
+	size_t nfs = 0;
+	size_t capfs = 0;
 
 	for (size_t part = 0; part < s->np; part++) {
 		int open = 0;
 
 		for (size_t i = 0; i < n; i++) {
-			struct loop l = { NULL, NULL, 0, 0, 0 };
+			struct loop l = { NULL, NULL, NULL, 0, 0, 0, 0 };
 			size_t k = 0;
 
 			if (c[i].used || c[i].part != part) {
@@ -950,8 +1251,9 @@ static void put_section(const struct sv *s)
 			}
 			chain(c, n, i, &l);
 			k = thin_loop(&l, s->v.chord);
-			free(l.flat);
 			if (k < 3) {
+				free(l.flat);
+				free(l.face);
 				free(l.p);
 				continue;
 			}
@@ -963,9 +1265,12 @@ static void put_section(const struct sv *s)
 				printf("%c %.6f %.6f\n", j ? 'l' : 'm',
 				       pr(l.p[j].x), pr(l.p[j].y));
 				PUSH(all.p, all.n, all.cap, l.p[j]);
+				PUSH(fs, nfs, capfs, l.face[j]);
 			}
 			printf("z\n");
 			PUSH(ends, nends, capends, all.n);
+			free(l.flat);
+			free(l.face);
 			free(l.p);
 		}
 	}
@@ -974,13 +1279,18 @@ static void put_section(const struct sv *s)
 			struct vec2 a = all.p[j];
 			struct vec2 b = all.p[j + 1 < ends[i] ? j + 1 : from];
 
+			struct lies at = { { fs[j], NONE }, 1, 0 };
+			const struct vec q[2] = { in_cut(s, a), in_cut(s, b) };
+
 			if (hypot(b.x - a.x, b.y - a.y) > 0) {
 				printf("line e v %.6f %.6f %.6f %.6f\n",
 				       pr(a.x), pr(a.y), pr(b.x), pr(b.y));
+				put_ranges(s, q, 2, at);
 			}
 		}
 	}
 	free(all.p);
+	free(fs);
 	free(ends);
 	free(c);
 }
@@ -1065,6 +1375,7 @@ void sview_print(const struct part *ps, size_t n, struct sview v)
 		}
 	}
 	shape_cache_init(&s.c, &s.sh);
+	make_moves(&s);
 	for (size_t f = 0; f < s.sh.nf; f++) {
 		box_add(&b, s.c.fbox[f].lo);
 		box_add(&b, s.c.fbox[f].hi);
@@ -1084,6 +1395,7 @@ void sview_print(const struct part *ps, size_t n, struct sview v)
 	}
 	put_holes(&s);
 	put_textures(&s);
+	free_moves(&s);
 	shape_cache_free(&s.c);
 	shape_free(&s.sh);
 	free(s.fpart);

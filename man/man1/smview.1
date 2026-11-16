@@ -62,6 +62,7 @@ texture MATERIAL MARK CALLOUT
 coat MATERIAL near|far N X0 Y0 ... XN-1 YN-1 [face]
 radius R
 bend X0 Y0 X1 Y1 ANGLE
+range NAME N X Y ... | range NAME \-
 .fi
 .RE
 .PP
@@ -117,6 +118,23 @@ A line, an arc or a hole names the feature of the part it comes from,
 as the stream gives it, if it has one.
 .B Radius
 is the inside radius of the first bend.
+.PP
+After each line and hole, and in the view of a folded part each arc
+and coat too, comes a range record for each parameter of the part
+.RI ( stream (5))
+whose ends move it: what the low end of its range and then the high
+one move its N points on the paper, in mm, the ends of a line, the
+center of an arc or a hole, or the corners of a coat, each X Y; or
+.B \-
+where the move is unknown.
+The view of a folded part takes them from the part at each end, its
+curves made again: unknown if they do not match those of the part one
+for one.
+A view of solids takes them from the moves of their faces: a point of
+an edge moves the least that keeps it on its two faces, a point of a
+section the least that keeps it on its face in the plane, and a hole
+as the axis of its wall; unknown at a face of unknown place, as of a
+folded part of another form there, or at the tip of a cone.
 .PP
 The stream holds one folded part, with the bodies of its inserts, or
 solid parts: one, or the parts of an assembly in place

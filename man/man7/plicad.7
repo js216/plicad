@@ -59,15 +59,81 @@ writes, it writes in mm.
 Every value must be finite and within 1e6.
 .SS Names
 .TP
-.I "NAME = EXPR"
+.IR "NAME = EXPR" " [" "+- TOL" " | " "+ UP \- DOWN" ]
 defines NAME, a letter or an underscore and then letters, digits and
-underscores, as the value of EXPR, for the statements below it.
+underscores, as the value of EXPR, for the statements below it, with
+the range of the value: EXPR less DOWN to EXPR plus UP, TOL either way.
 .TP
 .BI include " FILE"
 reads the definitions of FILE, a file of parameters: its lines
 .I "NAME = EXPR"
+and
+.BI tolerance " LEN ANGLE" ,
 and its comments, and nothing else.
 FILE, as every file a source names, lies relative to the source.
+.TP
+.BI tolerance " LEN ANGLE"
+in a file of parameters gives each length and each angle that a
+definition below it, in that file or in the files that include it,
+leaves without a tolerance of its own: LEN either way for a length,
+and ANGLE for an angle, up to the next such statement.
+.SS Tolerances
+Each value has a range.
+A number is exact.
+A definition whose EXPR names no other name is a parameter, and what
+it measures is told by the units of its numbers: a length if EXPR has
+.B in
+or
+.BR mm ,
+or an angle if it has
+.B deg
+.RB ( tan ,
+.B sin
+and
+.B cos
+of an angle are numbers, and
+.B atan2
+an angle), and else a pure number, as a count, a k-factor or a ratio;
+a number without a unit takes the measure of what it is added to.
+A length or an angle is a dimension: its range is that of its
+tolerance, or else that of the statement
+.B tolerance
+above it, and with neither it is an error.
+A pure number is exact unless it states a tolerance.
+So a dimension states its unit: 50 is a pure number, 50 mm a length.
+.PP
+The tolerance follows EXPR: a word
+.BR +- ,
+or the last two of its
+.B +
+and
+.B \-
+outside parentheses, the
+.B +
+first, in an EXPR of numbers alone: so
+.B "W = 10 mm + 0.1 mm \- 0.2 mm"
+is 10 mm, from 9.8 to 10.1 mm, and an EXPR of numbers that adds and
+then takes away writes them in parentheses.
+UP and DOWN are numbers; TOL, UP plus DOWN, is not below 0.
+A definition that names names states no tolerance: its range is that
+of its EXPR, worst case, by the arithmetic of intervals.
+Each operator and function gives the least range of its value over the
+ranges of its operands, each operand on its own, so that
+.B "W \- W"
+spans twice the tolerance of W.
+.PP
+The tools that build parts,
+.IR smfold (1)
+and
+.IR extrude (1),
+build each part again with each parameter that it leans on moved, and
+write what the ends of the range of each move
+.RI ( stream (5)),
+for the drawings
+.RI ( smdim (1)),
+.IR measure (1)
+and
+.IR interfere (1).
 .SS Places
 The statements that place a part or move it share these words.
 .TP
@@ -143,7 +209,7 @@ the subassembly, a slash, and its own name.
 .nf
 # A plate and its flange, the flange as wide as a parameter.
 include sizes.params
-T = 1.5
+T = 1.5 mm +- 0.1 mm
 sheet T 1 0.44
 plate base 0 0 4in 50 at 0 0 0 axes +x +y
 flange lip base +y 90 (W / 2) \e

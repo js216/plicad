@@ -1,12 +1,12 @@
 # netlist of sch_feedback.sch, from schnet
-part C301 capacitor value 10uF swap 1,2 name bulk
-part J301 bnc value BNC name out
-part R301 resistor value 1k swap 1,2 name rin
-part R302 resistor value 10k swap 1,2 name rfb
-part U301 ti/lmh6609 value LMH6609 pins in+:3,in-:2,out:6,v+:7,v-:4 name u
+part C301 capacitor value 10uF swap 1,2 name feedback.bulk
+part J301 bnc value BNC name feedback.out
+part R301 resistor value 1k swap 1,2 name feedback.rin
+part R302 resistor value 10k swap 1,2 name feedback.rfb
+part U301 ti/lmh6609 value LMH6609 pins in+:3,in-:2,out:6,v+:7,v-:4 name feedback.u
 net +5V global C301.1 U301.7
 net -5V global U301.4
 net GND global C301.2 U301.3
 net IN global R301.2
-net u.in- R301.1 R302.1 U301.2
-net u.out J301.1 R302.2 U301.6
+net feedback.u.in- R301.1 R302.1 U301.2
+net feedback.u.out J301.1 R302.2 U301.6

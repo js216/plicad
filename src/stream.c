@@ -19,6 +19,7 @@ static const char magic[] = "PliCad";
 
 enum {
 	HEAD_WORDS = 2, // The words of a record outside a part.
+	RANGE_WORDS = 256, // The most words of a tol or vary record.
 	DECIMAL = 10, // The base of the line numbers.
 	HEAD_LINE = 256 // Room for a line before the first statement.
 };
@@ -120,6 +121,19 @@ static int stream_record(struct stream *st, char *l, const char *where)
 	}
 	if (strncmp(l, "material ", strlen("material ")) == 0) {
 		material_record(st, l, where);
+		return 0;
+	}
+	if (strncmp(l, "tol ", strlen("tol ")) == 0 ||
+	    strncmp(l, "vary ", strlen("vary ")) == 0) {
+		char *v[RANGE_WORDS + 1];
+
+		copy = xstrdup(l);
+		n = split_words(copy, v, RANGE_WORDS);
+		if (n > RANGE_WORDS) {
+			die("%s: too many fields", where);
+		}
+		(void)range_record(&st->rg, v, n, where);
+		free(copy);
 		return 0;
 	}
 	copy = xstrdup(l);
@@ -239,11 +253,21 @@ void stream_read(struct stream *st, const char *path)
 		PUSH(st->sh, st->nsh, st->capsh, *p->solid);
 		free(p->solid);
 		p->solid = NULL;
+		copy_ranges(&st->rg, &p->rg);
 		clear_part(p);
 	}
 	free(st->ps);
 	st->ps = NULL;
 	st->nps = st->capps = 0;
+}
+
+void stream_source(struct stream *to, const struct stream *from)
+{
+	memset(to, 0, sizeof(*to));
+	to->src = xstrdup(from->src);
+	for (size_t i = 0; i < from->nln; i++) {
+		add_line(to, from->ln[i].no, from->ln[i].text);
+	}
 }
 
 void stream_head(void)
@@ -260,6 +284,7 @@ void stream_write(const struct stream *st)
 		shape_write(stdout, &st->sh[i]);
 		printf("end\n");
 	}
+	write_ranges(&st->rg);
 	for (size_t i = 0; i < st->nln; i++) {
 		if (!st->ln[i].gone) {
 			printf("@%u %s\n", st->ln[i].no, st->ln[i].text);
@@ -499,6 +524,9 @@ size_t read_parts(const char *path, struct part **out)
 		for (size_t k = 0; p->solid && k < st.nthreads; k++) {
 			add_thread(p, &st.threads[k]);
 		}
+		if (p->solid) {
+			copy_ranges(&p->rg, &st.rg);
+		}
 	}
 	insert_bodies(&st, path);
 	*out = st.ps;
@@ -511,6 +539,7 @@ size_t read_parts(const char *path, struct part **out)
 
 void stream_free(struct stream *st)
 {
+	free_ranges(&st->rg);
 	for (size_t i = 0; i < st->nsh; i++) {
 		shape_free(&st->sh[i]);
 	}
@@ -581,7 +610,7 @@ static int define_line(struct stream *st, const char *text)
 	}
 	memcpy(name, text + a, e - a);
 	name[e - a] = 0;
-	define(&st->nm, name, eval(&st->nm, eq + 1), 0);
+	define(&st->nm, name, eq + 1, 0);
 	return 1;
 }
 

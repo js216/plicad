@@ -66,6 +66,13 @@
 // the feature that made it: a cut, a hole, an outline or a trim, or the
 // plate or flange whose outline it is.  Statements apply in order, like
 // the features of a CAD model.
+//
+// The part goes out with its ranges (fold.h): for each parameter of a
+// range that it leans on (expr.h), the part is built again with the
+// parameter moved by STEP_SHARE of its range, without the check of its
+// contacts, and each number of the blank that moves goes out at each
+// end of the range, moved in proportion.  A blank is linear in each
+// length, so that is exact for a length.
 
 #include "contact.h"
 #include "expr.h"
@@ -89,12 +96,18 @@
 #define HEX_RANGE 300.0 // The widest hex pattern, in pitches.
 #define APART 1e-6 // Bodies closer than this touch, in mm.
 #define SLICE (PI / 64) // Widest slice of a bend, to test contacts.
+#define SAME_NUM 1e-12 // Numbers of a rebuild closer than this are the same.
+#define ZERO_NUM 1e-13 // A number of a record closer to 0 than this is 0.
+#define STEP_SHARE 1e-4 // Of its range, the move of a parameter to rebuild,
+#define SLOPE_MAX 1e4 // and the most it moves a number of the part, of it.
 
 enum {
 	FOOT_SIDES = 32, // Sides of the polygon round a hole, to test slabs.
 	BOX_STEPS = 8, // Grid steps across a slab for its box.
 	OUTLINE_STEPS = 64, // Points on each piece of an outline.
-	DEF_LEN = 2048 // Room for the text of a definition.
+	DEF_LEN = 2048, // Room for the text of a definition.
+	REC_ROOM = 4096, // Room for the text of a vary record.
+	NUM_ROOM = 32 // Room for the text of a number.
 };
 // The words of the statements.
 enum {
@@ -1537,7 +1550,7 @@ static void st_define(struct smf *g)
 		buf[k++] = ' ';
 	}
 	buf[k] = 0;
-	define(&g->nm, g->args[0], eval(&g->nm, buf), 0);
+	define(&g->nm, g->args[0], buf, 0);
 }
 
 // Adds material m to g, unless it has one of that name.
@@ -3269,10 +3282,12 @@ static void print_deps(struct smf *g)
 static int options(struct smf *g, int argc, char **argv, int *deps)
 {
 	int i = 1;
-	char *eq = NULL;
 
 	*deps = 0;
 	for (; i < argc - 1; i++) {
+		const char *eq = NULL;
+		char name[NAME_ROOM];
+
 		if (strcmp(argv[i], "-M") == 0) {
 			*deps = 1;
 			continue;
@@ -3281,12 +3296,13 @@ static int options(struct smf *g, int argc, char **argv, int *deps)
 			break;
 		}
 		eq = strchr(argv[++i], '=');
-		if (!eq) {
+		if (!eq || (size_t)(eq - argv[i]) >= sizeof(name)) {
 			break;
 		}
-		*eq = 0;
+		memcpy(name, argv[i], (size_t)(eq - argv[i]));
+		name[eq - argv[i]] = 0;
 		g->nm.where = "command line";
-		pin(&g->nm, argv[i], eval(&g->nm, eq + 1));
+		pin(&g->nm, name, eval(&g->nm, eq + 1));
 	}
 	return i == argc - 1 ? i : -1;
 }
@@ -3333,42 +3349,351 @@ static void free_smf(struct smf *g)
 	free_names(&g->nm);
 }
 
-int main(int argc, char **argv)
+// The command line of smfold.
+struct args {
+	int argc;
+	char **argv;
+};
+
+// Builds the part of the command line into g, or with -M only reads it,
+// and sets *deps then; with vary, 1 plus the index of a parameter, with
+// it moved by by.
+static void build(struct smf *g, struct args a, size_t vary, double by,
+		  int *deps)
 {
-	struct smf g;
-	int deps = 0;
 	int i = 0;
 
-	memset(&g, 0, sizeof(g));
-	i = options(&g, argc, argv, &deps);
+	memset(g, 0, sizeof(*g));
+	g->nm.vary = vary;
+	g->nm.vary_by = by;
+	i = options(g, a.argc, a.argv, deps);
 	if (i < 0) {
 		die("usage: smfold [-M] [-D NAME=EXPR]... part.sm");
 	}
-	g.part_path = argv[i];
-	each_line(&g.nm, g.part_path, statement, &g);
-	close_outline(&g);
+	g->part_path = a.argv[i];
+	each_line(&g->nm, g->part_path, statement, g);
+	close_outline(g);
+	if (*deps) {
+		return;
+	}
+	if (!g->nb) {
+		die("%s: no plate", g->part_path);
+	}
+	make_grid(g);
+	paint(g);
+	check_tears(g);
+	find_faces(g);
+	find_edges(g);
+	finish(g);
+	place_inserts(g);
+	g->out.name = base_name(g->part_path);
+	g->out.t = g->sheet.t;
+	g->out.place = rig_id();
+}
+
+// The text of a vary record, built a word at a time.
+struct rec {
+	char s[REC_ROOM];
+	size_t n;
+};
+
+static void rec_word(struct rec *r, const char *w)
+{
+	size_t k = strlen(w);
+
+	if (r->n + k + 2 > sizeof(r->s)) {
+		die("a vary record is too long");
+	}
+	if (r->n) {
+		r->s[r->n++] = ' ';
+	}
+	memcpy(r->s + r->n, w, k + 1);
+	r->n += k;
+}
+
+static void rec_num(struct rec *r, double x)
+{
+	char b[NUM_ROOM];
+
+	xsnprintf(b, "%.12g", fabs(x) < ZERO_NUM ? 0.0 : x);
+	rec_word(r, b);
+}
+
+static void rec_index(struct rec *r, const char *key, size_t i)
+{
+	char b[NUM_ROOM];
+
+	rec_word(r, key);
+	xsnprintf(b, "%zu", i);
+	rec_word(r, b);
+}
+
+// A parameter moved for a rebuild of a part: the names of the part and
+// of the parameter, and where that is defined, for the messages, its
+// index in the ranges of the part, the end of its range that a record
+// is of, the high one if hi, as k times the move, and the most that the
+// move may move a number of the part.
+struct end_of {
+	const char *part, *name, *where;
+	size_t tol;
+	int hi;
+	double k, most;
+};
+
+// Dies, as the part, rebuilt with a parameter moved, has another form.
+static void new_form(struct end_of e)
+{
+	die("%s: the part takes another form as %s (%s) moves", e.part, e.name,
+	    e.where);
+}
+
+// The record r of the end e, of numbers n of the part and m of the
+// rebuild, each n + k (m - n), unless none of them differ: adds it to
+// g.
+static void rec_end(struct ranges *g, struct rec *r, const double *n,
+		    const double *m, size_t count, struct end_of e)
+{
+	int d = 0;
+
+	for (size_t i = 0; i < count; i++) {
+		if (fabs(m[i] - n[i]) > e.most) {
+			new_form(e);
+		}
+		rec_num(r, n[i] + (e.k * (m[i] - n[i])));
+		d |= fabs(m[i] - n[i]) > SAME_NUM;
+	}
+	if (d) {
+		add_vary(g, e.tol, e.hi, r->s);
+	}
+}
+
+// Adds to g the vary records of end e of the maps of the part p that q,
+// rebuilt, moves.
+static void vary_maps(struct ranges *g, const struct part *p,
+		      const struct part *q, struct end_of e)
+{
+	for (size_t i = 0; i < p->nmaps; i++) {
+		const struct map *a = &p->maps[i];
+		const struct map *b = &q->maps[i];
+		struct rec r = { "", 0 };
+
+		if (a->bend != b->bend || a->parent != b->parent) {
+			new_form(e);
+		}
+		rec_index(&r, "map", i);
+		if (!b->bend) {
+			const double x[] = { a->m.r[0][0], a->m.r[0][1],
+					     a->m.r[0][2], a->m.r[1][0],
+					     a->m.r[1][1], a->m.r[1][2],
+					     a->m.r[2][0], a->m.r[2][1],
+					     a->m.r[2][2], a->m.t.x,
+					     a->m.t.y,	   a->m.t.z };
+			const double y[] = { b->m.r[0][0], b->m.r[0][1],
+					     b->m.r[0][2], b->m.r[1][0],
+					     b->m.r[1][1], b->m.r[1][2],
+					     b->m.r[2][0], b->m.r[2][1],
+					     b->m.r[2][2], b->m.t.x,
+					     b->m.t.y,	   b->m.t.z };
+
+			rec_word(&r, "rigid");
+			rec_end(g, &r, x, y, sizeof(x) / sizeof(x[0]), e);
+		} else {
+			const double x[] = { a->qx, a->qy,  a->mx, a->my,
+					     a->ba, a->ang, a->r };
+			const double y[] = { b->qx, b->qy,  b->mx, b->my,
+					     b->ba, b->ang, b->r };
+
+			rec_index(&r, "bend", b->parent);
+			rec_end(g, &r, x, y, sizeof(x) / sizeof(x[0]), e);
+		}
+	}
+}
+
+// The corner of coat b that is the first of coat a, of as many corners,
+// in the same order: of the turns of b, the one nearest a.
+static size_t first_corner(const struct coat *a, const struct coat *b)
+{
+	size_t best = 0;
+	double least = HUGE_VAL;
+
+	for (size_t s = 0; s < a->n; s++) {
+		double d = 0;
+
+		for (size_t k = 0; k < a->n; k++) {
+			const struct vec2 *u = &a->pt[k];
+			const struct vec2 *w = &b->pt[(k + s) % a->n];
+
+			d += hypot(w->x - u->x, w->y - u->y);
+		}
+		if (d < least) {
+			least = d;
+			best = s;
+		}
+	}
+	return best;
+}
+
+// Adds to g the vary records of end e of the sheet, the vertices, the
+// arcs, the holes and the coats of the part p that q, rebuilt, moves;
+// dies if q has another form.
+static void vary_blank(struct ranges *g, const struct part *p,
+		       const struct part *q, struct end_of e)
+{
+	struct rec r = { "", 0 };
+
+	if (p->nmaps != q->nmaps || p->nfaces != q->nfaces ||
+	    p->nverts != q->nverts || p->nedges != q->nedges ||
+	    p->nholes != q->nholes || p->ncoats != q->ncoats) {
+		new_form(e);
+	}
+	rec_word(&r, "t");
+	rec_end(g, &r, &p->t, &q->t, 1, e);
+	vary_maps(g, p, q, e);
+	for (size_t i = 0; i < p->nfaces; i++) {
+		if (p->faces[i] != q->faces[i]) {
+			new_form(e);
+		}
+	}
+	for (size_t i = 0; i < p->nverts; i++) {
+		const double x[] = { p->verts[i].x, p->verts[i].y };
+		const double y[] = { q->verts[i].x, q->verts[i].y };
+
+		r.n = 0;
+		rec_index(&r, "vertex", i);
+		rec_end(g, &r, x, y, 2, e);
+	}
+	for (size_t i = 0; i < p->nedges; i++) {
+		const struct edge *a = &p->edges[i];
+		const struct edge *b = &q->edges[i];
+		const double x[] = { a->cx, a->cy };
+		const double y[] = { b->cx, b->cy };
+
+		if (a->v0 != b->v0 || a->v1 != b->v1 || a->lf != b->lf ||
+		    a->rf != b->rf || a->arc != b->arc) {
+			new_form(e);
+		}
+		r.n = 0;
+		rec_index(&r, "edge", i);
+		if (a->arc) {
+			rec_end(g, &r, x, y, 2, e);
+		}
+	}
+	for (size_t i = 0; i < p->nholes; i++) {
+		const struct hole *a = &p->holes[i];
+		const struct hole *b = &q->holes[i];
+		const double x[] = { a->cx,
+				     a->cy,
+				     a->r,
+				     a->side ? a->rc : a->r,
+				     a->side ? a->h : 0,
+				     a->blind };
+		const double y[] = { b->cx,
+				     b->cy,
+				     b->r,
+				     b->side ? b->rc : b->r,
+				     b->side ? b->h : 0,
+				     b->blind };
+
+		if (a->face != b->face || a->side != b->side ||
+		    a->bside != b->bside) {
+			new_form(e);
+		}
+		r.n = 0;
+		rec_index(&r, "hole", i);
+		rec_end(g, &r, x, y, sizeof(x) / sizeof(x[0]), e);
+	}
+	for (size_t i = 0; i < p->ncoats; i++) {
+		const struct coat *a = &p->coats[i];
+		const struct coat *b = &q->coats[i];
+		double *x = NULL;
+		double *y = NULL;
+		size_t at = 0;
+
+		if (a->n != b->n) {
+			new_form(e);
+		}
+		at = first_corner(a, b);
+		x = xmalloc((2 * a->n + 1) * sizeof(*x));
+		y = xmalloc((2 * a->n + 1) * sizeof(*y));
+		for (size_t k = 0; k < a->n; k++) {
+			x[2 * k] = a->pt[k].x;
+			x[(2 * k) + 1] = a->pt[k].y;
+			y[2 * k] = b->pt[(k + at) % a->n].x;
+			y[(2 * k) + 1] = b->pt[(k + at) % a->n].y;
+		}
+		r.n = 0;
+		rec_index(&r, "coat", i);
+		rec_end(g, &r, x, y, 2 * a->n, e);
+		free(x);
+		free(y);
+	}
+}
+
+// The parameters of a range that a part leans on, their indices among
+// the names.
+struct params {
+	size_t *i;
+	size_t n, cap;
+};
+
+static void note_param(const struct sym *s, size_t i, void *ctx)
+{
+	struct params *ps = ctx;
+
+	(void)s;
+	PUSH(ps->i, ps->n, ps->cap, i);
+}
+
+// Rebuilds the part g made with each parameter that it leans on moved by
+// STEP_SHARE of its range, and adds to the ranges of the part the
+// parameters, and what the ends of their ranges move, by the rebuild:
+// each number of the blank changes as the parameter, in proportion.
+static void vary_all(struct smf *g, struct args a)
+{
+	struct params ps = { NULL, 0, 0 };
+
+	each_tolerance(&g->nm, note_param, &ps);
+	for (size_t k = 0; k < ps.n; k++) {
+		const struct sym *s = &g->nm.syms[ps.i[k]];
+		double by = STEP_SHARE * (s->hi - s->lo);
+		struct end_of e = { g->out.name,
+				    s->name,
+				    s->where,
+				    add_tol(&g->out.rg, s->name, s->kind,
+					    s->lo - s->v, s->hi - s->v),
+				    0,
+				    0,
+				    SLOPE_MAX * by };
+		struct smf h;
+		int deps = 0;
+
+		build(&h, a, ps.i[k] + 1, by, &deps);
+		for (e.hi = 0; e.hi < 2; e.hi++) {
+			e.k = ((e.hi ? s->hi : s->lo) - s->v) / by;
+			vary_blank(&g->out.rg, &g->out, &h.out, e);
+		}
+		free_smf(&h);
+	}
+	free(ps.i);
+}
+
+int main(int argc, char **argv)
+{
+	struct args a = { argc, argv };
+	struct smf g;
+	int deps = 0;
+
+	build(&g, a, 0, 0, &deps);
 	if (deps) {
 		print_deps(&g);
 		free_smf(&g);
 		close_stdout();
 		return 0;
 	}
-	if (!g.nb) {
-		die("%s: no plate", g.part_path);
-	}
-	make_grid(&g);
-	paint(&g);
-	check_tears(&g);
-	find_faces(&g);
-	find_edges(&g);
-	finish(&g);
-	place_inserts(&g);
-	g.out.name = base_name(g.part_path);
-	g.out.t = g.sheet.t;
-	g.out.place = rig_id();
 	check_contacts(&g);
 	check_part(&g.out, g.part_path);
 	insert_materials(&g);
+	vary_all(&g, a);
 	stream_head();
 	for (size_t k = 0; k < g.nmats; k++) {
 		int used = 0;

@@ -10,8 +10,9 @@
 # what its netlist joins (schconn); a drawing with a wire taken out, or
 # with two pins traded, must not; each test/bad_sch_*.sch must fail
 # with the message of its .expected; a sheet template with more room
-# round bodies draws another sheet, still without a fault; the netdiff
-# cases compare by hand-made netlists.  It prints ok or FAIL for each
+# round bodies draws another sheet, still without a fault; a source of
+# two pages draws two, each port of the sheet naming the other page, and
+# prints as two; the netdiff cases compare by hand-made netlists.  It prints ok or FAIL for each
 # and exits non-zero if any fails.
 
 cd "$(dirname "$0")/.." || exit 1
@@ -69,30 +70,50 @@ check sh -c '! "$1/schconn" "$2/swap.vec" "$2/good.nl" > "$2/out" &&
 # Designators wherever a part is named, but never in the source: the
 # brackets of the drawing and the traces of -v.
 name="schdraw names its parts by designator too"
-check sh -c 'grep -qx "part buf.rf R701" "$1/good.vec" &&
+check sh -c 'grep -qx "part filter.buf.rf R701" "$1/good.vec" &&
 	"$2/schdraw" -v -L "$3" test/sch_filter.sch 2>&1 > /dev/null |
-	grep -q "^test/sch_filter.sch:[0-9]*: buf.rf (R701) at "' \
+	grep -q "^test/sch_filter.sch:[0-9]*: filter.buf.rf (R701) at "' \
 	- "$tmp" "$P" "$L"
 
 # Every part shows its designator; the ferrites of the kind the sheet
 # uses most go without their value alone.
 name="the common ferrites keep their designators, not their values"
 check awk '$1 == "part" && NF == 3 { p = $2 } $1 == "part" && NF == 1 { p = "" }
-	p ~ /^v(pos|neg)\.fb$/ && $1 == "text" && $NF == "FB" { fb[p] = 1 }
-	p ~ /^v(pos|neg)\.fb$/ && $1 == "text" && $NF == "600R" { bad = 1 }
-	p == "buf.rf" && $1 == "text" && $NF == "1k" { rf = 1 }
-	END { exit !(fb["vpos.fb"] && fb["vneg.fb"] && !bad && rf) }' \
+	p ~ /^filter\.v(pos|neg)\.fb$/ && $1 == "text" && $NF == "FB" { fb[p] = 1 }
+	p ~ /^filter\.v(pos|neg)\.fb$/ && $1 == "text" && $NF == "600R" { bad = 1 }
+	p == "filter.buf.rf" && $1 == "text" && $NF == "1k" { rf = 1 }
+	END { exit !(fb["filter.vpos.fb"] && fb["filter.vneg.fb"] && !bad && rf) }' \
 	"$tmp/good.vec"
 
 # The room the drawing keeps is the sheet template's: one with more room
 # round bodies draws another sheet, which keeps it.
 mkdir "$tmp/wide" "$tmp/wide/symbols"
 cp -r test/sheets "$tmp/wide"
-{ echo "sheet wide"; cat test/sch_filter.sch; } > "$tmp/wide/w.sch"
+awk '{ print } $1 == "page" { print "sheet wide" }' test/sch_filter.sch \
+	> "$tmp/wide/w.sch"
 name="schdraw keeps the room of its sheet template"
 check sh -c '"$1/schdraw" -L "$2" "$3/wide/w.sch" > "$3/w.vec" 2> "$3/err" &&
 	! test -s "$3/err" && ! cmp -s "$3/w.vec" "$3/good.vec"' \
 	- "$P" "$L" "$tmp"
+
+# A source of two pages: a page record of each number, each port of the
+# sheet named with the other page it is on, and a page of PostScript for
+# each.
+"$P/schdraw" -L "$L" test/sch_pages.sch > "$tmp/pages.vec"
+name="schdraw draws each page from its page record"
+check sh -c 'grep -q "^page [0-9]* [0-9]* 5$" "$1" &&
+	grep -q "^page [0-9]* [0-9]* 6$" "$1" &&
+	test "$(grep -c "^page " "$1")" = 2' - "$tmp/pages.vec"
+name="schdraw names the other pages of a port of the sheet"
+check awk '$1 == "page" { n = $4 }
+	$1 == "text" && / MID\(6\)$/ && n == 5 { a = 1 }
+	$1 == "text" && / MID\(5\)$/ && n == 6 { b = 1 }
+	END { exit !(a && b) }' "$tmp/pages.vec"
+name="vecps prints a page for each page record"
+check sh -c '"$1/vecps" "$2" > "$3/pages.ps" &&
+	grep -q "^%%Pages: 2$" "$3/pages.ps" &&
+	test "$(grep -c "^showpage" "$3/pages.ps")" = 2' \
+	- "$P" "$tmp/pages.vec" "$tmp"
 
 for f in test/bad_sch_*.sch; do
 	b=$(basename "$f" .sch)

@@ -4,8 +4,9 @@
 
 t = 2
 r = 2
+L = 100 + 0.254 - 0 # The length of the plate, up to 0.010 in over
 sheet t r 0.44
-plate base 0 0 100 50 at 0 0 0 axes +x +y
+plate base 0 0 L 50 at 0 0 0 axes +x +y
 flange wall base +y 90 30
 round 5 wall
 hole center 6 50 25 along z

@@ -803,12 +803,12 @@ static void read_record(struct drawing *d, struct cursor *c, const char *k)
 		const char *name;
 		void (*read)(struct drawing *d, struct cursor *c);
 	} kinds[] = {
-		{ "view", read_view },	       { "template", read_template },
-		{ "material", read_material }, { "finish", read_finish },
-		{ "boxed", read_boxed },       { "note", read_note },
-		{ "units", read_units },       { "revision", read_revision },
-		{ "field", read_field },       { "inserts", read_inserts },
-		{ "hatching", read_hatching }, { "unmarked", read_unmarked },
+		{ "view", read_view },		 { "template", read_template },
+		{ "material", read_material },	 { "finish", read_finish },
+		{ "boxed", read_boxed },	 { "note", read_note },
+		{ "units", read_units },	 { "revision", read_revision },
+		{ "field", read_field },	 { "inserts", read_inserts },
+		{ "hatching", read_hatching },	 { "unmarked", read_unmarked },
 		{ "unhatched", read_unhatched },
 	};
 	size_t i = 0;
@@ -889,12 +889,12 @@ static void put_word(char **b, size_t *n, size_t *cap, const char *w)
 // Reads a record for smdim under view v from c, and keeps it with its
 // lengths in inches, as smdim takes them:
 //   drop FEATURE [x|y|d|r]
-//   lin x|y A B [PLUS MINUS]
+//   lin x|y A B
 //   leader X Y TEXT
 //   flag X Y N [TEXT]
 //   hatch X0 Y0 X1 Y1
-// What a rule of the word k takes: a word after k, the lengths, the
-// last two of them optional, and a text at its end.
+// What a rule of the word k takes: a word after k, the lengths, and a
+// text at its end.
 struct rule_form {
 	int word;
 	size_t lens;
@@ -908,7 +908,7 @@ static struct rule_form rule_form(const struct cursor *c, const char *k)
 		const char *k;
 		struct rule_form f;
 	} forms[] = {
-		{ "drop", { 1, 0, 0, 1 } },   { "lin", { 1, 4, 0, 0 } },
+		{ "drop", { 1, 0, 0, 1 } },   { "lin", { 1, 2, 0, 0 } },
 		{ "leader", { 0, 2, 0, 1 } }, { "flag", { 0, 2, 1, 1 } },
 		{ "hatch", { 0, 4, 0, 0 } },
 	};
@@ -954,8 +954,12 @@ static void read_rule(struct view *v, struct cursor *c)
 	if (f.word) {
 		put_word(&r.text, &n, &cap, word(c));
 	}
-	for (size_t i = 0; i < lens && (i < 2 || next_word_at(c)); i++) {
+	for (size_t i = 0; i < lens; i++) {
 		put_inches(&r.text, &n, &cap, length_in(c));
+	}
+	if (strcmp(k, "lin") == 0 && c->at[strspn(c->at, " \t")]) {
+		die("%s:%u: a lin takes no tolerance: the model gives it",
+		    c->what, c->line);
 	}
 	rule_end(c, f, &r.text, &n, &cap);
 	PUSH(r.text, n, cap, 0);
@@ -990,7 +994,7 @@ static int define_line(struct drawing *d, const char *l)
 	}
 	memcpy(name, l + a, e - a);
 	name[e - a] = 0;
-	define(&d->nm, name, eval(&d->nm, eq + 1), 0);
+	define(&d->nm, name, eq + 1, 0);
 	return 1;
 }
 
@@ -1212,11 +1216,13 @@ static void read_other(struct drawing *d, struct view *v, struct cursor *c,
 // and in their order.
 static void read_views(struct drawing *d, const char *path, char *input)
 {
-	struct names none = { NULL, 0, 0, 0, NULL, NULL, 0, 0, NULL, NULL, 0 };
+	struct names none;
 	struct cursor c = { path, 0, NULL, &none };
 	char *more = input;
 	struct view *v = NULL;
 	size_t n = 0;
+
+	memset(&none, 0, sizeof(none));
 
 	while ((c.at = next_line(&more)) != NULL) {
 		const char *k = next_word(&c);

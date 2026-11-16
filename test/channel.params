@@ -2,6 +2,7 @@
 # channel.params -- Sizes of the test channel
 # Copyright (c) 2026 Jakob Kastelic
 
+tolerance 0.1 mm 0.5 deg
 W = 100 mm
 L = 4 in
 H = 25

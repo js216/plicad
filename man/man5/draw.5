@@ -84,7 +84,7 @@ Lines beginning with a blank belong to the view above, records for
 .RS
 .nf
 drop FEATURE [x|y|d|r]
-lin x|y A B [PLUS MINUS]
+lin x|y A B
 leader X Y TEXT
 flag X Y N [TEXT]
 hatch X0 Y0 X1 Y1
@@ -97,6 +97,13 @@ source
 .RI ( sm (5)):
 all of them, or its ordinates on one axis, its hole callouts or its
 radii.
+.B lin
+dimensions the distance along x or y from A to B, each at an edge or a
+hole of the view, with the tolerance that the model gives it
+.RI ( smdim (1)),
+from the tolerances of the source of the part
+.RI ( plicad (7));
+it states none.
 Lengths are from the datum of the view, the lower left corner, at full
 size, in mm unless they say
 .BR in ;

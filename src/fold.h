@@ -37,7 +37,11 @@ struct shape; // The exact solid of a solid part (shape.h).
 //   edge I V0 V1 LEFT RIGHT [arc CX CY] [by FEATURE]
 //   hole FACE CX CY R [csink RC H near|far] [blind D near|far] [by FEATURE]
 // or the records of the solid (shape.h), in its own frame, which the
-// place puts in the world; and last
+// place puts in the world; then its ranges
+//   tol NAME number|length|angle LO HI
+//   vary NAME -|+ RECORD...
+// the parameters it leans on, and the records of what the low or the
+// high end of the range of each moves (stream(5)); and last
 //   end
 // Each index I counts from 0 in its kind of record.  An arc runs
 // counterclockwise from V0 to V1, and the face on the left of each edge
@@ -143,6 +147,32 @@ struct part_insert {
 
 #define DENSITY_MAX 30.0 // The densest material, in g/cm3; osmium is 22.6.
 
+// A parameter of a range that a part leans on (expr.h): its name, its
+// kind, and the ends of its range less its value.
+struct part_tol {
+	char *name;
+	int kind;
+	double lo, hi;
+};
+
+// A record of the geometry of a part rebuilt at an end of the range of
+// parameter tol, the low one or the high one: its text after the end,
+// as stream(5) gives it.
+struct part_vary {
+	size_t tol;
+	int hi;
+	char *rec;
+};
+
+// The ranges of a part, or of the solids of a pipe: the parameters, and
+// the records of what each end of each moves.
+struct ranges {
+	struct part_tol *tol;
+	size_t ntol, captol;
+	struct part_vary *vary;
+	size_t nvary, capvary;
+};
+
 struct part {
 	char *name;
 	double t;
@@ -178,6 +208,7 @@ struct part {
 	size_t nins, capins;
 	int body; // Whether it is the body of an insert of the part before.
 	int bodied; // Whether the bodies of its inserts follow it.
+	struct ranges rg; // Its ranges from the tolerances of its source.
 };
 
 // The material of the name of part p, or NULL.
@@ -224,6 +255,24 @@ void write_part(const struct part *p);
 void write_material(const struct material *m);
 // Dies unless the part is well formed.
 void check_part(const struct part *p, const char *where);
+
+// Reads a record tol NAME KIND LO HI or vary NAME -|+ RECORD... of the
+// n words w into g; returns 0 if the record is neither.
+int range_record(struct ranges *g, char **w, size_t n, const char *where);
+// Adds parameter name of the kind and range to g, and returns its index.
+size_t add_tol(struct ranges *g, const char *name, int kind, double lo,
+	       double hi);
+// Adds the record rec of the end hi of parameter tol to g.
+void add_vary(struct ranges *g, size_t tol, int hi, const char *rec);
+void write_ranges(const struct ranges *g);
+// Adds copies of the records of from to to.
+void copy_ranges(struct ranges *to, const struct ranges *from);
+void free_ranges(struct ranges *g);
+// Makes q the blank p at the end hi of the range of its parameter tol,
+// its vary records applied to copies of the maps, vertices, edges,
+// holes and coats of p, the rest shared with p; free_variant frees it.
+void vary_part(const struct part *p, size_t tol, int hi, struct part *q);
+void free_variant(struct part *q);
 
 // Maps a flat point of face f to the world.
 struct vec fmap(const struct part *p, size_t f, double x, double y, double z);

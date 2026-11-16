@@ -67,6 +67,13 @@ dim ord|hole|insert|radius|lin|pitch|bend ...
 .fi
 .RE
 .PP
+A record
+.B range
+after a line, a hole or a coat of a view
+.RI ( smview (1))
+gives what the ends of the range of a parameter of the part move it;
+it is used, and goes.
+.PP
 .I Align
 is
 .BR l ,
@@ -110,7 +117,7 @@ These records after the view change the result:
 .RS
 .nf
 drop FEATURE [x|y|d|r]   omit the dimensions of a feature
-lin x|y A B [PLUS MINUS] linear dimension, with tolerances
+lin x|y A B              linear dimension, with its tolerances
 leader X Y STRING...     note with a dot at X Y, inches from the datum
 flag X Y N [STRING...]   box of note N, with text after it
 hatch X0 Y0 X1 Y1        hatching across the material there
@@ -134,6 +141,17 @@ The ends of a
 .B lin
 stand at an ordinate, or at any visible edge of the view square to its
 axis, of the outline, a cut-out, a bend or a coat, or at a hole.
+Its tolerances, one above the other after its text, + and \-, are the
+range of the distance that the model gives: for each parameter, the
+most that the ends of its range move the end B less the end A along
+the axis, either way, by the range records of the lines and holes
+there, a line by the mean of its two ends and a side of a coat by its
+two corners, each worst case over every line and hole at A and at B;
+summed over the parameters.
+A lin with a tolerance of its own is refused, and so is one at a line
+whose range for a parameter is
+.BR \- ,
+unknown.
 .PP
 .B drop
 leaves out all the dimensions of the feature of the part that the

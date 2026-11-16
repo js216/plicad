@@ -12,22 +12,22 @@
 #   extrude test/bnc.part | bool - | tostep - > bnc.step
 
 N = 6
-PITCH = 0.8 in
-END = 0.25 in
+PITCH = 0.8 in +- 0.005 in
+END = 0.25 in +- 0.005 in
 X0 = -55.5625
 Y0 = 1.5748
 Y1 = Y0 + 0.617 in
 YB = Y0 + 0.317 in
 Z0 = -29.3243
 Z1 = Z0 + 0.325 in
-BOSS = 0.5 in
-BOSS_H = 0.05 in
-TAP = 0.332 in
-TAP_CS = 0.39 in
-TAP4 = 0.089 in
-TAP4_CS = 0.11 in
+BOSS = 0.5 in +- 0.005 in
+BOSS_H = 0.05 in +- 0.005 in
+TAP = 0.332 in +- 0.005 in
+TAP_CS = 0.39 in +- 0.005 in
+TAP4 = 0.089 in +- 0.005 in
+TAP4_CS = 0.11 in +- 0.005 in
 CS = 41
-BLIND = 0.23 in
+BLIND = 0.23 in +- 0.005 in
 BLIND_Z = Z0 + 0.17 in
 POINT = 118
 

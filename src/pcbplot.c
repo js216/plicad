@@ -5,6 +5,7 @@
 // See pcbplot.h.
 
 #include "pcbplot.h"
+#include <math.h>
 #include <string.h>
 
 static const struct pcb *B;
@@ -20,6 +21,30 @@ static void pad(const struct pcb_spot *s, double g)
 static void track(const struct pcb_track *t, double w)
 {
 	P->line(w, t->xy, t->n);
+}
+
+// The outline of a rectangle with its corners rounded to radius r, the
+// arcs as short chords (within 0.005 mm for 1 mm).
+static void round_rect(double w, const double c[4], double r)
+{
+	enum { ARC = 16 };
+	double xy[2 * (4 * (ARC + 1) + 1)];
+	const double cx[4] = { c[2] - r, c[2] - r, c[0] + r, c[0] + r };
+	const double cy[4] = { c[1] + r, c[3] - r, c[3] - r, c[1] + r };
+	size_t n = 0;
+
+	for (int k = 0; k < 4; k++) {
+		for (int i = 0; i <= ARC; i++) {
+			double a = (k - 1 + (double)i / ARC) *
+				   3.14159265358979323846 / 2;
+
+			xy[n++] = cx[k] + r * cos(a);
+			xy[n++] = cy[k] + r * sin(a);
+		}
+	}
+	xy[n++] = xy[0];
+	xy[n++] = xy[1];
+	P->line(w, xy, n / 2);
 }
 
 static void rect(double w, const double c[4])
@@ -55,6 +80,16 @@ static void copper(int l)
 		P->net(net);
 		P->region(xy, 5);
 		P->dark(0);
+		// The cutouts cleared, the gap round them as round the board.
+		for (size_t i = 0; i < B->ncut; i++) {
+			const double *c = B->cut[i];
+			double cx[10] = { c[0] - e, c[1] - e, c[2] + e,
+					  c[1] - e, c[2] + e, c[3] + e,
+					  c[0] - e, c[3] + e, c[0] - e,
+					  c[1] - e };
+
+			P->region(cx, 5);
+		}
 		for (size_t q = 0; q < B->npart; q++) {
 			for (size_t k = 0;
 			     B->part[q].placed && k < B->part[q].fp->npad;
@@ -225,6 +260,9 @@ void pcb_plot(const struct pcb *b, const struct pcb_plot *p)
 	top_pads("toppaste", "Paste,Top", 0, 1);
 	P->begin("edge", "Profile,NP");
 	rect(0, B->board);
+	for (size_t i = 0; i < B->ncut; i++) {
+		round_rect(0, B->cut[i], B->cutr[i]);
+	}
 	P->end();
 	courtyards(0);
 	courtyards(1);

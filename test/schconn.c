@@ -16,7 +16,9 @@
 // names (the path of their groups and their own, as ch1.gain.rf), never
 // by designator: a pin of the drawing is named by the part bracket it
 // stands in, and a pin of the netlist by the name of its part record,
-// so the two may number their parts as they please.  Each fault is a line on
+// so the two may number their parts as they please.  The pages of the
+// sheet stand apart, each a million points right of the one before, so
+// only flags join them.  Each fault is a line on
 // stdout; the exit status is 1 if there is any, 2 if a file cannot be
 // read.
 
@@ -128,7 +130,8 @@ static void read_vec(const char *path)
 	FILE *f = fopen(path, "r");
 	char *line = NULL;
 	size_t cap = 0;
-	int in_net = 0;
+	int in_net = 0, pages = 0;
+	double shift = 0; // Of the page, to the right of the one before.
 	char part[1024] = "";
 
 	if (!f) {
@@ -140,11 +143,15 @@ static void read_vec(const char *path)
 		double x, y;
 
 		line[strcspn(line, "\n")] = 0;
+		if (!strncmp(line, "page ", 5) && pages++) {
+			shift += 1e6;
+		}
 		if (!strncmp(line, "part", 4) && (!line[4] || line[4] == ' ')) {
 			if (sscanf(line, "part %1023s", part) != 1) {
 				part[0] = 0;
 			}
-		} else if (!strncmp(line, "net", 3) && (!line[3] || line[3] == ' ')) {
+		} else if (!strncmp(line, "net", 3) &&
+			   (!line[3] || line[3] == ' ')) {
 			in_net = line[3] == ' ';
 		} else if (in_net && !strncmp(line, "line ", 5)) {
 			struct wire w = { NULL, 0 };
@@ -161,23 +168,26 @@ static void read_vec(const char *path)
 				y = strtod(s, &end);
 				s = end;
 				w.xy = more(w.xy, 2 * (w.n + 1) * sizeof *w.xy);
-				w.xy[2 * w.n] = q(x);
+				w.xy[2 * w.n] = q(x + shift);
 				w.xy[2 * w.n + 1] = q(y);
 				w.n++;
 			}
 			if (w.n) {
-				wires = more(wires, (nwires + 1) * sizeof *wires);
+				wires = more(wires,
+					     (nwires + 1) * sizeof *wires);
 				wires[nwires++] = w;
 			}
-		} else if ((sscanf(line, "pin %1023s %lf %lf", name, &x, &y) == 3 ||
+		} else if ((sscanf(line, "pin %1023s %lf %lf", name, &x, &y) ==
+				    3 ||
 			    sscanf(line, "flag %1023s %lf %lf", name, &x, &y) ==
 				    3)) {
 			char *dot = strchr(name, '.');
 
 			ends = more(ends, (nends + 1) * sizeof *ends);
 			ends[nends].name = line[0] == 'p' && *part && dot ?
-					   by_name(part, dot) : strdup(name);
-			ends[nends].x = q(x);
+						   by_name(part, dot) :
+						   strdup(name);
+			ends[nends].x = q(x + shift);
 			ends[nends].y = q(y);
 			ends[nends++].flag = line[0] == 'f';
 		}
@@ -210,8 +220,11 @@ static void read_netlist(const char *path)
 			while (ref && (k = strtok_r(NULL, " \t\r\n", &save))) {
 				if (!strcmp(k, "name") &&
 				    (k = strtok_r(NULL, " \t\r\n", &save))) {
-					refs = more(refs, (nrefs + 1) * sizeof *refs);
-					names = more(names, (nrefs + 1) * sizeof *names);
+					refs = more(refs,
+						    (nrefs + 1) * sizeof *refs);
+					names = more(names,
+						     (nrefs + 1) *
+							     sizeof *names);
 					refs[nrefs] = strdup(ref);
 					names[nrefs++] = strdup(k);
 				}
@@ -231,7 +244,8 @@ static void read_netlist(const char *path)
 			if (!strcmp(w, "global")) {
 				continue;
 			}
-			pin_name = more(pin_name, (npins + 1) * sizeof *pin_name);
+			pin_name =
+				more(pin_name, (npins + 1) * sizeof *pin_name);
 			pin_net = more(pin_net, (npins + 1) * sizeof *pin_net);
 			pin_name[npins] = strdup(w);
 			pin_net[npins++] = nets[nnets - 1];

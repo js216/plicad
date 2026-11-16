@@ -18,7 +18,7 @@ note INSIDE BEND RADIUS %%r.
 revision A 11/01/26 JK INITIAL RELEASE
 revision B 11/13/26 JK ADDED THE HOLES
 view top scale 1
- lin x 0in 3.937in +.010in -.000in
+ lin x 0in 3.937in
  lin y 0in .984in
  drop base y
  leader 1in 1in MARK HERE, %%p.5

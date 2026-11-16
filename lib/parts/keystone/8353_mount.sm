@@ -6,10 +6,11 @@
 # one of the two steel end mounts of the strap handle Keystone 8353,
 # 19.05 x 25.4 x 6.5 mm, on the axis of its #6 screw.  The origin is the
 # screw axis, on the face that the handle mounts on; an assembly places
-# one at each end of the strap (8353_strap.sm).
-H = 9.5mm # The height of the handle over the face, its strap on top
-cx = 19.05mm/2
-cy = 25.4mm/2
+# one at each end of the strap (8353_strap.sm).  Its sizes are
+# within 0.25 mm, assumed.
+H = 9.5mm +- 0.25mm # The height of the handle over the face, its strap on top
+cx = 19.05mm/2 +- 0.25mm
+cy = 25.4mm/2 +- 0.25mm
 u0 = -cx
 v0 = -cy
 u1 = cx

@@ -12,7 +12,12 @@ extrude \- make solids from outlines
 reads a part source or a stream and writes a stream on the standard
 output, with a solid added for each
 .B extrude
-statement.
+statement, and with the ranges of their faces: for each parameter of
+a range that the solids lean on
+.RI ( plicad (7)),
+it makes them again with the parameter moved and writes where each
+end of the range moves each face
+.RI ( stream (5)).
 .BR Profile ,
 .B corner
 and
@@ -24,4 +29,4 @@ The statements are described in
 .SH EXAMPLES
 extrude box.part | bool \- | fillet \- | tostep \- >box.step
 .SH SEE ALSO
-part(5), bool(1), fillet(1), tostep(1)
+part(5), stream(5), bool(1), fillet(1), tostep(1)

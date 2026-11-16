@@ -5,10 +5,11 @@
 # A reference solid, not a made part, crude as a block (no drawing):
 # the black leather strap, folded flat, 190.5 x 22 x 3 mm, on top of
 # the two end mounts (8353_mount.sm) from end to end.  The origin is the
-# middle, on the face that the handle mounts on.
-H = 9.5mm # The height of the handle over the face, its strap on top
-sx = 190.5mm/2
-sy = 11mm
+# middle, on the face that the handle mounts on.  Its sizes are within
+# 0.25 mm, assumed.
+H = 9.5mm +- 0.25mm # The height of the handle over the face, its strap on top
+sx = 190.5mm/2 +- 0.25mm
+sy = 11mm +- 0.25mm
 u0 = -sx
 v0 = -sy
 u1 = sx

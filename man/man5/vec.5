@@ -28,7 +28,7 @@ line W X Y X Y ...      a stroke of width W, round at its ends;
                         of width 0, an outline, a hairline
 poly X Y X Y ...        a filled polygon
 text F S A J X Y TEXT   text, to the end of the line
-page W H                the size of the page of a sheet
+page W H [N]            a page of a sheet: its size and number
 name NAME X0 Y0 X1 Y1   a named box: a part, for picking
 zone NET                the fill of a zone of copper begins
 end                     and ends
@@ -41,6 +41,10 @@ flag NET X Y            the end of the pin of a flag of a net
 # TEXT                  a comment
 .fi
 .RE
+.PP
+A file may hold several pages, each from its page record to the next;
+the records before the first page record belong to the first page.
+N is the number of the page, as the source numbers it.
 .PP
 A layer record comes before any drawing and names the layer by KiCad's
 name of it:
@@ -82,7 +86,7 @@ and
 .B part
 draw that part, so a viewer can draw it brighter when it is selected;
 a part may have several such runs.
-The name is the part's in its source (ch1.gain.rf), which the viewers
+The name is the part's in its source (outputs.ch1.gain.rf), which the viewers
 select by; REF, its designator (R401), is for the reader.
 A pin record gives where a wire meets a pin of a part on a sheet, or
 the center of a pad of a pin on a layer of copper, by its designator

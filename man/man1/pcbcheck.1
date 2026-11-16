@@ -9,6 +9,8 @@ pcbcheck \- check a board against its netlist and rules
 [
 .B \-l
 ] [
+.B \-r
+] [
 .B \-L
 .I lib
 ] ...
@@ -37,7 +39,8 @@ net apart (a sliver), and between an opening and a via; a small part of
 two pins with one pad on a plane joins it by a neck no wider than a
 track, with no via by it, or its pads heat unevenly (a thermal
 imbalance); no silkscreen, a footprint's lines or a designator, runs
-over an opening of the solder mask, where it would be cut; no two
+over an opening of the solder mask, where it would be cut, and no two
+designators of a side overlap; no two
 courtyards on one side overlap, and no courtyard on either side, nor
 any via, comes into the keep-out of a hole a screw goes through
 .RI ( pcbfp (5)),
@@ -73,6 +76,19 @@ of its net to the nearest pad of another part or via of the net, and
 closes straight between those two ends: a decoupling capacitor's loop
 from its supply pin to its ground via, a feedback resistor's between
 the amplifier's output and input.
+With -r it prints, a part a line, the free room on each side of its
+courtyard, in mm out to 5, to the courtyards and the openings of the
+mask of the other parts of its side, the keep-outs of the holes and the
+board's edge rule, for choosing where a ref statement puts its
+designator:
+.PP
+.RS
+room PART REF above MM below MM left MM right MM
+.RE
+.PP
+For each unplaced statement it prints a note, and one for each net that
+waits for its parts; notes are not faults.
+.PP
 .SH EXAMPLES
 .nf
 pcbcheck -l outputs.pcb < outputs.lock | sort -k3 -n

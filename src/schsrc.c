@@ -558,7 +558,7 @@ static struct alias *aliases;
 static size_t naliases;
 static struct later *laters;
 static size_t nlaters;
-static char group_path[LINE]; // The groups open, as ch1.gain.
+static char group_path[LINE]; // The page and groups open: outputs.ch1.
 static int depth, line_no;
 static char where[LINE + 64];
 
@@ -653,7 +653,7 @@ static long part_named(const char *full)
 }
 
 // Looks a name up in the group scope, then in each group round it, out
-// to the sheet.  kind 0 finds a part, kind 1 a pin (PART.PIN or a port).
+// to the page.  kind 0 finds a part, kind 1 a pin (PART.PIN or a port).
 // Returns the part or the pin, -1 for a port not yet known, or dies.
 static long lookup(const char *name, const char *scope, int kind)
 {
@@ -1402,10 +1402,17 @@ static int place_of(size_t k)
 	int ox, oy;
 
 	if (pl->group) {
-		const char *rest = strchr(q->name, '.');
+		// The name past as many groups as the group's path holds.
+		const char *rest = q->name;
 		char *same = sch_alloc(strlen(pl->group) + strlen(q->name) + 1);
 
-		sprintf(same, "%s%s", pl->group, rest ? rest + 1 : q->name);
+		for (const char *g = pl->group; *g && rest; g++) {
+			if (*g == '.') {
+				rest = strchr(rest, '.');
+				rest = rest ? rest + 1 : NULL;
+			}
+		}
+		sprintf(same, "%s%s", pl->group, rest ? rest : q->name);
 		for (size_t i = 0; i < R->npart; i++) {
 			if (placed[i] && !strncmp(R->part[i].name, pl->group,
 						  strlen(pl->group))) {
@@ -2018,7 +2025,8 @@ static void read_statement(char **w, int n)
 	} else if (!strcmp(w[0], "port") && n == 3) {
 		struct alias al;
 
-		al.name = in_path(w[1]);
+		// A port of the sheet is named alike on every page.
+		al.name = depth ? in_path(w[1]) : sch_strdup(w[1]);
 		al.ref = sch_strdup(w[2]);
 		al.scope = sch_strdup(group_path);
 		al.depth = depth;
@@ -2249,7 +2257,7 @@ static void resolve_all(void)
 	}
 }
 
-// Leaves the value off each ferrite of the kind the sheet uses most; its
+// Leaves the value off each ferrite of the kind the page uses most; its
 // designator stays.
 static void common_ferrite(void)
 {
@@ -2292,7 +2300,8 @@ static void common_ferrite(void)
 // Makes the nets: the pins joined, each set that has two pins or a flag.
 // A net takes its global name, or the name of its outermost port, or the
 // name of its first pin.  Each pin with a flag and the flag make a group
-// of their own; the other pins make one group with the first of them.
+// of their own; the other pins make one group with the first of them,
+// wherever it stands among them.
 static void make_nets(void)
 {
 	size_t *done = sch_alloc((npins + 1) * sizeof *done);
@@ -2302,7 +2311,7 @@ static void make_nets(void)
 		size_t r = root(i), n = 0;
 		struct sch_net t;
 		const char *name = NULL;
-		int best = 1 << 30, flagged = 0, rest = -1;
+		int best = 1 << 30, flagged = 0, rest = -1, rflag = 0;
 
 		if (!pins[i].used || done[r]) {
 			continue;
@@ -2337,11 +2346,16 @@ static void make_nets(void)
 			if (R->part[pj->part].dev->shape->flag) {
 				continue; // With the pin it flags, below.
 			}
-			if (pj->flag) {
+			if (pj->flag && rflag) {
 				g = group++;
+			} else if (pj->flag) {
+				// The first pin with a flag joins the other
+				// pins, those before it too.
 				if (rest < 0) {
-					rest = g;
+					rest = group++;
 				}
+				g = rest;
+				rflag = 1;
 			} else {
 				if (rest < 0) {
 					rest = group++;
@@ -2409,16 +2423,152 @@ static void designate(struct sch *s)
 	}
 }
 
-int sch_read(struct sch *s, const char *file, char **lib, size_t nlib)
+// Frees what the reading of a page keeps only for itself.
+static void forget(void)
+{
+	for (size_t k = 0; k < R->npart; k++) {
+		free(places[k].ref[0]);
+		free(places[k].ref[1]);
+		free(places[k].scope);
+		free(places[k].group);
+	}
+	for (size_t i = 0; i < naliases; i++) {
+		free(aliases[i].name);
+		free(aliases[i].ref);
+		free(aliases[i].scope);
+	}
+	for (size_t i = 0; i < nlaters; i++) {
+		free(laters[i].ref[0]);
+		free(laters[i].ref[1]);
+		free(laters[i].scope);
+		free(laters[i].name);
+	}
+	free(pins);
+	free(base);
+	free(placed);
+	free(besides);
+	free(dead);
+	free(anchor_of);
+	free(along_of);
+	free(places);
+	free(aliases);
+	free(laters);
+	pins = NULL;
+	base = NULL;
+	placed = besides = dead = along_of = NULL;
+	anchor_of = NULL;
+	places = NULL;
+	aliases = NULL;
+	laters = NULL;
+	npins = naliases = nlaters = 0;
+}
+
+// Notes a page statement, PAGE N NAME, among the pages of the file; the
+// page read checks its words.
+static void add_page(struct sch *s, char **w, int n, int read)
+{
+	struct sch_page pg;
+
+	memset(&pg, 0, sizeof pg);
+	pg.line = line_no;
+	pg.name = sch_strdup(n == 3 ? w[2] : "");
+	if (n != 3 || !integer(w[1], &pg.num) || pg.num < 1 || pg.num > 99) {
+		if (read) {
+			fault("%s: page N NAME, N 1 to 99", where);
+		}
+		pg.num = 0;
+	} else if (strchr(w[2], '.') && read) {
+		fault("%s: a name has no dot", where);
+	}
+	s->pages = grow(s->pages, s->npages, sizeof *s->pages);
+	s->pages[s->npages++] = pg;
+}
+
+// Notes a sheet port of the page pg, a port outside any group, by the
+// words of a statement; open counts the groups open.
+static void note_port(struct sch_page *pg, char **w, int n, int *open)
+{
+	if (!strcmp(w[0], "group") && n == 2) {
+		(*open)++;
+	} else if (!strcmp(w[0], "end") && n == 1 && *open) {
+		(*open)--;
+	} else if (!strcmp(w[0], "port") && n == 3 && !*open) {
+		for (size_t i = 0; i < pg->nport; i++) {
+			if (!strcmp(pg->port[i], w[1])) {
+				return;
+			}
+		}
+		pg->port = grow(pg->port, pg->nport, sizeof *pg->port);
+		pg->port_line =
+			grow(pg->port_line, pg->nport, sizeof *pg->port_line);
+		pg->port[pg->nport] = sch_strdup(w[1]);
+		pg->port_line[pg->nport++] = line_no;
+	}
+}
+
+// Tells the faults of the pages of the file: a number or a name of a
+// page twice, and, as a warning, a sheet port on one page alone.
+static void check_pages(const struct sch *s)
+{
+	if (!s->npages) {
+		fault("%s: no page statement", s->file);
+	}
+	for (size_t j = 0; j < s->npages; j++) {
+		const struct sch_page *b = &s->pages[j];
+
+		for (size_t i = 0; i < j; i++) {
+			const struct sch_page *a = &s->pages[i];
+
+			if (b->num && a->num == b->num) {
+				fault("%s:%d: page %d again", s->file, b->line,
+				      b->num);
+			} else if (*b->name && !strcmp(a->name, b->name)) {
+				fault("%s:%d: page %s again", s->file, b->line,
+				      b->name);
+			}
+		}
+	}
+	for (size_t j = 0; s->npages > 1 && j < s->npages; j++) {
+		const struct sch_page *b = &s->pages[j];
+
+		for (size_t p = 0; p < b->nport; p++) {
+			int other = 0;
+
+			for (size_t i = 0; i < s->npages; i++) {
+				for (size_t q = 0;
+				     i != j && q < s->pages[i].nport; q++) {
+					other |= !strcmp(s->pages[i].port[q],
+							 b->port[p]);
+				}
+			}
+			if (!other) {
+				sch_warn(
+					"%s:%d: warning: port %s is on page %d "
+					"alone",
+					s->file, b->port_line[p], b->port[p],
+					b->num);
+			}
+		}
+	}
+}
+
+int sch_read(struct sch *s, const char *file, size_t k, char **lib, size_t nlib)
 {
 	char buf[LINE], *w[WORDS], **libs;
 	const char *slash = strrchr(file, '/');
 	size_t dn = slash ? (size_t)(slash - file) : 1;
 	FILE *f = fopen(file, "r");
+	int open = 0, before = 0;
 
 	memset(s, 0, sizeof *s);
 	R = s;
 	s->file = file;
+	s->page = 1;
+	s->name = sch_strdup("");
+	faults = 0;
+	line_no = 0;
+	depth = 0;
+	*group_path = 0;
 	// The project's own symbols come first: those next to the source.
 	libs = sch_alloc((nlib + 1) * sizeof *libs);
 	libs[0] = sch_alloc(dn + 16);
@@ -2433,34 +2583,56 @@ int sch_read(struct sch *s, const char *file, char **lib, size_t nlib)
 		sch_die("%s: cannot read", file);
 	}
 	while (fgets(buf, sizeof buf, f)) {
-		int n;
+		int n, here;
 
 		line_no++;
 		at_line(line_no);
 		if (!strchr(buf, '\n') && !feof(f)) {
 			int c;
 
-			fault("%s: line too long", where);
+			if (s->npages == k + 1 || (!s->npages && !k)) {
+				fault("%s: line too long", where);
+			}
 			while ((c = getc(f)) != EOF && c != '\n') {
 			}
 			continue;
 		}
 		n = split(buf, w);
+		here = s->npages == k + 1;
 		if (n < 0) {
-			fault("%s: too many words", where);
+			if (here) {
+				fault("%s: too many words", where);
+			}
 			continue;
 		}
 		if (n == 0) {
 			continue;
 		}
-		if (!strcmp(w[0], "page") && n == 2) {
-			s->page = atoi(w[1]);
-			if (s->page < 1 || s->page > 99) {
-				fault("%s: the page is 1 to 99", where);
-				s->page = 1;
+		if (!strcmp(w[0], "page")) {
+			add_page(s, w, n, s->npages == k);
+			open = 0;
+			if (s->npages == k + 1) {
+				s->page = s->pages[k].num ? s->pages[k].num : 1;
+				free(s->name);
+				s->name = sch_strdup(s->pages[k].name);
+				snprintf(group_path, sizeof group_path, "%s",
+					 s->name);
 			}
-		} else if ((!strcmp(w[0], "field") && n >= 3) ||
-			   (!strcmp(w[0], "title") && n >= 2)) {
+			continue;
+		}
+		if (!s->npages) {
+			if (!k && !before++) {
+				fault("%s: a statement before the first page",
+				      where);
+			}
+			continue;
+		}
+		note_port(&s->pages[s->npages - 1], w, n, &open);
+		if (!here) {
+			continue;
+		}
+		if ((!strcmp(w[0], "field") && n >= 3) ||
+		    (!strcmp(w[0], "title") && n >= 2)) {
 			int t = w[0][0] == 't';
 
 			if (s->nfield == 8) {
@@ -2487,9 +2659,8 @@ int sch_read(struct sch *s, const char *file, char **lib, size_t nlib)
 	if (depth) {
 		fault("%s: group %s has no end", file, group_path);
 	}
-	if (!s->page) {
-		fault("%s: no page statement", file);
-		s->page = 1;
+	if (!k) {
+		check_pages(s);
 	}
 	resolve_all();
 	common_ferrite();
@@ -2497,5 +2668,6 @@ int sch_read(struct sch *s, const char *file, char **lib, size_t nlib)
 	make_nets();
 	designate(s);
 	tell_traces();
+	forget();
 	return faults;
 }

@@ -701,18 +701,11 @@ static int define_words(struct reading *rd, char **w, size_t n)
 	if (k || (w[0][0] >= '0' && w[0][0] <= '9')) {
 		return 0;
 	}
-	{
-		double v = 0;
-
-		numbers(rd, w + 2, &v, 1);
-		if (n != 3) {
-			expr_fail(&rd->nm,
-				  "NAME = EXPR, the expression without "
-				  "blanks",
-				  NULL);
-		}
-		define(&rd->nm, w[0], v, 0);
+	if (n != 3) {
+		expr_fail(&rd->nm, "NAME = EXPR, the expression without blanks",
+			  NULL);
 	}
+	define(&rd->nm, w[0], w[2], 0);
 	return 1;
 }
 

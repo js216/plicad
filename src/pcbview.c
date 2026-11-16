@@ -942,8 +942,10 @@ static void load_layer(size_t i)
 	    (ls[i].key >= '1' && ls[i].key <= '9')) {
 		ls[i].names = make_names(paths[i]);
 	}
+	// The first and last clear runs; with none, the runs after the
+	// last are none either, so no run is drawn twice.
 	ls[i].c0 = ls[i].f.nrun;
-	ls[i].c1 = 0;
+	ls[i].c1 = ls[i].f.nrun;
 	for (size_t k = 0; k < ls[i].f.nrun; k++) {
 		if (!ls[i].f.run[k].dark) {
 			ls[i].c0 = ls[i].c0 < k ? ls[i].c0 : k;

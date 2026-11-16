@@ -5,7 +5,7 @@
 # A circuit made up for the tests, without groups; the line goes on
 # down before its branches are said.
 
-page 2
+page 2 divider
 title Divider
 
 resistor top 10k

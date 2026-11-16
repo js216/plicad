@@ -1,2 +1,2 @@
-net n1 / buf.amp.in-: pin only in test/sch_filter.expected: R701.2
-net n2 / buf.out: pin only in test/netdiff_short.nl: RA.2
+net n1 / filter.buf.amp.in-: pin only in test/sch_filter.expected: R701.2
+net n2 / filter.buf.out: pin only in test/netdiff_short.nl: RA.2

@@ -1118,9 +1118,15 @@ struct samples {
 static void edge_samples(const struct surf *s, const struct sedge *e,
 			 struct samples *sm)
 {
-	for (int i = 0; i <= EDGE_PTS; i++) {
-		struct uv q =
-			surf_param(s, edge_at(e, (double)i / (double)EDGE_PTS));
+	// A line of a cylinder or a cone is a ruling, of one u: its ends
+	// tell all of it.
+	int n = e->c.kind == CV_LINE &&
+				(s->kind == SF_CYL || s->kind == SF_CONE) ?
+			1 :
+			EDGE_PTS;
+
+	for (int i = 0; i <= n; i++) {
+		struct uv q = surf_param(s, edge_at(e, (double)i / (double)n));
 		size_t nv = sm->n;
 
 		if (pole(s, q)) {

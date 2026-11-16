@@ -9,6 +9,7 @@
 //   source PATH                  the source of a pipe
 //   material NAME R G B ROUGHNESS DENSITY
 //   part NAME ... end            each part
+//   tol ..., vary ...            the ranges of the faces of the solids
 //   @N TEXT                      each source line not yet used
 // where N is the number of the line in PATH.  A pipe begins with a
 // source file: its first tool reads the file; each tool writes a stream
@@ -64,6 +65,7 @@ struct stream {
 	size_t nsh, capsh;
 	struct sline *ln;
 	size_t nln, capln;
+	struct ranges rg; // The ranges of the faces of the solids.
 	struct names nm;
 	char where[WHERE_LEN];
 	// The words of the line under work.
@@ -85,6 +87,9 @@ size_t read_parts(const char *path, struct part **out);
 // PliCad, and not some other source; a file that cannot be read counts as
 // a stream, for read_parts to say so.
 int stream_file(const char *path);
+// Makes to a stream of the source lines of from, each untaken, and of
+// nothing else.
+void stream_source(struct stream *to, const struct stream *from);
 // Writes the first line of a stream.
 void stream_head(void);
 void stream_free(struct stream *st);

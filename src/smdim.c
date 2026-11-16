@@ -37,9 +37,10 @@
 //   texture MARK CALLOUT           (a texture of the coats, for the
 //                                   notes; each coat of it bears the
 //                                   mark, a text in its middle)
-// The thick and radius records pass through, in mm.  ALIGN is l, c or
-// r: where X Y lies in the text, at half its height.  A record may have
-// any number of fields.  In a STRING, %%c is the diameter sign, %%v the
+// The thick and radius records pass through, in mm, and a range record
+// after a line, a hole or a coat (smview) goes, its moves kept for the
+// tolerances of a lin.  ALIGN is l, c or r: where X Y lies in the text,
+// at half its height.  A record may have any number of fields.  In a STRING, %%c is the diameter sign, %%v the
 // countersink sign, %%d the degree sign and %%p the plus and minus
 // sign.
 //
@@ -76,8 +77,9 @@
 //   drop FEATURE [x|y|d|r]         (leave out the dimensions of the
 //                                   feature of that name, or those of
 //                                   one kind)
-//   lin x|y A B [PLUS MINUS]       (a linear dimension between two
-//                                   ordinates, with its tolerances)
+//   lin x|y A B                    (a linear dimension between two
+//                                   ordinates, with the tolerances that
+//                                   the model gives it)
 //   leader X Y STRING...           (a note with a dot at X Y, in inches
 //   flag X Y N [STRING...]          from the datum; the box of note N,
 //                                   and a text after it)
@@ -136,7 +138,8 @@ enum {
 	LONG_LEN = 24, // Room for the digits of a long.
 	UPRIGHT = 90, // The angle of a text that reads from the right.
 	ANGLES = 6, // The angles of the section lines of the parts.
-	DECIMAL = 10 // The base of the number of a #line record.
+	DECIMAL = 10, // The base of the number of a #line record.
+	RANGE_PTS = 256 // The most points of a range record.
 };
 
 // The ranks of the places for an ordinate: an end of the view, a hole,
@@ -152,11 +155,23 @@ struct rect {
 };
 
 // The feature of the part that a line, an arc or a hole comes from, or
-// NULL: the name of its statement in the source (smfold).
+// NULL: the name of its statement in the source (smfold); and the first
+// of its moves by the parameters of the part, or NONE.
 struct seg {
 	char kind, vis;
 	struct pt a, b;
 	char *by;
+	size_t moves;
+};
+
+// What the ends of the range of parameter param move a line or a hole,
+// in mm on the paper at full size, at the low end and the high one, or
+// unknown; and the next move of the same line or hole, or NONE.
+struct move {
+	size_t param;
+	struct pt d[2];
+	int unknown;
+	size_t next;
 };
 
 struct arc {
@@ -178,6 +193,7 @@ struct hole {
 	int ins_far; // and whether it stands on the far side.
 	char *thread; // The designation of its thread, or NULL,
 	double tdeep; // and its depth, 0 through.
+	size_t moves; // Its first move, or NONE.
 };
 
 // A curve of a solid, a line through n points.
@@ -343,6 +359,12 @@ struct view {
 	int level; // What spot_free allows; see there.
 	double *place[2]; // Every place an ordinate may stand, by axis.
 	size_t nplace[2], capplace[2];
+	struct move *move; // The moves of the lines and the holes,
+	size_t nmove, capmove;
+	char **param; // by the parameters of these names.
+	size_t nparam, capparam;
+	char last; // What a range record moves: l the last line, h the
+	size_t last_n; // last hole, c the last_n sides of the last coat.
 };
 
 // A record under reading: its line, its fields, as many as it has, and
@@ -599,7 +621,7 @@ static char *read_by(struct reader *r)
 static void add_coat_side(struct view *v, struct pt a, struct pt b,
 			  const char *mat)
 {
-	struct seg s = { 'p', 'v', a, b, xstrdup(mat) };
+	struct seg s = { 'p', 'v', a, b, xstrdup(mat), NONE };
 
 	PUSH(v->seg, v->nseg, v->capseg, s);
 }
@@ -608,7 +630,7 @@ static void read_curve(struct view *v, struct reader *r)
 {
 	int is_arc = r->w[0][0] == 'a';
 	struct arc a = { 0, 0, { 0, 0 }, 0, 0, 0, NULL };
-	struct seg s = { 0, 0, { 0, 0 }, { 0, 0 }, NULL };
+	struct seg s = { 0, 0, { 0, 0 }, { 0, 0 }, NULL, NONE };
 
 	a.kind = s.kind = letter(r);
 	a.vis = s.vis = letter(r);
@@ -619,11 +641,95 @@ static void read_curve(struct view *v, struct reader *r)
 		a.a1 = num(r);
 		a.by = read_by(r);
 		PUSH(v->arc, v->narc, v->caparc, a);
+		v->last = 0;
 	} else {
 		s.a = point(r);
 		s.b = point(r);
 		s.by = read_by(r);
 		PUSH(v->seg, v->nseg, v->capseg, s);
+		v->last = 'l';
+	}
+}
+
+// The index of the parameter of the name in v, added if new.
+static size_t param_of(struct view *v, const char *name)
+{
+	char *c = NULL;
+
+	for (size_t i = 0; i < v->nparam; i++) {
+		if (strcmp(v->param[i], name) == 0) {
+			return i;
+		}
+	}
+	c = xstrdup(name);
+	PUSH(v->param, v->nparam, v->capparam, c);
+	return v->nparam - 1;
+}
+
+// Adds move m, at the head of the list *head.
+static void add_move(struct view *v, size_t *head, struct move m)
+{
+	m.next = *head;
+	PUSH(v->move, v->nmove, v->capmove, m);
+	*head = v->nmove - 1;
+}
+
+// Reads a record range NAME - or range NAME N X Y ...: the moves of the
+// N points of the record before it at the low end of the range of the
+// parameter and at the high end, as smview gives them.  A line takes the
+// mean of the moves of its ends, a hole that of its center, and each
+// side of a coat that of its two corners.
+static void read_range(struct view *v, struct reader *r)
+{
+	struct move m = {
+		param_of(v, word(r)), { { 0, 0 }, { 0, 0 } }, 0, NONE
+	};
+	struct pt d[2][RANGE_PTS];
+	size_t n = 0;
+
+	memset(d, 0, sizeof(d));
+	if (r->k < r->n && strcmp(r->w[r->k], "-") == 0) {
+		r->k++;
+		m.unknown = 1;
+	} else {
+		double x = num(r);
+
+		if (!(x >= 1 && x <= RANGE_PTS) || floor(x) < x) {
+			die("%s:%u: a range moves 1 to %d points", r->what,
+			    r->line, RANGE_PTS);
+		}
+		n = (size_t)x;
+		for (int e = 0; e < 2; e++) {
+			for (size_t k = 0; k < n; k++) {
+				d[e][k] = point(r);
+			}
+		}
+	}
+	if (v->last == 'h' && n > 1) {
+		die("%s:%u: a range moves the points of its record", r->what,
+		    r->line);
+	}
+	if (v->last == 'h') {
+		m.d[0] = d[0][0];
+		m.d[1] = d[1][0];
+		add_move(v, &v->hole[v->nhole - 1].moves, m);
+	} else if (v->last == 'l' || v->last == 'c') {
+		size_t sides = v->last == 'l' ? 1 : v->last_n;
+
+		if (!m.unknown && n != (v->last == 'l' ? 2 : v->last_n)) {
+			die("%s:%u: a range moves the points of its record",
+			    r->what, r->line);
+		}
+		for (size_t k = 0; k < sides; k++) {
+			for (int e = 0; e < 2 && !m.unknown; e++) {
+				struct pt a = d[e][k];
+				struct pt b = d[e][(k + 1) % n];
+
+				m.d[e].x = (a.x + b.x) / 2;
+				m.d[e].y = (a.y + b.y) / 2;
+			}
+			add_move(v, &v->seg[v->nseg - sides + k].moves, m);
+		}
 	}
 }
 
@@ -751,6 +857,8 @@ static void coat_corners(struct view *v, struct reader *r, const char *mat,
 	free(fc.mat);
 	free(fc.p);
 	add_coat_side(v, last, first, mat);
+	v->last = 'c';
+	v->last_n = (size_t)n;
 	if (square && n == 4) {
 		struct coat_rect cr = { box, xstrdup(mat) };
 
@@ -779,7 +887,9 @@ static void read_coat(struct view *v, struct reader *r)
 
 static void read_hole(struct view *v, struct reader *r)
 {
-	struct hole h = { { 0, 0 }, 0, 0, 0, 0, 0, NULL, NULL, 0, NULL, 0 };
+	struct hole h = {
+		{ 0, 0 }, 0, 0, 0, 0, 0, NULL, NULL, 0, NULL, 0, NONE
+	};
 
 	h.c = point(r);
 	h.d = num(r);
@@ -826,6 +936,7 @@ static void read_hole(struct view *v, struct reader *r)
 	}
 	h.by = read_by(r);
 	PUSH(v->hole, v->nhole, v->caphole, h);
+	v->last = 'h';
 }
 
 static void read_bend(struct view *v, struct reader *r)
@@ -918,6 +1029,7 @@ static void read_record(struct view *v, struct reader *r, int have)
 		{ "drop", read_rule },	    { "lin", read_rule },
 		{ "leader", read_rule },    { "flag", read_rule },
 		{ "hatch", read_rule },	    { "inserts", read_rule },
+		{ "range", read_range },
 	};
 	const char *k = word(r);
 	size_t i = 0;
@@ -931,6 +1043,9 @@ static void read_record(struct view *v, struct reader *r, int have)
 	}
 	if (!have) {
 		die("%s:%u: a record before the first view", r->what, r->line);
+	}
+	if (kinds[i].read != read_range) {
+		v->last = 0;
 	}
 	kinds[i].read(v, r);
 	if (r->k != r->n) {
@@ -1648,10 +1763,99 @@ static double lin_end(const struct view *v, struct reader *r, int axis)
 	return p;
 }
 
+// The heads of the lists of moves of the visible edges square to the
+// axis, and of the holes, at p on the paper: the places that an end of
+// a linear dimension may mean, into out; returns their number.
+static size_t lin_moves(const struct view *v, int axis, double p, size_t **out)
+{
+	size_t *m = xmalloc((v->nseg + v->nhole + 1) * sizeof(*m));
+	size_t n = 0;
+
+	for (size_t i = 0; i < v->nseg; i++) {
+		const struct seg *s = &v->seg[i];
+
+		if (s->vis == 'v' && s->kind != 'c' &&
+		    fabs(along(axis, s->a) - p) < 1 / THOU / 2 &&
+		    fabs(along(axis, s->b) - p) < 1 / THOU / 2) {
+			m[n++] = s->moves;
+		}
+	}
+	for (size_t i = 0; i < v->nhole; i++) {
+		if (fabs(along(axis, v->hole[i].c) - p) < 1 / THOU / 2) {
+			m[n++] = v->hole[i].moves;
+		}
+	}
+	*out = m;
+	return n;
+}
+
+// The move along the axis of the list of moves from head at end e of
+// the range of parameter k, 0 if none; dies on one unknown.
+static double move_of(const struct view *v, size_t head, size_t k, int e,
+		      int axis, const struct reader *r)
+{
+	for (size_t i = head; i != NONE; i = v->move[i].next) {
+		const struct move *m = &v->move[i];
+
+		if (m->param != k) {
+			continue;
+		}
+		if (m->unknown) {
+			die("%s:%u: lin: the model gives no range to an end, "
+			    "for %s",
+			    r->what, r->line, v->param[k]);
+		}
+		return along(axis, m->d[e]);
+	}
+	return 0;
+}
+
+// The range of the distance b - a, of sign sg, in mm at full size: the
+// least below it and the most above it, over every edge or hole at each
+// end, the sum over the parameters of the part of the most that the
+// ends of each move it either way.
+static struct span lin_range(const struct view *v, const struct reader *r,
+			     int axis, struct pt ab, double sg)
+{
+	size_t *ma = NULL;
+	size_t *mb = NULL;
+	size_t na = lin_moves(v, axis, ab.x, &ma);
+	size_t nb = lin_moves(v, axis, ab.y, &mb);
+	struct span t = { 0, 0 };
+
+	if (!na || !nb) {
+		die("%s:%u: lin: the model gives no range to an end", r->what,
+		    r->line);
+	}
+	for (size_t k = 0; k < v->nparam; k++) {
+		double lo = 0;
+		double hi = 0;
+
+		for (int e = 0; e < 2; e++) {
+			for (size_t i = 0; i < na; i++) {
+				for (size_t j = 0; j < nb; j++) {
+					double d = sg * (move_of(v, mb[j], k, e,
+								 axis, r) -
+							 move_of(v, ma[i], k, e,
+								 axis, r));
+
+					lo = fmin(lo, d);
+					hi = fmax(hi, d);
+				}
+			}
+		}
+		t.lo += lo;
+		t.hi += hi;
+	}
+	free(ma);
+	free(mb);
+	return t;
+}
+
 // Draws the linear dimension of the rule in r, below or left of all
 // that is drawn so far, where its lines to the two ends start: the
-// text over the middle of its line, and the two tolerances after the
-// text, one above the other.
+// text over the middle of its line, and after the text the two
+// tolerances that the model gives the distance, one above the other.
 static void linear(struct view *v, struct reader *r)
 {
 	const char *ax = word(r);
@@ -1662,15 +1866,21 @@ static void linear(struct view *v, struct reader *r)
 	double row = (axis ? v->box.x0 : v->box.y0) - ROW;
 	struct label t = size_text(v, fabs(b - a) / v->scale);
 	double end = ((a + b) / 2) + (text_width(t.s, TEXT_H) / 2) + PAD;
-	double top = row + (up * 2 * TEXT_H);
+	double top = row + (up * (TEXT_H + (2 * SMALL_H)));
 	double tol_w = 0;
 	struct style st = { pq(axis, (a + b) / 2, row + (up * TEXT_H)),
 			    axis ? UPRIGHT : 0, 'c', TEXT_H };
+	struct pt ab = { a, b };
+	struct span tol = { 0, 0 };
 
 	if (!axis && strcmp(ax, "x") != 0) {
-		die("%s:%u: expected lin x|y A B [PLUS MINUS]", r->what,
-		    r->line);
+		die("%s:%u: expected lin x|y A B", r->what, r->line);
 	}
+	if (r->k < r->n) {
+		die("%s:%u: a lin takes no tolerance: the model gives it",
+		    r->what, r->line);
+	}
+	tol = lin_range(v, r, axis, ab, b < a ? -1 : 1);
 	thin(pq(axis, a, row + ROW - GAP), pq(axis, a, row - JOG0));
 	thin(pq(axis, b, row + ROW - GAP), pq(axis, b, row - JOG0));
 	arrow(pq(axis, a, row), pq(axis, a - b, 0));
@@ -1681,18 +1891,17 @@ static void linear(struct view *v, struct reader *r)
 	       t.s);
 	st.align = 'l';
 	st.h = SMALL_H;
-	for (int k = 1; r->k < r->n; k = -1) {
-		double x = num(r);
-		struct size_in size = { fabs(x), v->units[0] };
+	for (int k = 1; k >= -1; k -= 2) {
+		struct size_in size = { (k > 0 ? tol.hi : -tol.lo) / INCH,
+					v->units[0] };
 		struct label tl = in_unit(size);
-		char tol[SHORT + 2];
+		char text_tol[SHORT + 2];
 
 		st.at = pq(axis, end,
 			   row + (up * (TEXT_H + (k * ((SMALL_H / 2) + GAP)))));
-		xsnprintf(tol, "%c%s", signbit(x) ? '-' : '+', tl.s);
-		text(st, tol);
-		top = row + (up * (TEXT_H + (2 * SMALL_H)));
-		tol_w = fmax(tol_w, text_width(tol, SMALL_H) + PAD);
+		xsnprintf(text_tol, "%c%s", k > 0 ? '+' : '-', tl.s);
+		text(st, text_tol);
+		tol_w = fmax(tol_w, text_width(text_tol, SMALL_H) + PAD);
 	}
 	take(v, corners(pq(axis, (a + b) - end, row - (up * PAD)),
 			pq(axis, end + tol_w, top)));
@@ -2860,6 +3069,11 @@ static void free_view(struct view *v)
 	free(v->seg);
 	free(v->arc);
 	free(v->hole);
+	free(v->move);
+	for (size_t i = 0; i < v->nparam; i++) {
+		free(v->param[i]);
+	}
+	free(v->param);
 	for (size_t i = 0; i < v->ncoat; i++) {
 		free(v->coat[i].mat);
 	}

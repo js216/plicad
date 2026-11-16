@@ -32,7 +32,11 @@ part NAME
   finish MATERIAL REF...
   thread REF [deep D] DESIGNATION...
   a folded blank, or an exact solid
+  tol NAME number|length|angle LO HI
+  vary NAME \-|+ RECORD...
 end
+tol NAME number|length|angle LO HI
+vary NAME \-|+ face FACE SURFACE SURFACE
 @N TEXT
 .fi
 .RE
@@ -167,5 +171,63 @@ normal, the natural normal of its surface times SENSE.
 The faces are named as
 .IR part (5)
 says.
+.SS Ranges
+The tolerances of the source
+.RI ( plicad (7))
+give a part its ranges.
+A record
+.B tol
+names a parameter that the part leans on, what it measures, and the
+ends of its range less its value, LO not above HI, in mm or degrees.
+Each record
+.B vary
+after it gives a number of the part at the low end of the range of
+the parameter,
+.BR \- ,
+or at the high one,
+.BR + ,
+where that differs from the part, as the tool that made the part
+found it: it built the part again with the parameter moved by
+1/10000 of its range, the others as they are, and each number moves
+in proportion to its end.
+That is exact where the part is linear in the parameter, as a blank
+is in each length: its edges, holes and bend lines lie at sums of
+lengths and of bend allowances, linear in the thickness and the
+radius; for an angle it is right to first order.
+A record of a blank is one of
+.PP
+.RS
+.nf
+t T
+map I rigid R00 ... R22 TX TY TZ
+map I bend PARENT QX QY MX MY BA ANGLE R
+vertex I X Y
+edge I CX CY
+hole I CX CY R RC H D
+coat I X0 Y0 ... XN\-1 YN\-1
+.fi
+.RE
+.PP
+the thickness, a map, a vertex, the center of an arc, a hole (with RC
+R and H 0 without a countersink, D 0 through), or the corners of a coat
+at that end, by the index of their record.
+A part rebuilt so is of the same form: a rebuild of another form, or
+one that moves a number more than 10000 times the parameter, is
+refused.
+A record of a solid,
+.B face
+FACE SURFACE SURFACE, moves each face of the name FACE on the first
+surface to the second; as the faces keep their names and surfaces down
+a pipe of
+.IR bool (1)
+and
+.IR fillet (1),
+these records stand outside the parts in it, for every part of the
+pipe, and
+.IR place (1)
+puts them in each solid part.
+The faces that
+.I fillet
+makes have none.
 .SH SEE ALSO
 plicad(7), smfold(1), place(1), part(5), assembly(5)

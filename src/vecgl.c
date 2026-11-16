@@ -193,9 +193,10 @@ static void segment(const double *a, const double *b, double hw)
 		memcpy(sv + nsv, s, sizeof s);
 		nsv += 6;
 	}
+	// A half width below 0 is in pixels, not in the units of the box.
 	for (int i = 0; i < 2; i++) {
-		rb[i] = fmin(rb[i], fmin(a[i], b[i]) - fabs(hw));
-		rb[i + 2] = fmax(rb[i + 2], fmax(a[i], b[i]) + fabs(hw));
+		rb[i] = fmin(rb[i], fmin(a[i], b[i]) - fmax(hw, 0));
+		rb[i + 2] = fmax(rb[i + 2], fmax(a[i], b[i]) + fmax(hw, 0));
 	}
 }
 
@@ -384,6 +385,12 @@ void vg_free(struct vg_file *f)
 	free(f->run);
 	free(f->elem);
 	memset(f, 0, sizeof *f);
+	// No longer one of the files that name parts.
+	for (size_t i = 0; i < nfiles; i++) {
+		if (files[i] == f) {
+			files[i--] = files[--nfiles];
+		}
+	}
 }
 
 double vg_text_width(char font, const char *s)
@@ -506,8 +513,8 @@ void vg_layer(const char *path, char *name, size_t size)
 	*name = 0;
 	while (in && fgets(buf, sizeof buf, in)) {
 		if (!strncmp(buf, "layer ", 6)) {
-			snprintf(name, size, "%.*s", (int)strcspn(buf + 6, " \n"),
-				 buf + 6);
+			snprintf(name, size, "%.*s",
+				 (int)strcspn(buf + 6, " \n"), buf + 6);
 			break;
 		}
 		if (!strncmp(buf, "disk ", 5) || !strncmp(buf, "line ", 5) ||
@@ -551,6 +558,7 @@ static const char *const vs =
 	"}\n";
 static const char *const fs =
 	"#version 120\n"
+	"uniform float brighter;\n"
 	"varying vec2 a, b;\n"
 	"varying float hw, fade;\n"
 	"void main() {\n"
@@ -560,11 +568,13 @@ static const char *const fs =
 	"  float r = length(p - a - t * d);\n"
 	"  float c = clamp(hw + 0.5 - r, 0.0, 1.0);\n"
 	"  if (c <= 0.0) discard;\n"
-	"  gl_FragColor = vec4(gl_Color.rgb, gl_Color.a * c * fade);\n"
+	"  float a = gl_Color.a * c * fade;\n"
+	"  gl_FragColor = brighter > 0.0 ? vec4(gl_Color.rgb * a, a) :\n"
+	"                                  vec4(gl_Color.rgb, a);\n"
 	"}\n";
 static GLuint prog;
-static GLint u_view, u_zoom, u_solid, a_seg, a_hc;
-int vg_solid, vg_hair;
+static GLint u_view, u_zoom, u_solid, u_brighter, a_seg, a_hc;
+int vg_solid, vg_hair, vg_brighter;
 
 static void shader(GLenum kind, const char *src)
 {
@@ -601,6 +611,10 @@ void vg_draw(const struct vg_file *f, int (*want)(const struct vg_run *),
 			glUniform2f(u_view, (float)vg_w, (float)vg_h);
 			glUniform1f(u_zoom, (float)vg_zoom);
 			glUniform1f(u_solid, (float)vg_solid);
+			glUniform1f(u_brighter, (float)vg_brighter);
+			if (vg_brighter) {
+				glBlendEquation(GL_MAX);
+			}
 			glBindBuffer(GL_ARRAY_BUFFER, f->sbuf);
 			glEnableVertexAttribArray((GLuint)a_seg);
 			glEnableVertexAttribArray((GLuint)a_hc);
@@ -611,6 +625,7 @@ void vg_draw(const struct vg_file *f, int (*want)(const struct vg_run *),
 					      GL_FALSE, 6 * sizeof(float),
 					      (void *)(4 * sizeof(float)));
 			glDrawArrays(GL_TRIANGLES, r->sfirst, r->scount);
+			glBlendEquation(GL_FUNC_ADD);
 			glDisableVertexAttribArray((GLuint)a_seg);
 			glDisableVertexAttribArray((GLuint)a_hc);
 			glUseProgram(0);
@@ -618,12 +633,20 @@ void vg_draw(const struct vg_file *f, int (*want)(const struct vg_run *),
 	}
 }
 
+#define NEAR 1e12 // The score of a box the point is only near, a unit away.
+
 void vg_pick(const struct vg_file *f, double x, double y, double tol, int *best,
 	     double *area)
 {
 	for (size_t i = 0; i < f->nelem; i++) {
 		const double *b = f->elem[i].b;
-		double a = (b[2] - b[0] + 2 * tol) * (b[3] - b[1] + 2 * tol);
+		double dx = fmax(fmax(b[0] - x, x - b[2]), 0);
+		double dy = fmax(fmax(b[1] - y, y - b[3]), 0);
+		// A box the point is in, the smallest first, comes before one
+		// it is only near, the nearest first.
+		double a = dx > 0 || dy > 0 ?
+				   NEAR * (1 + sqrt(dx * dx + dy * dy)) :
+				   (b[2] - b[0]) * (b[3] - b[1]);
 
 		if (x >= b[0] - tol && x <= b[2] + tol && y >= b[1] - tol &&
 		    y <= b[3] + tol && a < *area) {
@@ -664,6 +687,7 @@ void vg_init(const char *argv0)
 	u_view = glGetUniformLocation(prog, "view");
 	u_zoom = glGetUniformLocation(prog, "zoom");
 	u_solid = glGetUniformLocation(prog, "solid");
+	u_brighter = glGetUniformLocation(prog, "brighter");
 
 	a_seg = glGetAttribLocation(prog, "seg");
 	a_hc = glGetAttribLocation(prog, "hc");

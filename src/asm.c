@@ -656,7 +656,7 @@ static void define_line(char *l, void *ctx)
 		return;
 	}
 	l[e] = 0;
-	define(&r->nm, l + s, eval(&r->nm, eq + 1), 0);
+	define(&r->nm, l + s, eq + 1, 0);
 }
 
 // Reads the lines of the file of r, and gives those of its paths that

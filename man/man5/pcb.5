@@ -17,6 +17,9 @@ Lengths are mm, y up; angles degrees.
 .nf
 netlist FILE                         the netlist(5) of schnet
 board rect X0 Y0 X1 Y1               the outline
+cutout rect X0 Y0 X1 Y1 [round R]  a hole through the board, edge
+					   like the outline, its corners of
+					   radius R (8 at most)
 layer NAME signal | plane NET        the copper layers, top first
 rule clearance D | track W | via DIA DRILL
 rule viagap D | maskweb D
@@ -31,7 +34,10 @@ width NET W                          its tracks
 width PIN PIN W                      the copper between two of its pins
 path NET PIN PIN...                  its pins wired in this order
 via PIN WAY                          the way its plane via goes
+unplaced GROUP			   its parts not on the board yet
 block GROUP                          the group laid out alone
+ref PART SIDE [ALIGN] [rot 90] [size H]
+                                   its designator by its courtyard
 note TEXT                            for the readers
 .fi
 .RE
@@ -48,6 +54,21 @@ soldered, and a via may stand in it; maskweb, the
 least web of solder mask between two openings, and between the opening
 of a pad soldered and a via, which the mask covers (0.1); edge, from copper to the
 outline (0.5), but for the parts it excepts.
+.PP
+A ref statement puts a part's designator on a SIDE of its courtyard
+(above, below, left or right, at the gap the placer leaves), at the
+start (the left or top end), middle (the default) or end of that side,
+turned to read upward with rot 90, and H mm tall (0.5 to 0.8, 0.8 by
+default); a part without one has its designator where the placer finds
+room.
+.PP
+An unplaced statement leaves a group's parts (every part whose name
+begins with the group and a dot, a page's or any other's) off the board
+until it is laid out: they take no footprint, so no pads, and the
+programs place, route, plot and check the board without them; a net
+with pins on them is whole among its placed pins alone, and
+.IR pcbcheck (1)
+notes the group and each such net.
 .SS Blocks
 A board is laid out by groups, the groups of the schematic (ch1,
 ch1.gain): a block statement says a group is laid out alone, and

@@ -66,10 +66,10 @@ struct sch_device {
 // statements of the source; its transform turns the shape by rot
 // quarter turns counterclockwise after mirroring it in x, and a flipped
 // part has the pins of its shape's flip pair traded.  The name is the
-// path of its groups and its own name, as ch1.gain.amp; placed tells
-// whether it found a place.  A part without its value (novalue) is
-// drawn with its designator alone: the most common ferrite of the
-// sheet, whose value goes without saying.
+// path of its page and groups and its own name, as outputs.ch1.amp;
+// placed tells whether it found a place.  A part without its value
+// (novalue) is drawn with its designator alone: the most common ferrite
+// of the page, whose value goes without saying.
 struct sch_part {
 	char *name, *ref, *value, *rating, *mpn;
 	struct sch_device *dev;
@@ -102,9 +102,24 @@ struct sch_hint {
 	int side;
 };
 
+// A page of the file: its number and name, the line of its page
+// statement, and its sheet ports (the ports outside any group) by name,
+// each with the line it is first said on.
+struct sch_page {
+	int num, line;
+	char *name, **port;
+	int *port_line;
+	size_t nport;
+};
+
+// A page of the source, read: its number and name, and the pages of the
+// whole file.
 struct sch {
 	const char *file;
 	int page;
+	char *name;
+	struct sch_page *pages;
+	size_t npages;
 	char *field[8][2]; // Name and text of the fields of the title block.
 	size_t nfield;
 	char *sheet;
@@ -135,12 +150,15 @@ extern int sch_verbose;
 // Prints a message as sch_warn does and exits.  As a macro, the exit is
 // visible in every caller and to the analyzer.
 #define sch_die(...) (sch_warn(__VA_ARGS__), exit(EXIT_FAILURE))
-// Reads the source and the symbols it uses from the directories of lib,
-// and places the parts and the flags.  Each fault of the source is told
-// on stderr, by its line, and the reading goes on without what it
-// touches (a part that cannot be placed is not placed); returns the
-// number of faults.
-int sch_read(struct sch *s, const char *file, char **lib, size_t nlib);
+// Reads page k (0 the first) of the source and the symbols it uses from
+// the directories of lib, and places the parts and the flags; the pages
+// of the file come with it.  Each fault of the page is told on stderr,
+// by its line, and the reading goes on without what it touches (a part
+// that cannot be placed is not placed); the faults of the file as a
+// whole (a page number twice, a sheet port on one page alone) are told
+// with page 0.  Returns the number of faults.
+int sch_read(struct sch *s, const char *file, size_t k, char **lib,
+	     size_t nlib);
 // Where the pin p of part q stands, in grid units, and the way it points.
 void sch_pin_at(const struct sch_part *q, size_t p, int *x, int *y, int *dir);
 // The box of part q in grid units, turned as it is.

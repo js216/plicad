@@ -2,6 +2,7 @@
 # deps.params -- Parameters of deps.sm, some through others
 # Copyright (c) 2026 Jakob Kastelic
 
+tolerance 0.1 mm 0.5 deg
 A = 1 mm
 B = 2 * A
 C = 5 mm

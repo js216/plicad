@@ -61,6 +61,10 @@
 //   radius R               (the inside radius of the first bend)
 //   bend X0 Y0 X1 Y1 ANGLE (flat view: a bend line, and the angle of the
 //                           bend in degrees, above 0 toward the eye)
+//   range NAME N X Y ...   (after a line, an arc, a hole or a coat, for
+//   range NAME -            each parameter whose range moves it: the
+//                           moves of its N points at the low end and at
+//                           the high one, or - for unknown)
 // KIND is e for a sharp edge of the sheet, i for an edge of a cut-out
 // inside it, o for the rim of a hole and for an arc that is hidden in
 // part, b for an edge or the outline of a bend, s for the seam where a
@@ -72,6 +76,10 @@
 // the slab, unless something covers its middle.  Of a solid, a hole
 // record gives the depth of a blind hole from its mouth, and the thread
 // of the part in it: to its depth, or thru.
+//
+// The ranges of a folded part come from the part at each end of the
+// range of each parameter (vary_part), whose curves are made again: they
+// match those of the part one for one, or the variant does not match.
 //
 // A line is hidden where material lies between it and the eye.  The
 // faces are planes, cylinders and cones, so the test is exact.  A circle
@@ -155,9 +163,14 @@ struct piece {
 	int hidden, dead;
 };
 
+struct variant;
+
 struct scene {
 	const struct part *p;
 	const struct part *radius; // The part as folded, for its bends.
+	struct variant *var; // The part at the ends of its parameters.
+	size_t nvar;
+	int quiet; // Whether it prints no fills, as a variant.
 	struct brep b;
 	struct view vw;
 	struct curve *c;
@@ -453,8 +466,8 @@ static void add_edges(struct scene *sc)
 		} else {
 			die("%s: view %s: the circle about (%g, %g, %g) is "
 			    "seen at an angle",
-			    sc->where, sc->vw.name, zero(e->c.x),
-			    zero(e->c.y), zero(e->c.z));
+			    sc->where, sc->vw.name, zero(e->c.x), zero(e->c.y),
+			    zero(e->c.z));
 		}
 	}
 }
@@ -584,6 +597,9 @@ static void fill_band(const struct scene *sc, struct band d)
 				   add(d.b, mul(d.g, d.hi)),
 				   add(d.a, mul(d.g, d.hi)) };
 
+	if (sc->quiet) {
+		return;
+	}
 	printf("fill\n");
 	for (int i = 0; i < 4; i++) {
 		struct vec q = to_view(&sc->vw, at[i]);
@@ -1293,6 +1309,93 @@ static void print_by(const struct scene *sc, size_t by)
 	printf("\n");
 }
 
+// The part at the end hi of the range of its parameter tol, and the
+// curves of its view, made as those of the part are: same if they match
+// those of the part one for one.
+struct variant {
+	size_t tol;
+	int hi;
+	struct part q; // The part there,
+	struct part flat; // and its blank, for the flat view,
+	struct map one; // with the one map of the flat.
+	struct scene sc;
+	int same;
+};
+
+// What a record of the view is, for its points in a variant: the run
+// from t0 to t1 of curve c, hole h seen from the near face if near, or
+// coat c of h corners on face f.
+struct of_record {
+	size_t c, h, f;
+	double t0, t1;
+	int near;
+};
+
+// Prints a record range NAME N X Y ... for each parameter of the part
+// whose ends move the n points at of a record of the view, those of the
+// part at a variant by fn: N, and the moves of the N points at the low
+// end and then at the high one; or range NAME - where a variant does not
+// match the part.
+static void print_ranges(const struct scene *sc, const struct vec2 *at,
+			 size_t n,
+			 int (*fn)(const struct scene *vs,
+				   const struct of_record *r, struct vec2 *out),
+			 const struct of_record *r)
+{
+	const struct ranges *g = &sc->radius->rg;
+
+	for (size_t t = 0; sc->nvar && t < g->ntol; t++) {
+		struct vec2 d[2][COAT_ROOM];
+		int ok = 1;
+		double most = 0;
+
+		for (int hi = 0; hi < 2; hi++) {
+			const struct variant *v =
+				&sc->var[(2 * t) + (size_t)hi];
+			struct vec2 q[COAT_ROOM];
+
+			ok = ok && v->same && fn(&v->sc, r, q);
+			for (size_t k = 0; ok && k < n; k++) {
+				d[hi][k] =
+					pt2(q[k].x - at[k].x, q[k].y - at[k].y);
+				most = fmax(most, fmax(fabs(d[hi][k].x),
+						       fabs(d[hi][k].y)));
+			}
+		}
+		if (!ok) {
+			printf("range %s -\n", g->tol[t].name);
+			continue;
+		}
+		if (!(most > ZERO)) {
+			continue;
+		}
+		printf("range %s %zu", g->tol[t].name, n);
+		for (int hi = 0; hi < 2; hi++) {
+			for (size_t k = 0; k < n; k++) {
+				printf(" %.6f %.6f", zero(d[hi][k].x),
+				       zero(d[hi][k].y));
+			}
+		}
+		printf("\n");
+	}
+}
+
+// The ends of the run r of a line in the view vs, or the center of an
+// arc.
+static int run_points(const struct scene *vs, const struct of_record *r,
+		      struct vec2 *out)
+{
+	const struct curve *c = &vs->c[r->c];
+
+	if (c->arc) {
+		out[0] = c->c;
+	} else {
+		out[0] = at(c, r->t0);
+		out[1] = at(c, r->t1);
+	}
+	return 1;
+}
+
 // Prints the run of pieces first .. last of one curve as one record.
 static void print_run(const struct scene *sc, const struct piece *first,
 		      const struct piece *last, struct box *x)
@@ -1300,6 +1403,7 @@ static void print_run(const struct scene *sc, const struct piece *first,
 	const struct curve *c = &sc->c[first->c];
 	double a0 = wrap(c->a0 + (first->t0 * c->da)) / DEG;
 	char vis = first->hidden ? 'h' : 'v';
+	struct of_record r = { first->c, NONE, NONE, first->t0, last->t1, 0 };
 
 	if (c->arc) {
 		double da = (last->t1 - first->t0) * c->da / DEG;
@@ -1320,6 +1424,7 @@ static void print_run(const struct scene *sc, const struct piece *first,
 		       vis, zero(c->c.x), zero(c->c.y), c->r, zero(a0),
 		       zero(a0) + da);
 		print_by(sc, c->by);
+		print_ranges(sc, &c->c, 1, run_points, &r);
 		return;
 	}
 	box_add(x, v3(first->p0.x, first->p0.y, 0));
@@ -1328,6 +1433,11 @@ static void print_run(const struct scene *sc, const struct piece *first,
 	       zero(first->p0.x), zero(first->p0.y), zero(last->p1.x),
 	       zero(last->p1.y));
 	print_by(sc, c->by);
+	{
+		const struct vec2 ends[2] = { first->p0, last->p1 };
+
+		print_ranges(sc, ends, 2, run_points, &r);
+	}
 }
 
 // Prints the pieces, each run of one curve and one visibility as one
@@ -1427,6 +1537,18 @@ static void print_insert(const struct part *p, size_t h)
 	}
 }
 
+// The center of the mouth of hole r->h in the view vs.
+static int hole_point(const struct scene *vs, const struct of_record *r,
+		      struct vec2 *out)
+{
+	const struct part *p = vs->p;
+	const struct hole *h = &p->holes[r->h];
+
+	out[0] = xy(to_view(&vs->vw, fmap(p, h->face, h->cx, h->cy,
+					  r->near ? 0 : -p->t)));
+	return 1;
+}
+
 // Prints a record for each hole seen along its axis and not covered,
 // one for each place: of two holes in line, the nearer one.
 static void print_holes(const struct scene *sc)
@@ -1470,6 +1592,17 @@ static void print_holes(const struct scene *sc)
 		}
 		print_insert(p, v[k].hole);
 		print_by(sc, v[k].by);
+		{
+			const struct hole *h = &p->holes[v[k].hole];
+			struct of_record r = {
+				NONE, v[k].hole,
+				NONE, 0,
+				0,    dot(fnormal(p, h->face), sc->vw.z) > 0
+			};
+			struct vec2 at2 = xy(v[k].at);
+
+			print_ranges(sc, &at2, 1, hole_point, &r);
+		}
 	}
 	free(v);
 }
@@ -1522,11 +1655,11 @@ static struct box face_flat_box(const struct part *p, size_t f)
 	return b;
 }
 
-// Prints coat c where it lies on slab face f, cut to the box of the
-// face, if that side of the face looks at the eye and nothing covers
-// the middle of the coat there.
-static void print_coat_on(const struct scene *sc, const struct coat *c,
-			  size_t f)
+// The corners of coat c where it lies on slab face f, cut to the box
+// of the face, in the view sc, into q; returns their number, below 3 for
+// none.
+static size_t coat_poly(const struct scene *sc, const struct coat *c, size_t f,
+			struct vec *q)
 {
 	const struct part *p = sc->p;
 	struct box b = face_flat_box(p, f);
@@ -1534,7 +1667,6 @@ static void print_coat_on(const struct scene *sc, const struct coat *c,
 	const double sides[4] = { b.lo.x, b.hi.x, b.lo.y, b.hi.y };
 	double z = c->side > 0 ? 0 : -p->t;
 	size_t n = c->n < COAT_ROOM ? c->n : COAT_ROOM;
-	struct vec m = v3(0, 0, 0);
 
 	memcpy(buf[0], c->pt, n * sizeof(*c->pt));
 	for (int k = 0; k < 4 && n >= 3; k++) {
@@ -1542,25 +1674,55 @@ static void print_coat_on(const struct scene *sc, const struct coat *c,
 
 		n = clip_poly(buf[k % 2], n, h, buf[(k + 1) % 2]);
 	}
+	for (size_t i = 0; i < n; i++) {
+		q[i] = to_view(&sc->vw,
+			       fmap(p, f, buf[0][i].x, buf[0][i].y, z));
+	}
+	return n;
+}
+
+// The corners of the coat r->c on face r->f in the view vs.
+static int coat_points(const struct scene *vs, const struct of_record *r,
+		       struct vec2 *out)
+{
+	struct vec q[COAT_ROOM];
+	size_t n = coat_poly(vs, &vs->p->coats[r->c], r->f, q);
+
+	for (size_t i = 0; i < n; i++) {
+		out[i] = xy(q[i]);
+	}
+	return n == r->h;
+}
+
+// Prints coat i where it lies on slab face f, cut to the box of the
+// face, if that side of the face looks at the eye and nothing covers
+// the middle of the coat there.
+static void print_coat_on(const struct scene *sc, size_t i, size_t f)
+{
+	const struct coat *c = &sc->p->coats[i];
+	struct vec q[COAT_ROOM];
+	struct vec2 at2[COAT_ROOM];
+	size_t n = coat_poly(sc, c, f, q);
+	struct vec m = v3(0, 0, 0);
+	struct of_record r = { i, n, f, 0, 0, 0 };
+
 	if (n < 3) {
 		return;
 	}
-	for (size_t i = 0; i < n; i++) {
-		m = add(m, to_view(&sc->vw,
-				   fmap(p, f, buf[0][i].x, buf[0][i].y, z)));
+	for (size_t k = 0; k < n; k++) {
+		m = add(m, q[k]);
+		at2[k] = xy(q[k]);
 	}
 	m = mul(m, 1.0 / (double)n);
 	if (covered(sc, xy(m), m.z)) {
 		return;
 	}
 	printf("coat %s %s %zu", c->material, c->side > 0 ? "near" : "far", n);
-	for (size_t i = 0; i < n; i++) {
-		struct vec q = to_view(&sc->vw,
-				       fmap(p, f, buf[0][i].x, buf[0][i].y, z));
-
-		printf(" %.6f %.6f", zero(q.x), zero(q.y));
+	for (size_t k = 0; k < n; k++) {
+		printf(" %.6f %.6f", zero(q[k].x), zero(q[k].y));
 	}
 	printf("\n");
+	print_ranges(sc, at2, n, coat_points, &r);
 }
 
 // Prints the coats that the eye sees face on: on each slab whose side of
@@ -1588,10 +1750,95 @@ static void print_coats(const struct scene *sc)
 			double n = dot(fnormal(p, f), sc->vw.z) * c->side;
 
 			if (!p->maps[p->faces[f]].bend && n > 1 - TINY) {
-				print_coat_on(sc, c, f);
+				print_coat_on(sc, i, f);
 			}
 		}
 	}
+}
+
+// Makes the curves of the view sc of its part: its edges, the outlines
+// of its bends and the walls of its slabs seen from the side.
+static void scene_curves(struct scene *sc)
+{
+	brep_build(sc->p, &sc->b);
+	edge_faces(sc);
+	mark_cutouts(sc);
+	add_edges(sc);
+	add_zones(sc);
+	add_slabs(sc);
+}
+
+static void free_scene(struct scene *sc)
+{
+	brep_free(&sc->b);
+	free(sc->c);
+	free(sc->s);
+	free(sc->pc);
+	free(sc->fbox);
+	free(sc->ef);
+	free(sc->inner);
+}
+
+// Makes flat the blank of p flat, every face in the plane z = 0 by the
+// one map one.
+static void flatten(const struct part *p, struct part *flat, struct map *one)
+{
+	*flat = *p;
+	memset(one, 0, sizeof(*one));
+	one->m = rig_id();
+	flat->place = rig_id();
+	flat->maps = one;
+	flat->nmaps = 1;
+	flat->faces = xcalloc(p->nfaces + 1, sizeof(*flat->faces));
+}
+
+// Makes the variants of the view sc: the part at each end of the range
+// of each parameter, its curves made as those of sc.
+static void make_variants(struct scene *sc)
+{
+	const struct part *p = sc->radius;
+	int flat = sc->p != sc->radius;
+
+	sc->nvar = 2 * p->rg.ntol;
+	sc->var = xcalloc(sc->nvar + 1, sizeof(*sc->var));
+	for (size_t i = 0; i < sc->nvar; i++) {
+		struct variant *v = &sc->var[i];
+
+		v->tol = i / 2;
+		v->hi = (int)(i % 2);
+		vary_part(p, v->tol, v->hi, &v->q);
+		if (flat) {
+			flatten(&v->q, &v->flat, &v->one);
+		}
+		v->sc.p = flat ? &v->flat : &v->q;
+		v->sc.radius = &v->q;
+		v->sc.vw = sc->vw;
+		v->sc.where = sc->where;
+		v->sc.quiet = 1;
+		scene_curves(&v->sc);
+		brep_free(&v->sc.b);
+		free(v->sc.ef);
+		free(v->sc.inner);
+		v->sc.ef = NULL;
+		v->sc.inner = NULL;
+		v->same = v->sc.nc == sc->nc;
+		for (size_t k = 0; v->same && k < sc->nc; k++) {
+			v->same = v->sc.c[k].arc == sc->c[k].arc &&
+				  v->sc.c[k].kind == sc->c[k].kind;
+		}
+	}
+}
+
+static void free_variants(struct scene *sc)
+{
+	for (size_t i = 0; i < sc->nvar; i++) {
+		free_scene(&sc->var[i].sc);
+		if (sc->var[i].flat.faces) {
+			free(sc->var[i].flat.faces);
+		}
+		free_variant(&sc->var[i].q);
+	}
+	free(sc->var);
 }
 
 // Prints the view of part p.
@@ -1605,13 +1852,9 @@ static void print_view(struct scene *sc)
 			break;
 		}
 	}
-	brep_build(sc->p, &sc->b);
-	edge_faces(sc);
-	mark_cutouts(sc);
+	scene_curves(sc);
 	face_boxes(sc);
-	add_edges(sc);
-	add_zones(sc);
-	add_slabs(sc);
+	make_variants(sc);
 	fill_planes(sc);
 	cut_curves(sc);
 	make_pieces(sc);
@@ -1620,13 +1863,8 @@ static void print_view(struct scene *sc)
 	print_pieces(sc);
 	print_holes(sc);
 	print_coats(sc);
-	brep_free(&sc->b);
-	free(sc->c);
-	free(sc->s);
-	free(sc->pc);
-	free(sc->fbox);
-	free(sc->ef);
-	free(sc->inner);
+	free_variants(sc);
+	free_scene(sc);
 }
 
 // Prints the center line of bend face f of the flat part, across the
@@ -1658,16 +1896,11 @@ static void bend_line(const struct part *p, size_t f)
 // every face in the plane z = 0, and the center lines of the bends.
 static void print_flat(const struct part *p, struct sview v)
 {
-	struct part flat = *p;
+	struct part flat;
 	struct map one;
 	struct scene sc;
 
-	memset(&one, 0, sizeof(one));
-	one.m = rig_id();
-	flat.place = rig_id();
-	flat.maps = &one;
-	flat.nmaps = 1;
-	flat.faces = xcalloc(p->nfaces + 1, sizeof(*flat.faces));
+	flatten(p, &flat, &one);
 	memset(&sc, 0, sizeof(sc));
 	sc.show_hidden = v.hidden;
 	sc.scale = v.scale;
@@ -1779,8 +2012,8 @@ static void print_views(const struct part *ps, size_t n, char *input)
 		c.line++;
 		if (strncmp(l, head, sizeof(head) - 1) == 0) {
 			char *end = NULL;
-			unsigned long k = strtoul(l + sizeof(head) - 1, &end,
-						  DECIMAL);
+			unsigned long k =
+				strtoul(l + sizeof(head) - 1, &end, DECIMAL);
 
 			if (end == l + sizeof(head) - 1 || *end != ' ' || !k) {
 				die("%s:%u: expected #line N NAME", c.what,

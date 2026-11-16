@@ -15,21 +15,22 @@ schnet \- write the netlist of a schematic sheet
 .I Schnet
 reads a schematic source,
 .IR sch (5),
-and its symbols as
+every page of it, and its symbols as
 .IR schdraw (1)
 does, and writes its flat netlist,
 .IR netlist (5),
 on the standard output: a part record for each part, by its
 designator, with its type, values, part number and name (the path of
-its groups and its own name, as
-.BR ch1.gain.rf ),
+its groups and its own name, the page's first, as
+.BR outputs.ch1.gain.rf ),
 and a net record for each net, with its pins by their numbers.
-A net named by a flag or by a port of the sheet is marked global.
+A net named by a flag or by a port of the sheet is marked global, and
+is one net over all the pages it is on.
 Flags are not parts; a pin on no net is left out.
 The output of a source is always the same: the parts and the pins of a
 net are sorted by designator and pin, the nets by name.
 .PP
-The designators come from the page of the sheet: R401 is the first
+The designators come from the number of the page: R401 is the first
 resistor of page 4, counted by columns from the left and down each
 column.
 .SH EXAMPLES

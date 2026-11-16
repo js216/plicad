@@ -3,13 +3,17 @@
 .\" Copyright (c) 2026 Jakob Kastelic
 .TH SCHVIEW 1
 .SH NAME
-schview \- show a schematic sheet
+schview \- show the pages of a schematic
 .SH SYNOPSIS
 .B schview
 .I sheet.vec
 .SH DESCRIPTION
 .I Schview
-shows a sheet in a window, smoothed, khaki (#BBBB99) on black.
+shows the pages of a schematic in a window, one at a time, smoothed,
+khaki (#BBBB99) on black.
+A page runs from its page record (page W H N) to the next; with more
+than one, the top left names the page shown, and a part selected from
+stdin shows its page.
 The sheet comes as
 .IR vec (5)
 from
@@ -55,7 +59,13 @@ clears (for scripts: the viewers never send it), and
 is c;
 .B shot
 .I file
-draws the next frame into a PPM picture.
+draws the next frame into a PPM picture;
+.BR "page next" ,
+.B page prev
+and
+.B page
+.I N
+turn the pages.
 The input of the window is taken before each command, so a picture
 shows all the keys and clicks that came before it.
 Cross-probing with

@@ -2,7 +2,7 @@
 // measure.c -- Print the volume, area, box, holes and flat size of parts
 // Copyright (c) 2026 Jakob Kastelic
 
-// Usage: measure STREAM|-
+// Usage: measure [-e REL] STREAM|-
 //
 // For each folded part of a stream (stream.h) it prints one item per
 // line:
@@ -35,12 +35,18 @@
 // part of solids apart leaves.  The volume, the area and the center of
 // a part are worked out once for each shape of its own content, in its
 // own frame, and moved to the place of each part of it: the parts of an
-// assembly are mostly copies of a few.
-
-#define _POSIX_C_SOURCE 200809L // For open_memstream.
+// assembly are mostly copies of a few.  After the records of each part,
+//   error volume E area E center E
+// gives the bounds of their errors (print_error): each integral to REL
+// of the sizes of its terms, without -e a hundredth of the tightest
+// tolerance of a length of the part over the diagonal of its box
+// (part_accuracy), 1e-6 for a part with none, that of a face of a pipe
+// or a sphere by its mesh, or inf where no bound is proven
+// (shape_mass_to).
 
 #include "brep.h"
 #include "bsolid.h"
+#include "expr.h"
 #include "fold.h"
 #include "geom.h"
 #include "integ.h"
@@ -59,6 +65,10 @@ enum { K_AX, K_AY, K_AZ, K_D, K_CX, K_CY, K_CZ, K_N };
 #define ROUND_TO 1000.0 // Holes sort by keys rounded to 1 / ROUND_TO.
 #define ALONG 1e-9 // Sine below which a side runs along a bend axis.
 #define MM3_PER_CM3 1000.0
+#define ACCURACY 1e-6 // Of each integral, of a part of no tolerance (-e).
+#define OF_TOLERANCE 0.01 // Of the tightest tolerance, the accuracy,
+#define ACCURACY_MAX 0.01 // which stays below this.
+#define ROUNDED 1e-12 // The rounding of a size in closed form, of it.
 
 enum { STEPS = 256 }; // Points of a curve other than a circle, for its box.
 
@@ -177,7 +187,7 @@ static void hole_size(const struct part *p, const struct hole *h,
 		   (PI * r * r * h->h);
 }
 
-static void print_size(const struct part *p)
+static struct solid_size print_size(const struct part *p)
 {
 	struct solid_size sz = { 0, 0 };
 
@@ -193,6 +203,7 @@ static void print_size(const struct part *p)
 		hole_size(p, &p->holes[i], &sz);
 	}
 	printf("volume %.4f\narea %.4f\n", sz.vol, sz.area);
+	return sz;
 }
 
 // Prints the bounding box and the face counts of the solid.
@@ -286,18 +297,110 @@ static void print_flat(const struct part *p)
 
 // Grows x by the points of edge e: its ends and the points of a conic
 // that lie furthest along an axis.
-// The volume, area and moment of a solid in its own frame, by the text
-// of the solid (shape_write), and the hash of that text.
+// The volume, area and moment of a shape in its own frame, by its key:
+// the bytes of its numbers and of the names of its faces (key_of), and
+// the hash of the key.
 struct memo {
-	char *text;
+	char *key;
+	size_t n;
 	unsigned long hash;
-	struct solid_mass m;
+	struct solid_mass m, err;
 };
+
+static double accuracy = ACCURACY; // Of each integral, of the part,
+static int accuracy_set; // or for every part as -e says.
 
 static struct memo *memos;
 static size_t nmemos, capmemos;
 
-// The FNV-1a hash of the text s of n bytes.
+// A key under way: its bytes, their number and room.
+struct key {
+	char *s;
+	size_t n, cap;
+};
+
+static void put_bytes(struct key *k, const void *p, size_t n)
+{
+	if (k->n + n > k->cap) {
+		k->cap = 2 * (k->n + n) + 64;
+		k->s = xrealloc(k->s, k->cap);
+	}
+	memcpy(k->s + k->n, p, n);
+	k->n += n;
+}
+
+static void put_double(struct key *k, double x)
+{
+	x += 0.0; // -0 as 0.
+	put_bytes(k, &x, sizeof(x));
+}
+
+static void put_size(struct key *k, size_t x)
+{
+	put_bytes(k, &x, sizeof(x));
+}
+
+static void put_vec3(struct key *k, struct vec v)
+{
+	put_double(k, v.x);
+	put_double(k, v.y);
+	put_double(k, v.z);
+}
+
+// The key of shape sh: all that its mass depends on, field by field.
+static struct key key_of(const struct shape *sh)
+{
+	struct key k = { NULL, 0, 0 };
+
+	put_size(&k, sh->nv);
+	put_size(&k, sh->ne);
+	put_size(&k, sh->nf);
+	for (size_t i = 0; i < sh->nv; i++) {
+		put_vec3(&k, sh->v[i]);
+	}
+	for (size_t i = 0; i < sh->ne; i++) {
+		const struct sedge *e = &sh->e[i];
+
+		put_size(&k, (size_t)e->c.kind);
+		put_vec3(&k, e->c.o);
+		put_vec3(&k, e->c.n);
+		put_vec3(&k, e->c.x);
+		put_double(&k, e->c.a);
+		put_double(&k, e->c.b);
+		put_size(&k, e->v0);
+		put_size(&k, e->v1);
+		put_double(&k, e->t0);
+		put_double(&k, e->t1);
+	}
+	for (size_t i = 0; i < sh->nf; i++) {
+		const struct sface *f = &sh->f[i];
+
+		put_size(&k, (size_t)f->s.kind);
+		put_vec3(&k, f->s.o);
+		put_vec3(&k, f->s.n);
+		put_vec3(&k, f->s.x);
+		put_double(&k, f->s.r);
+		put_double(&k, f->s.r2);
+		put_double(&k, f->s.r3);
+		put_size(&k, (size_t)(f->sense + 1));
+		put_size(&k, f->nloops);
+		put_bytes(&k, f->name, strlen(f->name) + 1);
+		for (size_t l = 0; l < f->nloops; l++) {
+			const struct sloop *lp = &sh->l[f->loop0 + l];
+
+			put_size(&k, lp->n);
+			for (size_t j = 0; j < lp->n; j++) {
+				const struct suse *u = &sh->u[lp->first + j];
+
+				put_size(&k, u->e);
+				put_size(&k, (size_t)u->fwd);
+			}
+		}
+	}
+	return k;
+}
+
+// The FNV-1a hash of the n bytes s.
 static unsigned long hash_of(const char *s, size_t n)
 {
 	unsigned long h = 2166136261UL;
@@ -308,53 +411,78 @@ static unsigned long hash_of(const char *s, size_t n)
 	return h;
 }
 
-// The volume, area and moment of solid sh in its own frame, worked out
+// The volume, area and moment of shape sh in its own frame, worked out
 // once for each content.
-static struct solid_mass own_mass(const struct shape *sh)
+static struct solid_mass own_mass(const struct shape *sh,
+				  struct solid_mass *err)
 {
-	char *text = NULL;
-	size_t n = 0;
-	FILE *f = open_memstream(&text, &n);
+	struct key k = key_of(sh);
 	struct memo m;
 
-	if (!f) {
-		die("measure: out of memory");
-	}
-	shape_write(f, sh);
-	if (fclose(f) != 0) {
-		die("measure: out of memory");
-	}
-	m.hash = hash_of(text, n);
+	put_double(&k, accuracy);
+	m.hash = hash_of(k.s, k.n);
 	for (size_t i = 0; i < nmemos; i++) {
-		if (memos[i].hash == m.hash && !strcmp(memos[i].text, text)) {
-			free(text);
+		if (memos[i].hash == m.hash && memos[i].n == k.n &&
+		    !memcmp(memos[i].key, k.s, k.n)) {
+			free(k.s);
+			*err = memos[i].err;
 			return memos[i].m;
 		}
 	}
-	m.text = text;
-	m.m = shape_mass(sh);
+	m.key = k.s;
+	m.n = k.n;
+	m.m = shape_mass_to(sh, accuracy, &m.err);
 	PUSH(memos, nmemos, capmemos, m);
+	*err = m.err;
 	return m.m;
+}
+
+// The relative accuracy of the integrals of part p: a hundredth of the
+// least half range of a parameter of a length that it leans on, over
+// the diagonal of the box of its vertices, or ACCURACY if it has none.
+static double part_accuracy(const struct part *p)
+{
+	struct box b = box_empty();
+	double tight = HUGE_VAL;
+
+	for (size_t i = 0; i < p->rg.ntol; i++) {
+		const struct part_tol *t = &p->rg.tol[i];
+
+		if (t->kind == KIND_LENGTH && t->hi > t->lo) {
+			tight = fmin(tight, (t->hi - t->lo) / 2);
+		}
+	}
+	for (size_t i = 0; p->solid && i < p->solid->nv; i++) {
+		box_add(&b, p->solid->v[i]);
+	}
+	for (size_t i = 0; !p->solid && i < p->nverts; i++) {
+		box_add(&b, v3(p->verts[i].x, p->verts[i].y, 0));
+	}
+	if (!isfinite(tight) || !(b.hi.x >= b.lo.x) ||
+	    !(len(sub(b.hi, b.lo)) > 0)) {
+		return ACCURACY;
+	}
+	return fmin(OF_TOLERANCE * tight / len(sub(b.hi, b.lo)), ACCURACY_MAX);
 }
 
 // The volume, area and moment of part p, where it stands: of its shape
 // in its own frame, moved by its place.
-static struct solid_mass solid_mass_of(const struct part *p)
+static struct solid_mass solid_mass_of(const struct part *p,
+				       struct solid_mass *err)
 {
 	struct solid_mass m;
 
 	if (p->solid) {
-		m = own_mass(p->solid);
+		m = own_mass(p->solid, err);
 	} else {
 		struct part own = *p;
 		struct shape sh;
 
 		own.place = rig_id();
 		part_shape(&own, &sh);
-		m = own_mass(&sh);
+		m = own_mass(&sh, err);
 		shape_free(&sh);
 	}
-
 	if (m.volume != 0) {
 		struct vec c = rig_pt(p->place, mul(m.moment, 1 / m.volume));
 
@@ -373,16 +501,15 @@ struct mass_sum {
 // Prints the mass of part p if it has a material, and the center of its
 // mass for a folded part (measure prints that of a solid with its
 // volume), and adds them to t.
-static void print_mass(const struct part *p, struct mass_sum *t)
+static void print_mass(const struct part *p, struct solid_mass m,
+		       struct mass_sum *t)
 {
-	struct solid_mass m;
 	double g = 0;
 	struct vec c;
 
 	if (!p->base) {
 		return;
 	}
-	m = solid_mass_of(p);
 	g = m.volume * p->density / MM3_PER_CM3;
 	c = mul(m.moment, 1 / m.volume);
 	printf("mass %.4f\n", g);
@@ -396,12 +523,11 @@ static void print_mass(const struct part *p, struct mass_sum *t)
 }
 
 // Prints solid part p, its shape sh where it stands.
-static void print_shape(const struct part *p, const struct shape *sh)
+static void print_shape(const struct shape *sh, struct solid_mass m)
 {
 	static const char *const names[SF_KINDS] = { "plane", "cylinder",
 						     "cone",  "sphere",
 						     "torus", "pipe" };
-	struct solid_mass m = solid_mass_of(p);
 	struct box x = box_empty();
 	size_t count[SF_KINDS] = { 0, 0, 0, 0, 0, 0 };
 	struct vec c = mul(m.moment, 1 / m.volume);
@@ -430,6 +556,25 @@ static void print_shape(const struct part *p, const struct shape *sh)
 		}
 	}
 	printf("\n");
+}
+
+// Prints the bounds of the errors of the volume v, the area a and the
+// center of the mass m whose bounds are e: of the center, along the
+// axis of the largest, and 0 without a center.
+static void print_error(double v, double a, struct solid_mass m,
+			struct solid_mass e)
+{
+	double c = 0;
+
+	if (fabs(m.volume) > e.volume) {
+		struct vec x = mul(m.moment, 1 / m.volume);
+		struct vec d = { e.moment.x + (fabs(x.x) * e.volume),
+				 e.moment.y + (fabs(x.y) * e.volume),
+				 e.moment.z + (fabs(x.z) * e.volume) };
+
+		c = fmax(d.x, fmax(d.y, d.z)) / (fabs(m.volume) - e.volume);
+	}
+	printf("error volume %.3g area %.3g center %.3g\n", v, a, c);
 }
 
 // Prints the mass line of sum t, after the words head.
@@ -491,28 +636,53 @@ int main(int argc, char **argv)
 	size_t n = 0;
 	struct mass_sum total = { 0, v3(0, 0, 0), 0 };
 	struct mass_sum *m = NULL;
+	char *end = NULL;
+	int a = 1;
 
-	if (argc != 2) {
-		die("usage: measure STREAM|-");
+	if (argc == 4 && !strcmp(argv[1], "-e")) {
+		accuracy = strtod(argv[2], &end);
+		if (*end || end == argv[2] || !(accuracy > 0) ||
+		    !(accuracy < 1)) {
+			die("measure: -e takes a relative accuracy above 0 and "
+			    "under 1: %s",
+			    argv[2]);
+		}
+		accuracy_set = 1;
+		a = 3;
 	}
-	n = read_parts(argv[1], &ps);
+	if (argc != a + 1) {
+		die("usage: measure [-e REL] STREAM|-");
+	}
+	n = read_parts(argv[a], &ps);
 	m = xmalloc((n + 1) * sizeof(*m));
 	for (size_t i = 0; i < n; i++) {
+		struct solid_mass mm = { 0, 0, { 0, 0, 0 } }, ee = mm;
+
 		m[i] = (struct mass_sum){ 0, v3(0, 0, 0), 0 };
+		accuracy = accuracy_set ? accuracy : part_accuracy(&ps[i]);
+		if (ps[i].solid || ps[i].base) {
+			mm = solid_mass_of(&ps[i], &ee);
+		}
 		if (ps[i].solid) {
 			struct shape sh;
 
 			part_shape(&ps[i], &sh);
-			print_shape(&ps[i], &sh);
+			print_shape(&sh, mm);
 			shape_free(&sh);
+			print_mass(&ps[i], mm, &m[i]);
+			print_error(ee.volume, ee.area, mm, ee);
 		} else {
+			struct solid_size sz;
+
 			printf("part %s\n", ps[i].name);
-			print_size(&ps[i]);
+			sz = print_size(&ps[i]);
 			print_box(&ps[i]);
 			print_holes(&ps[i]);
 			print_flat(&ps[i]);
+			print_mass(&ps[i], mm, &m[i]);
+			print_error(fabs(sz.vol) * ROUNDED,
+				    fabs(sz.area) * ROUNDED, mm, ee);
 		}
-		print_mass(&ps[i], &m[i]);
 		total.mass += m[i].mass;
 		total.moment = add(total.moment, m[i].moment);
 		total.parts += m[i].parts;
@@ -523,7 +693,7 @@ int main(int argc, char **argv)
 	}
 	free(m);
 	for (size_t i = 0; i < nmemos; i++) {
-		free(memos[i].text);
+		free(memos[i].key);
 	}
 	free(memos);
 	free_parts(ps, n);

@@ -69,6 +69,10 @@ extern int vg_w, vg_h, vg_sel, vg_font_w, vg_font_h, vg_top;
 // A line thinner than a pixel is drawn a pixel wide at full strength,
 // not fainter (a board's outline).
 extern int vg_solid;
+// Strokes that meet take the brighter of the two, so a joint of light
+// lines on a dark ground shows no seam (a sheet), rather than one laid
+// over the other.
+extern int vg_brighter;
 // A line of width 0, or every line of a file read while vg_hair is set,
 // is a hairline: 1.5 pixels at every zoom (an outline, not a thing).
 extern int vg_hair;
@@ -90,11 +94,15 @@ double vg_text_width(char font, const char *s);
 void vg_layer(const char *path, char *name, size_t size);
 // Fits the box into the window and runs the viewer.
 void vg_loop(const double box[4]);
+// Fits the view to box, which Space fits from then on (a new page).
+void vg_fit(const double box[4]);
 // Draws the runs of f that want takes, each in the color each sets.
 void vg_draw(const struct vg_file *f, int (*want)(const struct vg_run *),
 	     void (*each)(const struct vg_run *));
-// The part of the smallest element of f within tol of (x, y), if
-// smaller than *area: it becomes *best and its area *area.
+// The part of the element of f under (x, y), the smallest, or else of
+// the nearest within tol, if it scores less than *area: it becomes *best
+// and its score *area (its area, or for one near a far larger number by
+// its distance).
 void vg_pick(const struct vg_file *f, double x, double y, double tol, int *best,
 	     double *area);
 // Finds the glyph table, ../lib/fonts/nimbussans.txt from the program,

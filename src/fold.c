@@ -3,6 +3,7 @@
 // Copyright (c) 2026 Jakob Kastelic
 
 #include "fold.h"
+#include "expr.h"
 #include "shape.h"
 #include "geom.h"
 #include "util.h"
@@ -965,6 +966,8 @@ static void read_record(struct part *p, struct reader *r, const char *k)
 		read_thread(p, r);
 	} else if (strcmp(k, "insert") == 0) {
 		read_insert(p, r);
+	} else if (range_record(&p->rg, r->w, r->n, r->where)) {
+		r->k = r->n;
 	} else {
 		die("%s: unknown record %s", r->where, k);
 	}
@@ -1109,6 +1112,7 @@ void clear_part(struct part *p)
 		shape_free(p->solid);
 		free(p->solid);
 	}
+	free_ranges(&p->rg);
 	memset(p, 0, sizeof(*p));
 }
 
@@ -1318,5 +1322,270 @@ void write_part(const struct part *p)
 	} else {
 		write_blank(p);
 	}
+	write_ranges(&p->rg);
 	printf("end\n");
+}
+
+size_t add_tol(struct ranges *g, const char *name, int kind, double lo,
+	       double hi)
+{
+	struct part_tol t = { xstrdup(name), kind, lo, hi };
+
+	PUSH(g->tol, g->ntol, g->captol, t);
+	return g->ntol - 1;
+}
+
+void add_vary(struct ranges *g, size_t tol, int hi, const char *rec)
+{
+	struct part_vary v = { tol, hi, xstrdup(rec) };
+
+	PUSH(g->vary, g->nvary, g->capvary, v);
+}
+
+// The words w[from .. n - 1] with a blank between each two, a new
+// string.
+static char *joined(char **w, size_t from, size_t n)
+{
+	size_t room = 1;
+	char *out = NULL;
+	size_t k = 0;
+
+	for (size_t i = from; i < n; i++) {
+		room += strlen(w[i]) + 1;
+	}
+	out = xmalloc(room);
+	for (size_t i = from; i < n; i++) {
+		size_t m = strlen(w[i]);
+
+		if (k) {
+			out[k++] = ' ';
+		}
+		memcpy(out + k, w[i], m);
+		k += m;
+	}
+	out[k] = 0;
+	return out;
+}
+
+int range_record(struct ranges *g, char **w, size_t n, const char *where)
+{
+	struct reader r;
+
+	memset(&r, 0, sizeof(r));
+	r.where = where;
+	if (n > MAXWORDS) {
+		die("%s: too many fields", where);
+	}
+	for (size_t i = 0; i < n; i++) {
+		r.w[i] = w[i];
+	}
+	r.n = n;
+	r.k = 1;
+	if (strcmp(w[0], "tol") == 0) {
+		const char *name = word(&r);
+		const char *k = word(&r);
+		int kind = KINDS;
+		double lo = 0;
+		double hi = 0;
+
+		for (int i = 0; i < KINDS; i++) {
+			kind = strcmp(k, kind_word(i)) == 0 ? i : kind;
+		}
+		lo = num(&r);
+		hi = num(&r);
+		if (kind == KINDS || r.k != n || !(lo <= hi)) {
+			die("%s: expected tol NAME number|length|angle LO HI",
+			    where);
+		}
+		(void)add_tol(g, name, kind, lo, hi);
+		return 1;
+	}
+	if (strcmp(w[0], "vary") == 0) {
+		const char *name = word(&r);
+		const char *end = word(&r);
+		size_t t = NONE;
+		char *rec = NULL;
+
+		for (size_t i = 0; i < g->ntol; i++) {
+			t = strcmp(g->tol[i].name, name) == 0 ? i : t;
+		}
+		if (t == NONE || (strcmp(end, "-") != 0 && strcmp(end, "+")) ||
+		    r.k >= n) {
+			die("%s: expected vary NAME -|+ RECORD, after tol NAME",
+			    where);
+		}
+		rec = joined(w, r.k, n);
+		add_vary(g, t, end[0] == '+', rec);
+		free(rec);
+		return 1;
+	}
+	return 0;
+}
+
+void write_ranges(const struct ranges *g)
+{
+	for (size_t i = 0; i < g->ntol; i++) {
+		printf("tol %s %s", g->tol[i].name, kind_word(g->tol[i].kind));
+		pnum(g->tol[i].lo);
+		pnum(g->tol[i].hi);
+		printf("\n");
+	}
+	for (size_t i = 0; i < g->nvary; i++) {
+		const struct part_vary *v = &g->vary[i];
+
+		printf("vary %s %c %s\n", g->tol[v->tol].name,
+		       v->hi ? '+' : '-', v->rec);
+	}
+}
+
+void copy_ranges(struct ranges *to, const struct ranges *from)
+{
+	size_t base = to->ntol;
+
+	for (size_t i = 0; i < from->ntol; i++) {
+		const struct part_tol *t = &from->tol[i];
+
+		(void)add_tol(to, t->name, t->kind, t->lo, t->hi);
+	}
+	for (size_t i = 0; i < from->nvary; i++) {
+		const struct part_vary *v = &from->vary[i];
+
+		add_vary(to, base + v->tol, v->hi, v->rec);
+	}
+}
+
+void free_ranges(struct ranges *g)
+{
+	for (size_t i = 0; i < g->ntol; i++) {
+		free(g->tol[i].name);
+	}
+	for (size_t i = 0; i < g->nvary; i++) {
+		free(g->vary[i].rec);
+	}
+	free(g->tol);
+	free(g->vary);
+	memset(g, 0, sizeof(*g));
+}
+
+// A copy of the n items of size each at from, a new array.
+static void *copy_of(const void *from, size_t n, size_t each)
+{
+	void *to = xmalloc((n + 1) * each);
+
+	if (n) {
+		memcpy(to, from, n * each);
+	}
+	return to;
+}
+
+// Reads the index of a record of a variant, below count.
+static size_t vary_index(struct reader *r, size_t count)
+{
+	size_t i = index_of(r);
+
+	if (i == NONE || i >= count) {
+		die("%s: bad index of a vary record", r->where);
+	}
+	return i;
+}
+
+// Applies the vary record of the words of r to the variant q.
+static void vary_record(struct part *q, struct reader *r)
+{
+	const char *k = word(r);
+
+	if (strcmp(k, "t") == 0) {
+		q->t = num(r);
+	} else if (strcmp(k, "map") == 0) {
+		struct map *m = &q->maps[vary_index(r, q->nmaps)];
+
+		if (strcmp(word(r), "rigid") == 0) {
+			rig_read(r, &m->m);
+		} else {
+			(void)index_of(r);
+			m->qx = num(r);
+			m->qy = num(r);
+			m->mx = num(r);
+			m->my = num(r);
+			m->ba = num(r);
+			m->ang = num(r);
+			m->r = num(r);
+		}
+	} else if (strcmp(k, "vertex") == 0) {
+		struct vec2 *v = &q->verts[vary_index(r, q->nverts)];
+
+		v->x = num(r);
+		v->y = num(r);
+	} else if (strcmp(k, "edge") == 0) {
+		struct edge *e = &q->edges[vary_index(r, q->nedges)];
+
+		e->cx = num(r);
+		e->cy = num(r);
+	} else if (strcmp(k, "hole") == 0) {
+		struct hole *h = &q->holes[vary_index(r, q->nholes)];
+
+		h->cx = num(r);
+		h->cy = num(r);
+		h->r = num(r);
+		h->rc = num(r);
+		h->h = num(r);
+		h->blind = num(r);
+	} else if (strcmp(k, "coat") == 0) {
+		struct coat *c = &q->coats[vary_index(r, q->ncoats)];
+
+		for (size_t i = 0; i < c->n; i++) {
+			c->pt[i].x = num(r);
+			c->pt[i].y = num(r);
+		}
+	} else {
+		die("%s: unknown vary record %s", r->where, k);
+	}
+	if (r->k != r->n) {
+		die("%s: too many fields", r->where);
+	}
+}
+
+void vary_part(const struct part *p, size_t tol, int hi, struct part *q)
+{
+	*q = *p;
+	q->maps = copy_of(p->maps, p->nmaps, sizeof(*p->maps));
+	q->verts = copy_of(p->verts, p->nverts, sizeof(*p->verts));
+	q->edges = copy_of(p->edges, p->nedges, sizeof(*p->edges));
+	q->holes = copy_of(p->holes, p->nholes, sizeof(*p->holes));
+	q->coats = copy_of(p->coats, p->ncoats, sizeof(*p->coats));
+	for (size_t i = 0; i < p->ncoats; i++) {
+		q->coats[i].pt = copy_of(p->coats[i].pt, p->coats[i].n,
+					 sizeof(struct vec2));
+	}
+	for (size_t i = 0; i < p->rg.nvary; i++) {
+		const struct part_vary *v = &p->rg.vary[i];
+		struct reader r;
+		char *copy = NULL;
+
+		if (v->tol != tol || v->hi != hi) {
+			continue;
+		}
+		memset(&r, 0, sizeof(r));
+		r.where = p->name;
+		copy = xstrdup(v->rec);
+		r.n = split_words(copy, r.w, MAXWORDS);
+		if (r.n > MAXWORDS) {
+			die("%s: too many fields", p->name);
+		}
+		vary_record(q, &r);
+		free(copy);
+	}
+}
+
+void free_variant(struct part *q)
+{
+	for (size_t i = 0; i < q->ncoats; i++) {
+		free(q->coats[i].pt);
+	}
+	free(q->maps);
+	free(q->verts);
+	free(q->edges);
+	free(q->holes);
+	free(q->coats);
+	memset(q, 0, sizeof(*q));
 }

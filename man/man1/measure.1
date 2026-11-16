@@ -6,6 +6,10 @@
 measure \- print volume, area, box and holes of parts
 .SH SYNOPSIS
 .B measure
+[
+.B \-e
+.I rel
+]
 .IR stream.st | \-
 .SH DESCRIPTION
 .I Measure
@@ -64,5 +68,62 @@ The center is that of the volume.
 An empty solid (the common part of solids that are apart)
 has no center and no box.
 Lengths are in mm.
+.PP
+After the records of each part, folded or solid, comes
+.PP
+.RS
+.nf
+error volume E area E center E
+.fi
+.RE
+.PP
+the bounds of the errors of its volume, its area and its center (along
+the axis of the largest; 0 without a center), in mm, mm2 and mm.
+The volume and the area of a folded part are in closed form: their
+bounds are of rounding.
+The mass, its center and the sizes of a solid are integrals over the
+faces, by the divergence theorem, and the bounds are proven by the form
+of each face and its edges.
+On a plane, a cylinder, a cone, a sphere and a torus the integrands are
+polynomials, or sums of cos k t and sin k t, along the edges that occur
+there: lines, conics of a plane, circles round the axis, ellipses of a
+cylinder through its axis, parallels and meridians of a sphere (in the
+frame of one of its circles) and of a torus; the rules are exact, and
+the bound is of rounding: 1e\-12 of the sum of the sizes of the terms.
+Along a ring of a pipe whose tube is narrower than the least radius of
+curvature of its ellipse, the integral over the ellipse is by Gauss's
+rule, its error bounded through the ellipse of Bernstein of each piece
+by the largest size of the integrands there, its pieces halved until
+the bound is within
+.I rel
+of the sizes of the terms.
+Without
+.BR \-e ,
+.I rel
+is a hundredth of the tightest tolerance of a length of the part, the
+least half range of a parameter of a length that it leans on
+.RI ( stream (5)),
+over the diagonal of the box of its vertices, at most 0.01; or 1e\-6 for
+a part with none.
+A face of a pipe or a sphere bounded by three or four lines or conics
+takes a mesh where its edges have no such rule: a fillet whose rail
+lies in a tilted plane, or a corner of a sphere between three great
+circles.
+Its points lie on the face and on its edges, and its step makes every
+flat triangle lie within delta = 2e\-3 mm of the face, by the most
+second derivative of the surface, from its radii.
+Its volume, area and moments are those of the triangles.
+The space between the mesh and the face has a volume of at most
+A delta, A the area of the face (to terms of order delta^2 in its
+curvature), so the error of the volume is at most A delta plus the
+slivers between the chords of the edges and their arcs, and that of the
+moments the same times the largest coordinate.
+The area errs by at most the area times the largest 1 \- cos t, t the
+angle between the normal of a triangle and that of the face, plus the
+slivers and a share of order delta times the curvature.
+A face with any other edge has no bound: E is inf.
+The part's bounds add those of its faces.
+A part made of a shape met before, anywhere, takes its integrals,
+moved to where it stands.
 .SH SEE ALSO
 numdiff(1), place(1), stream(5), part(5)

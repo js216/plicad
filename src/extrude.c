@@ -26,6 +26,12 @@
 // The faces are named NAME.start and NAME.end for the two ends, and
 // NAME.side.SIDE for a side of its profile named SIDE, NAME.side for the
 // others and the arcs of the corners.
+//
+// The stream goes out with the ranges of the faces (stream.h): for each
+// parameter of a range that the solids lean on (expr.h), the solids are
+// made again with the parameter moved by STEP_SHARE of its range, and
+// each face that moves goes out with its surface and its surface at
+// each end of the range, moved in proportion.
 
 #include "geom.h"
 #include "shape.h"
@@ -39,6 +45,7 @@
 #define FLAT 1e-12 // A cross product of unit vectors below this is none.
 #define DRAFT_MAX 89.0 // The steepest draft, in degrees.
 #define PATTERN_MAX 1000.0 // The most copies along a pattern axis.
+#define STEP_SHARE 1e-4 // Of its range, the move of a parameter to rebuild.
 
 enum {
 	CORNER_WORDS = 3, // U V R
@@ -51,7 +58,8 @@ enum {
 	CIRCLE_U = 3,
 	CIRCLE_V = 4,
 	CIRCLE_A = 6,
-	NAME_LEN = 256 // Room for the name of a face.
+	NAME_LEN = 256, // Room for the name of a face.
+	SURF_ROOM = 512 // Room for the text of a surface.
 };
 
 struct p2 {
@@ -840,28 +848,182 @@ static void statement(struct ex *x, size_t i)
 	st->ln[i].gone = 1;
 }
 
+static void free_ex(struct ex *x)
+{
+	for (size_t i = 0; i < x->npf; i++) {
+		free(x->pf[i].name);
+		for (size_t k = 0; k < x->pf[i].n; k++) {
+			free(x->pf[i].k[k].side);
+		}
+		free(x->pf[i].k);
+	}
+	free(x->pf);
+	stream_free(&x->st);
+}
+
+// A parameter of a range that the solids lean on, its index in the
+// ranges of the stream, and the end of its range that a record is of,
+// the high one if hi, as k times the move of a rebuild.
+struct end_of {
+	const struct sym *s;
+	size_t tol;
+	int hi;
+	double k;
+};
+
+static struct vec lerp(struct vec a, struct vec b, double k)
+{
+	return add(a, mul(sub(b, a), k));
+}
+
+// Surface b with its axis turned the way of that of a, and its origin
+// moved along it to the point nearest the origin of a: on a plane, or
+// on the axis of a cylinder or a cone, which takes its radius there.
+static struct surf near_origin(const struct surf *a, struct surf b)
+{
+	double t = 0;
+
+	if (dot(a->n, b.n) < 0 && b.kind <= SF_CONE) {
+		b.n = mul(b.n, -1);
+		b.r2 = -b.r2;
+	}
+	t = dot(sub(a->o, b.o), b.n);
+	if (b.kind == SF_PLANE) {
+		b.o = sub(a->o, mul(b.n, t));
+	} else if (b.kind == SF_CYL || b.kind == SF_CONE) {
+		b.o = add(b.o, mul(b.n, t));
+		b.r += b.kind == SF_CONE ? b.r2 * t : 0;
+	}
+	return b;
+}
+
+// The surface a, of the part, changed k times as much as to b, of a
+// rebuild, its frame made two unit vectors at right angles again.
+static struct surf surf_end(const struct surf *a, const struct surf *to,
+			    double k)
+{
+	struct surf s = *a;
+	struct surf nb = near_origin(a, *to);
+	const struct surf *b = &nb;
+
+	s.o = lerp(a->o, b->o, k);
+	s.n = unit(lerp(a->n, b->n, k));
+	s.x = lerp(a->x, b->x, k);
+	s.x = unit(sub(s.x, mul(s.n, dot(s.x, s.n))));
+	s.r = a->r + (k * (b->r - a->r));
+	s.r2 = a->r2 + (k * (b->r2 - a->r2));
+	s.r3 = a->r3 + (k * (b->r3 - a->r3));
+	return s;
+}
+
+// Adds to the ranges of x the vary records of the faces of solid a at
+// the end e, those that b, rebuilt, moves; dies unless b has the same
+// faces.
+static void vary_faces(struct ex *x, const struct shape *a,
+		       const struct shape *b, struct end_of e)
+{
+	if (a->nf != b->nf) {
+		die("%s: solid %s takes another form as %s (%s) moves",
+		    x->st.src, a->name, e.s->name, e.s->where);
+	}
+	for (size_t f = 0; f < a->nf; f++) {
+		char s0[SURF_ROOM];
+		char s1[SURF_ROOM];
+		char rec[3 * SURF_ROOM];
+		struct surf u = surf_end(&a->f[f].s, &b->f[f].s, e.k);
+
+		if (strcmp(a->f[f].name, b->f[f].name) != 0) {
+			die("%s: the faces of solid %s change", x->st.src,
+			    a->name);
+		}
+		if (surfs_same(&a->f[f].s, &b->f[f].s)) {
+			continue;
+		}
+		surf_text(s0, sizeof(s0), &a->f[f].s);
+		surf_text(s1, sizeof(s1), &u);
+		xsnprintf(rec, "face %s %s %s", a->f[f].name, s0, s1);
+		add_vary(&x->st.rg, e.tol, e.hi, rec);
+	}
+}
+
+// The parameters of a range that the solids lean on, their indices
+// among the names.
+struct params {
+	size_t *i;
+	size_t n, cap;
+};
+
+static void note_param(const struct sym *s, size_t i, void *ctx)
+{
+	struct params *ps = ctx;
+
+	(void)s;
+	PUSH(ps->i, ps->n, ps->cap, i);
+}
+
+// The index of the parameter of the name in g, added if new.
+static size_t tol_of(struct ranges *g, const struct sym *s)
+{
+	for (size_t i = 0; i < g->ntol; i++) {
+		if (strcmp(g->tol[i].name, s->name) == 0) {
+			return i;
+		}
+	}
+	return add_tol(g, s->name, s->kind, s->lo - s->v, s->hi - s->v);
+}
+
+// Makes the solids of x again with each parameter that they lean on
+// moved by STEP_SHARE of its range, the solids from n0 on, and adds to
+// the ranges of the stream the parameters and what the ends of their
+// ranges move, by the rebuild: the surfaces of the faces, each number
+// in proportion.
+static void vary_all(struct ex *x, size_t n0)
+{
+	struct params ps = { NULL, 0, 0 };
+
+	each_tolerance(&x->st.nm, note_param, &ps);
+	for (size_t k = 0; k < ps.n; k++) {
+		const struct sym *s = &x->st.nm.syms[ps.i[k]];
+		struct end_of e = { s, tol_of(&x->st.rg, s), 0, 0 };
+		double by = STEP_SHARE * (s->hi - s->lo);
+		struct ex y;
+
+		memset(&y, 0, sizeof(y));
+		stream_source(&y.st, &x->st);
+		y.st.nm.vary = ps.i[k] + 1;
+		y.st.nm.vary_by = by;
+		for (size_t i = 0; i < y.st.nln; i++) {
+			statement(&y, i);
+		}
+		for (e.hi = 0; e.hi < 2; e.hi++) {
+			e.k = ((e.hi ? s->hi : s->lo) - s->v) / by;
+			for (size_t j = 0; j < y.st.nsh; j++) {
+				vary_faces(x, &x->st.sh[n0 + j], &y.st.sh[j],
+					   e);
+			}
+		}
+		free_ex(&y);
+	}
+	free(ps.i);
+}
+
 int main(int argc, char **argv)
 {
 	struct ex x;
+	size_t n0 = 0;
 
 	if (argc != 2) {
 		die("usage: extrude PART|- > stream");
 	}
 	memset(&x, 0, sizeof(x));
 	stream_read(&x.st, argv[1]);
+	n0 = x.st.nsh;
 	for (size_t i = 0; i < x.st.nln; i++) {
 		statement(&x, i);
 	}
+	vary_all(&x, n0);
 	stream_write(&x.st);
-	for (size_t i = 0; i < x.npf; i++) {
-		free(x.pf[i].name);
-		for (size_t k = 0; k < x.pf[i].n; k++) {
-			free(x.pf[i].k[k].side);
-		}
-		free(x.pf[i].k);
-	}
-	free(x.pf);
-	stream_free(&x.st);
+	free_ex(&x);
 	close_stdout();
 	return 0;
 }

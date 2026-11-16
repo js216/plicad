@@ -65,8 +65,11 @@ make -C test GROUPS='parts bad'   # Some groups, as test/run.sh lists them
 All source files share one language, described in `man 7 plicad`: one statement
 per line, `#` comments, a trailing `\` to continue a line, `NAME = EXPR`
 definitions, and `include FILE` to share them. Lengths are in mm unless a number
-ends in `in`, and angles are in degrees. Every program reads and writes one text
-format, the stream of stream(5).
+ends in `in`, and angles are in degrees. Each length and angle of a definition
+has a tolerance, `NAME = EXPR +- TOL` or that of a `tolerance LEN ANGLE`
+statement of its file of parameters, and the drawings print the tolerances of
+their dimensions from it. Every program reads and writes one text format, the
+stream of stream(5).
 
 For example, an open cube can be described as follows:
 

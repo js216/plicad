@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// vecps.c -- Draw vector files as one page of PostScript
+// vecps.c -- Draw vector files as pages of PostScript
 // Copyright (c) 2026 Jakob Kastelic
 
 // Usage: vecps [-w X0 Y0 X1 Y1 | -r X0 Y0 X1 Y1 | -p PART]... [-n]
@@ -10,8 +10,10 @@
 // outlines only, so a file drawn over another shows both.  The window
 // (-w, in the units of the files) is the region drawn, by default all
 // of the first file; it fills a letter page, landscape.  A first file
-// with a page record is drawn as that page instead, at its size and
-// scale 1.  Clear polarity is drawn white.  Text is set in Helvetica,
+// with page records is drawn as those pages instead, each at its size and
+// scale 1: page k of each file, its records from its k-th page record to
+// the next (those before the first are of the first), on page k of the
+// PostScript.  Clear polarity is drawn white.  Text is set in Helvetica,
 // or Helvetica-Oblique for the font I, in ISO Latin-1 (but - is the
 // hyphen, as in the fonts' own encoding).  With -n the
 // names of the boxes of the first file are written in them.
@@ -77,20 +79,26 @@ static void ps_string(const char *s)
 	putchar(')');
 }
 
-// The page of a file, if it has one.
-static int page_of(const char *path, double *w, double *h)
+// The number of page records of a file, and the size of its page k
+// (from 1), if it has one.
+static int page_of(const char *path, int k, double *w, double *h)
 {
 	FILE *f = fopen(path, "r");
-	char buf[256];
-	int found = 0;
+	char *buf = malloc(LINE);
+	int n = 0;
+	double pw, ph;
 
-	while (f && !found && fgets(buf, sizeof buf, f)) {
-		found = sscanf(buf, "page %lf %lf", w, h) == 2;
+	while (f && buf && fgets(buf, LINE, f)) {
+		if (sscanf(buf, "page %lf %lf", &pw, &ph) == 2 && ++n == k) {
+			*w = pw;
+			*h = ph;
+		}
 	}
 	if (f) {
 		fclose(f);
 	}
-	return found;
+	free(buf);
+	return n;
 }
 
 // The extent of a file: of its drawing records alone.
@@ -135,11 +143,14 @@ static void extent(const char *path, double e[4])
 	free(buf);
 }
 
-// Draws a file in the color, filled or outlined.
-static void draw(const char *path, const double rgb[3], int outline, int names)
+// Draws a file in the color, filled or outlined: its page k (from 1),
+// or all of it for k 0.
+static void draw(const char *path, const double rgb[3], int outline, int names,
+		 int k)
 {
 	FILE *f = fopen(path, "r");
 	char *buf = malloc(LINE);
+	int now = 1, seen = 0;
 
 	if (!f || !buf) {
 		die(path, "cannot read");
@@ -148,6 +159,12 @@ static void draw(const char *path, const double rgb[3], int outline, int names)
 	while (fgets(buf, LINE, f)) {
 		char *s = buf + strcspn(buf, " \n"), *end;
 
+		if (!strncmp(buf, "page ", 5) && seen++) {
+			now++;
+		}
+		if (k && now != k) {
+			continue;
+		}
 		if (!strncmp(buf, "dark", 4)) {
 			printf("%.3f %.3f %.3f setrgbcolor\n", rgb[0], rgb[1],
 			       rgb[2]);
@@ -281,8 +298,8 @@ static void read_parts(const char *path)
 		if (sscanf(buf, "part %511s %63s", name, ref) == 2) {
 			copy_prefix(part_of(name)->ref, sizeof ref, ref,
 				    strlen(ref));
-		} else if (sscanf(buf, "name %511s %lf %lf %lf %lf", name, &b[0],
-				  &b[1], &b[2], &b[3]) == 5) {
+		} else if (sscanf(buf, "name %511s %lf %lf %lf %lf", name,
+				  &b[0], &b[1], &b[2], &b[3]) == 5) {
 			struct part *p = part_of(name);
 
 			for (int k = 0; k < 4; k++) {
@@ -358,8 +375,9 @@ static void names_in(const char *path, const double w[4], double scale)
 			in_part = buf[4] == ' ';
 			continue;
 		}
-		if (!*net || (strncmp(buf, "line ", 5) && strncmp(buf, "poly ", 5) &&
-			      strncmp(buf, "disk ", 5))) {
+		if (!*net ||
+		    (strncmp(buf, "line ", 5) && strncmp(buf, "poly ", 5) &&
+		     strncmp(buf, "disk ", 5))) {
 			continue;
 		}
 		while (n < 4096 && (v[n] = strtod(s, &end), end != s)) {
@@ -372,7 +390,8 @@ static void names_in(const char *path, const double w[4], double scale)
 			double len = -1;
 
 			for (int k = 1; k + 3 < n; k += 2) {
-				double l = hypot(v[k + 2] - v[k], v[k + 3] - v[k + 1]);
+				double l = hypot(v[k + 2] - v[k],
+						 v[k + 3] - v[k + 1]);
 
 				if (l > len) {
 					len = l;
@@ -411,9 +430,10 @@ static void names_in(const char *path, const double w[4], double scale)
 			if (inside(w, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2)) {
 				double bw = b[2] - b[0], bh = b[3] - b[1];
 				double lo = fmin(bw, bh), hi = fmax(bw, bh);
-				double size = fitted(fmin(lo * 0.6,
-							  hi / (0.6 * chars(net) + 0.5)),
-						     scale);
+				double size = fitted(
+					fmin(lo * 0.6,
+					     hi / (0.6 * chars(net) + 0.5)),
+					scale);
 
 				label(net, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2,
 				      bh > bw ? 90 : 0, size, 0.15);
@@ -426,8 +446,9 @@ static void names_in(const char *path, const double w[4], double scale)
 
 static void usage(void)
 {
-	fprintf(stderr, "usage: vecps [-w X0 Y0 X1 Y1 | -r X0 Y0 X1 Y1 | -p PART]... "
-			"[-n] FILE[=R,G,B[,line]]... > out.ps\n");
+	fprintf(stderr,
+		"usage: vecps [-w X0 Y0 X1 Y1 | -r X0 Y0 X1 Y1 | -p PART]... "
+		"[-n] FILE[=R,G,B[,line]]... > out.ps\n");
 	exit(2);
 }
 
@@ -452,7 +473,8 @@ int main(int argc, char **argv)
 			region = 1;
 			for (char *t = strtok_r(argv[++i], ",", &save); t;
 			     t = strtok_r(NULL, ",", &save)) {
-				want = realloc(want, (nwant + 1) * sizeof *want);
+				want = realloc(want,
+					       (nwant + 1) * sizeof *want);
 				if (!want) {
 					die("vecps", "out of memory");
 				}
@@ -485,8 +507,10 @@ int main(int argc, char **argv)
 				    (!strcmp(parts[p].name, want[k]) ||
 				     !strcmp(parts[p].ref, want[k]))) {
 					for (int j = 0; j < 4; j++) {
-						b[j] = j < 2 ? fmin(b[j], parts[p].b[j]) :
-							       fmax(b[j], parts[p].b[j]);
+						b[j] = j < 2 ? fmin(b[j],
+								    parts[p].b[j]) :
+							       fmax(b[j],
+								    parts[p].b[j]);
 					}
 					found = 1;
 				}
@@ -506,69 +530,90 @@ int main(int argc, char **argv)
 		char path[4096];
 
 		copy_prefix(path, sizeof path, argv[i], strcspn(argv[i], "="));
-		page = page_of(path, &pw, &ph);
+		page = page_of(path, 1, &pw, &ph);
 		extent(path, win);
 	}
-	scale = fmin((pw - 36) / (win[2] - win[0]),
-		     (ph - 36) / (win[3] - win[1]));
-	if (page && !region) {
-		win[0] = win[1] = 0;
-		win[2] = pw;
-		win[3] = ph;
-		scale = 1;
-	}
-	printf("%%!PS-Adobe-3.0\n%%%%BoundingBox: 0 0 %.0f %.0f\n%%%%Pages: 1\n"
-	       "%%%%EndComments\n%%%%Page: 1 1\n",
-	       pw, ph);
-	printf("<< /PageSize [ %.0f %.0f ] >> setpagedevice\n", pw, ph);
-	printf("1 setlinecap 1 setlinejoin\n");
+	printf("%%!PS-Adobe-3.0\n%%%%BoundingBox: 0 0 %.0f %.0f\n%%%%Pages: %d\n"
+	       "%%%%EndComments\n",
+	       pw, ph, page ? page : 1);
 	printf("/VecFont { findfont dup length dict begin\n"
 	       "  { 1 index /FID ne { def } { pop pop } ifelse } forall\n"
 	       "  /Encoding ISOLatin1Encoding 256 array copy dup 45 /hyphen "
 	       "put def currentdict end definefont "
 	       "pop } def\n"
 	       "/VecR /Helvetica VecFont /VecI /Helvetica-Oblique VecFont\n");
-	if (!page || region) {
-		printf("newpath 18 18 %.0f %.0f rectclip\n", pw - 36, ph - 36);
-	}
-	printf("%.4f %.4f translate %.6f dup scale %.4f %.4f translate\n",
-	       pw / 2, ph / 2, scale, -(win[0] + win[2]) / 2,
-	       -(win[1] + win[3]) / 2);
-	printf("/Helvetica findfont %.4f scalefont setfont\n", 7 / scale);
-	for (int first = 1; i < argc; i++, first = 0) {
-		char path[4096], *eq = strchr(argv[i], '=');
-		double rgb[3] = { 0, 0, 0 };
-		int outline = 0;
+	// A sheet is drawn page by page, each at its size and scale 1.
+	for (int pg = 1; pg <= (page ? page : 1); pg++) {
+		if (page) {
+			char path[4096];
 
-		copy_prefix(path, sizeof path, argv[i],
-			    eq ? (size_t)(eq - argv[i]) : strlen(argv[i]));
-		if (eq && sscanf(eq + 1, "%lf,%lf,%lf", &rgb[0], &rgb[1],
-				 &rgb[2]) != 3) {
-			die(argv[i], "FILE[=R,G,B[,line]]");
+			copy_prefix(path, sizeof path, argv[a0],
+				    strcspn(argv[a0], "="));
+			page_of(path, pg, &pw, &ph);
+			win[0] = win[1] = 0;
+			win[2] = pw;
+			win[3] = ph;
+			scale = 1;
+		} else {
+			scale = fmin((pw - 36) / (win[2] - win[0]),
+				     (ph - 36) / (win[3] - win[1]));
 		}
-		outline = eq && strstr(eq, ",line") != NULL;
-		draw(path, rgb, outline, names && first);
-	}
-	for (int k = a0; region && k < argc; k++) {
-		char path[4096];
-
-		copy_prefix(path, sizeof path, argv[k], strcspn(argv[k], "="));
-		names_in(path, win, scale);
-	}
-	for (size_t p = 0; region && p < nparts; p++) {
-		const struct part *q = &parts[p];
-		double x = (q->b[0] + q->b[2]) / 2, y = (q->b[1] + q->b[3]) / 2;
-
-		if (q->boxed && *q->ref && inside(win, x, y)) {
-			double bw = q->b[2] - q->b[0], bh = q->b[3] - q->b[1];
-			double size = fitted(fmin(fmin(bw, bh) * 0.3,
-						  fmax(bw, bh) /
-							  (0.7 * chars(q->ref) + 1)),
-					     scale);
-
-			label(q->ref, x, y, bh > 1.5 * bw ? 90 : 0, size, 0);
+		printf("%%%%Page: %d %d\n", pg, pg);
+		printf("<< /PageSize [ %.0f %.0f ] >> setpagedevice\n", pw, ph);
+		printf("1 setlinecap 1 setlinejoin\n");
+		if (!page) {
+			printf("newpath 18 18 %.0f %.0f rectclip\n", pw - 36,
+			       ph - 36);
 		}
+		printf("%.4f %.4f translate %.6f dup scale %.4f %.4f "
+		       "translate\n",
+		       pw / 2, ph / 2, scale, -(win[0] + win[2]) / 2,
+		       -(win[1] + win[3]) / 2);
+		printf("/Helvetica findfont %.4f scalefont setfont\n",
+		       7 / scale);
+		for (int k = a0; k < argc; k++) {
+			char path[4096], *eq = strchr(argv[k], '=');
+			double rgb[3] = { 0, 0, 0 };
+			int outline = 0;
+
+			copy_prefix(path, sizeof path, argv[k],
+				    eq ? (size_t)(eq - argv[k]) :
+					 strlen(argv[k]));
+			if (eq && sscanf(eq + 1, "%lf,%lf,%lf", &rgb[0],
+					 &rgb[1], &rgb[2]) != 3) {
+				die(argv[k], "FILE[=R,G,B[,line]]");
+			}
+			outline = eq && strstr(eq, ",line") != NULL;
+			draw(path, rgb, outline, names && k == a0,
+			     page ? pg : 0);
+		}
+		for (int k = a0; region && k < argc; k++) {
+			char path[4096];
+
+			copy_prefix(path, sizeof path, argv[k],
+				    strcspn(argv[k], "="));
+			names_in(path, win, scale);
+		}
+		for (size_t p = 0; region && p < nparts; p++) {
+			const struct part *q = &parts[p];
+			double x = (q->b[0] + q->b[2]) / 2;
+			double y = (q->b[1] + q->b[3]) / 2;
+
+			if (q->boxed && *q->ref && inside(win, x, y)) {
+				double bw = q->b[2] - q->b[0];
+				double bh = q->b[3] - q->b[1];
+				double size = fitted(
+					fmin(fmin(bw, bh) * 0.3,
+					     fmax(bw, bh) /
+						     (0.7 * chars(q->ref) + 1)),
+					scale);
+
+				label(q->ref, x, y, bh > 1.5 * bw ? 90 : 0,
+				      size, 0);
+			}
+		}
+		printf("showpage\n");
 	}
-	printf("showpage\n%%%%EOF\n");
+	printf("%%%%EOF\n");
 	return 0;
 }

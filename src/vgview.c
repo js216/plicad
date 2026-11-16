@@ -260,6 +260,12 @@ static void click(int px, int py)
 
 // Centers the selected part; again, with nothing changed in between,
 // zooms in two times about it.
+void vg_fit(const double box[4])
+{
+	memcpy(fit_box, box, sizeof fit_box);
+	fit();
+}
+
 static void center(void)
 {
 	static double last[3];
