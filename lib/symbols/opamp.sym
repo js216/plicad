@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# opamp.sym -- An operational amplifier: inputs, output and supplies
+# Copyright (c) 2026 Jakob Kastelic
+
+# The triangle is 28.8 pt high and 25.2 pt long, 0.75 pt thick, with
+# the inputs at a quarter of its height from each corner.  The supply
+# leads leave its sides halfway along.  Flipped, the inputs trade
+# places and so do their signs; the supplies stay where they are.
+prefix U
+pin in+ -3 1 l
+pin in- -3 -1 l
+pin out 3 0 r
+pin v+ 0 2 u
+pin v- 0 -2 d
+box -2.5 -1.5 2.5 1.5
+side below
+flip in+ in-
+line -21.6 7.2 -12.6 7.2
+line -21.6 -7.2 -12.6 -7.2
+line 12.6 0 21.6 0
+line 0 7.2 0 14.4
+line 0 -7.2 0 -14.4
+width 0.75
+loop -12.6 14.4 12.6 0 -12.6 -14.4
+width 0.5
+plain line -10.3 7.2 -6.3 7.2
+plain line -8.3 9.2 -8.3 5.2
+plain line -10.3 -7.2 -6.3 -7.2
+flip line -10.3 -7.2 -6.3 -7.2
+flip line -8.3 -5.2 -8.3 -9.2
+flip line -10.3 7.2 -6.3 7.2

@@ -1,0 +1,4 @@
+# r0603 -- a generic footprint for the tests
+pad 1 rrect -0.825 0 0.8 0.95
+pad 2 rrect 0.825 0 0.8 0.95
+court -1.48 -0.73 1.48 0.73

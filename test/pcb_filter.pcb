@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# pcb_filter.pcb -- The layout of the filtered buffer of sch_filter.sch
+# Copyright (c) 2026 Jakob Kastelic
+
+# A board made up for the tests: the buffer on two signal layers, its
+# planes inside.
+
+netlist sch_filter.expected
+board rect 0 0 40 30
+layer top signal
+layer in1 plane GND
+layer in2 plane +12V
+layer bottom plane -12V
+rule clearance 0.2
+rule track 0.2
+rule via 0.6 0.3
+rule viagap 0.3
+rule maskweb 0.1
+footprint ti/lmh6609 so8
+footprint resistor r0603
+footprint capacitor c0603
+footprint ferrite l0603
+
+fix buf.amp at 20 18 rot 270
+place buf.rf left of buf.amp
+place buf.rg up from buf.amp.in-
+place vpos.c down from buf.amp.v+
+place vpos.fb right of vpos.c
+place vneg.c up from buf.amp.v-
+place vneg.fb left of vneg.c
+place lpf.r down from buf.amp.out
+place lpf.c down from lpf.r.2
+place lpf.c2 right of lpf.c
+width OUT 0.4

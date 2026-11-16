@@ -1,0 +1,69 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" pcbplace.1 -- Manual page of pcbplace
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PCBPLACE 1
+.SH NAME
+pcbplace \- place the parts of a board
+.SH SYNOPSIS
+.B pcbplace
+[
+.B \-v
+] [
+.B \-g
+.I group
+] [
+.B \-L
+.I lib
+] ...
+.I board.pcb
+[
+.I lock
+]
+.RI > new.lock
+.SH DESCRIPTION
+.I Pcbplace
+reads the board source,
+.IR pcb (5),
+its netlist and footprints and the lock on stdin, and writes the lock
+with every part placed.
+A part keeps its place if the statement that placed it is unchanged and
+the parts it is placed against kept theirs; every other part is placed
+anew among the others as they stand, which nothing moves.
+The fixed parts come first, then the rest in the order their anchors
+allow.
+A part without
+.B rot
+is turned the way, of four, that brings its pads nearest the placed
+pads of their nets; then it moves out its way until its courtyard is
+clear of the parts on its side and of every plated hole, inside the
+board.
+With
+.B \-v
+each placement is told on stderr with its line and rule; it and every
+fault name a part by its name and designator (ch1.gain.rf (R401)).
+The lock comes from the file
+.IR lock ,
+or stdin; a file that is not there is nothing locked yet.
+A run lays out the whole board by its groups: each group of a
+.B block
+statement alone, the deepest first (of one depth in the order of their
+names), each in its section of the lock, then the board, of its blocks
+(pcb(5)).
+With
+.B \-g
+.I group
+it lays out that group alone: its parts, its root at the origin, so the
+lock is the group's; a group of a
+.B block
+statement in it (the largest such) is placed whole, rigid, from its own
+lock (pcb(5)).
+With
+.B \-v
+it also tells the difficulty of the group laid out: its parts, the
+parts alike on the same nets counted once and each block one.
+.SH EXAMPLES
+pcbplace outputs.pcb outputs.lock | pcbroute outputs.pcb > new.lock
+.SH SEE ALSO
+pcb(5), pcbroute(1), pcbcheck(1)
+.SH DIAGNOSTICS
+FILE:LINE: and the fault, each on a line; exit status 1 on any.

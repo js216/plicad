@@ -1,0 +1,12 @@
+# so8 -- a generic footprint for the tests
+pad 1 rrect -2.575 1.905 1.75 0.6
+pad 2 rrect -2.575 0.635 1.75 0.6
+pad 3 rrect -2.575 -0.635 1.75 0.6
+pad 4 rrect -2.575 -1.905 1.75 0.6
+pad 5 rrect 2.575 -1.905 1.75 0.6
+pad 6 rrect 2.575 -0.635 1.75 0.6
+pad 7 rrect 2.575 0.635 1.75 0.6
+pad 8 rrect 2.575 1.905 1.75 0.6
+court -3.7 -2.7 3.7 2.7
+silk 0.12 -3.4 2.55 1.95 2.55
+silk 0.12 -1.95 -2.55 1.95 -2.55

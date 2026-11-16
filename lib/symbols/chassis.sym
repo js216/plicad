@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# chassis.sym -- The chassis flag: a bar with three strokes under it
+# Copyright (c) 2026 Jakob Kastelic
+
+flag chassis
+pin 1 0 0 u
+box -0.75 -1.05 0.75 -0.3
+line -4.94 0 4.94 0
+line -4.94 0 -7.44 -3
+line 0 0 -2.5 -3
+line 4.94 0 2.44 -3

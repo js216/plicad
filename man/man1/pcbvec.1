@@ -1,0 +1,42 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" pcbvec.1 -- Manual page of pcbvec
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PCBVEC 1
+.SH NAME
+pcbvec \- write the layers of a board as vectors
+.SH SYNOPSIS
+.B pcbvec
+[
+.B \-L
+.I lib
+] ...
+.B \-o
+.I dir
+.I board.pcb
+.RI < board.lock
+.SH DESCRIPTION
+.I Pcbvec
+writes into
+.I dir
+a
+.IR vec (5)
+file for each layer
+.IR pcbgerber (1)
+writes a Gerber for, of the same name (top.vec, in1.vec, ...,
+topsilk.vec, topcourt.vec), and drill.vec, the holes as disks.
+Both draw the layers by one description, so the vectors are the
+Gerbers.
+Each file begins with its layer record, KiCad's name of the layer
+(F.Cu, In1.Cu, ..., B.Cu, F.Mask, F.Paste, F.Silkscreen, F.Courtyard,
+B.Silkscreen, B.Courtyard, Edge.Cuts, Drill), so a viewer knows it by
+what it is, not by its name.
+The records of a part are bracketed by its name, and those of a net by
+its; a plane is a zone of its net; each part's box is named, for
+.IR pcbview (1).
+.SH EXAMPLES
+.nf
+pcbvec -o view ch1.pcb < ch1.lock
+cd view && pcbview bottom.vec in1.vec top.vec topsilk.vec edge.vec drill.vec
+.fi
+.SH SEE ALSO
+pcb(5), vec(5), pcbgerber(1), pcbview(1)

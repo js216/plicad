@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# tvs.sym -- A two-way transient suppressor: two triangles tip to tip
+# Copyright (c) 2026 Jakob Kastelic
+
+prefix D
+pin 1 0 2 u
+pin 2 0 -2 d
+box -0.6 -1.5 0.6 1.5
+side right
+swap 1 2
+line 0 14.4 0 5.85
+line 0 -5.85 0 -14.4
+fill -3.375 5.85 3.375 5.85 0 0
+loop -3.375 5.85 3.375 5.85 0 0
+fill -3.375 -5.85 3.375 -5.85 0 0
+loop -3.375 -5.85 3.375 -5.85 0 0
+width 0.75
+line -4.43 -1.58 -3.375 0 3.375 0 4.43 1.58

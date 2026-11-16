@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# resistor.sym -- A resistor, IEEE 315 zigzag
+# Copyright (c) 2026 Jakob Kastelic
+
+# Six peaks 2.36 pt apart and 2.07 pt off the axis, 14.2 pt in all.
+prefix R
+pin 1 0 2 u
+pin 2 0 -2 d
+box -0.45 -1.5 0.45 1.5
+side right
+swap 1 2
+line 0 14.4 0 7.08 -2.07 5.9 2.07 3.54 -2.07 1.18 2.07 -1.18 -2.07 -3.54 \
+  2.07 -5.9 0 -7.08 0 -14.4

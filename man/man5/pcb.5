@@ -1,0 +1,125 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" pcb.5 -- Manual page of the board source and its lock
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PCB 5
+.SH NAME
+pcb \- board source and lock
+.SH DESCRIPTION
+The board source says in words where the parts go and how their copper
+runs; it is the only file anyone edits.
+Parts and pins have the names of the schematic (ch1.gain.rf,
+ch1.gain.amp.out); there are no coordinates but those the mechanics
+fix.
+A statement a line, words separated by blanks; # starts a comment.
+Lengths are mm, y up; angles degrees.
+.PP
+.RS
+.nf
+netlist FILE                         the netlist(5) of schnet
+board rect X0 Y0 X1 Y1               the outline
+layer NAME signal | plane NET        the copper layers, top first
+rule clearance D | track W | via DIA DRILL
+rule viagap D | maskweb D
+rule edge D [except PART...]
+footprint MPN FP                     the footprint of a part number
+                                     (or of a type, for a part without)
+fix PART at X Y [rot R] [bottom]     where the mechanics put it
+place PART WAY of PART [GAP] [rot R] next to the part, centered
+place PART WAY from PIN [rot R]     its pad of the pin's net by the pin
+width NET W                          its tracks
+width PIN PIN W                      the copper between two of its pins
+path NET PIN PIN...                  its pins wired in this order
+via PIN WAY                          the way its plane via goes
+block GROUP                          the group laid out alone
+note TEXT                            for the readers
+.fi
+.RE
+.PP
+The width of the copper between two pins of a net is the width of a
+statement naming them, else the net's, else the rule's.
+The rules, in mm: clearance between copper of two nets (0.2); track,
+the width of a track (0.2); via, a via's diameter and drill (0.6 0.3);
+viagap, from the edge of a pad soldered (a pad with paste, or a plated
+hole) to the ring of a via of its net, which a neck track joins to it
+(0.3), so no via stands on or by its pad and the solder does not wick
+down it; a contact pad, a footprint's pad without paste, is never
+soldered, and a via may stand in it; maskweb, the
+least web of solder mask between two openings, and between the opening
+of a pad soldered and a via, which the mask covers (0.1); edge, from copper to the
+outline (0.5), but for the parts it excepts.
+.SS Blocks
+A board is laid out by groups, the groups of the schematic (ch1,
+ch1.gain): a block statement says a group is laid out alone, and
+.I pcbplace
+and
+.I pcbroute
+lay out each such group in one run, the deepest first, then the board
+(or one group alone, with
+.BR \-g ).
+A group's lock is its section of the board's lock (group GROUP),
+relative to the group's origin,
+where its root stands: its part placed by no part of the group (fixed,
+or placed against a part or pin outside it; placed from a pin, it lies
+with its pad of the pin's net toward the pin, so the port faces its
+neighbor).
+Its nets whose pads are all its own are routed with it, and the vias
+of its pads; the nets to its ports wait for the layout round it.
+In any layout round it the block is one rigid body: its parts and its
+copper as its section has them, moved, unturned, to where its root's statement
+puts the root, and pushed out the root's way until clear.
+So a board is made inside out: the leaf blocks, then the groups of
+blocks, each its own section, then the board; and a block of the same
+statements, renamed, has the same layout, copper for copper.
+.SS Lock
+The lock is what the programs resolved, beside the source: generated,
+never edited, but kept, so its diff is the review of an edit.
+It is one file: the board's section first, then a section for each
+group laid out alone, each from its line
+.B group
+.I GROUP
+to the next, in the order of their names, all in the same words; a
+program reads its own section and writes it anew, the others as they
+were.
+.PP
+.RS
+.nf
+part NAME REF X Y ROT top|bottom nets PAD NET ... by STATEMENT
+net NAME by STATEMENTS
+pad NET PART.PAD REF X Y W H top|bottom|all
+link NET PART.PAD PART.PAD|via|plane W
+track NET LAYER W X Y X Y...
+via NET X Y DIA DRILL
+.fi
+.RE
+.PP
+All a program needs to tell what is stale is there in plain words.
+A part is listed with its designator, where it stands, the net of each
+of its pads (its turn depends on them) and the statement it was placed
+by; a net with the statements its copper was made from (path, via,
+joined by ;) and, a pad a line, each of its pads as it stood then:
+its part and name, the part's designator, its center, its size along x
+and y, and its side.
+The copper is kept by connection: a link names the two pads it joins
+(or a pad and its via, or a pad and its plane, by a neck) and its
+width, and the tracks and vias after it, up to the next link or net, are
+its copper; so an edit makes anew only the connections it touches: a
+pad moved, a width changed, copper now in a moved part's way.
+A pin of several pads names each by its place among them (j.2/1).
+The programs keep what still matches and resolve the rest, and
+.IR pcbcheck (1)
+tells what is stale, and why: the statement changed, a pad's net
+changed, or a pad moved.
+The designators are for the reader: the programs read a part by its
+name, so a new annotation changes no place and no copper.
+The parts and the nets are in the order of their names, so the same
+source and lock give the same bytes.
+Deleting a line, or the lock, resolves that anew.
+.SH EXAMPLES
+.nf
+fix ch1.jack.j at 93.5736 -141.224
+place ch1.gain.amp up of ch1.jack.j 9 rot 270
+place ch1.vpos.c down from ch1.gain.amp.v+
+width ch1.term.out 0.635
+.fi
+.SH SEE ALSO
+pcbplace(1), pcbroute(1), pcbcheck(1), pcbgerber(1), pcbfp(5)

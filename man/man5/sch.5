@@ -1,0 +1,159 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" sch.5 -- Manual page of the schematic source
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SCH 5
+.SH NAME
+sch \- schematic source
+.SH DESCRIPTION
+A schematic source describes one sheet the way it would be said: short
+statements, each placing one thing against something else.
+It has no coordinates and no designators; the programs compute the
+geometry, and the designators come from the page number.
+One statement per line, words separated by blanks; # starts a comment.
+The first word says what the statement is.
+The statements may come in any order: names are looked up once all
+are read, and the parts are placed in the order their anchors allow.
+.PP
+.RS
+.nf
+page N
+title TEXT
+field NAME TEXT
+sheet TEMPLATE
+scale S
+group NAME
+end
+port NAME PIN
+note TEXT
+KIND NAME [VALUE] [rating R] [mpn M] [side WAY] [flip] [PLACE]
+wire PIN to PIN [WAY]
+ground at PIN
+chassis at PIN
+supply NAME at PIN
+.fi
+.RE
+.PP
+PLACE is one of
+.PP
+.RS
+.nf
+WAY from PIN            joined to the pin
+WAY of PART             next to the part, not joined
+beside PART [WAY]       in parallel with the part
+between PIN and PIN WAY joined to both pins, out the way past them
+.fi
+.RE
+.PP
+and a WAY is
+.BR left ,
+.BR right ,
+.B up
+or
+.BR down .
+.SS Sheet
+.B page
+(1 to 99) is needed: the designators of page 4 run R401, R402, ....
+.B title
+and
+.B field
+fill the title block (Title, Rev, Date, Drawn; File and Page are
+filled in).
+.B sheet
+names the template, sch_a by default;
+.B scale
+enlarges the drawing, 1 by default.
+.SS Groups
+.B group
+opens a group within the one open and
+.B end
+closes it.
+A group is a block: its parts are named within it, and the netlist
+names them by their path, as ch1.gain.rf.
+A name is found in the group open, then in each group round it.
+.B port
+names a pin as part of the interface of the group: round it, gain.out
+stands for that pin.
+A port outside any group is a port of the sheet, drawn as an open
+circle with its name, and names its net.
+It may be said at several pins: each is drawn, and they are one net.
+.B note
+is for the reader ("keep this loop small"); the programs pass over
+it.
+Notes never name designators.
+.SS Parts
+A part statement starts with its kind, the name of a symbol (resistor,
+capacitor, inductor, ferrite, diode, tvs, opamp, bnc, ...), and the
+name of the part.
+The value is the first other word: 499, 0.1\[mc]F, 14V, or the part
+number of an integrated circuit, whose pin table the library holds.
+.B rating
+is a second value (0.5W),
+.B mpn
+the maker's part number,
+.B side
+the side for its text,
+.B flip
+trades the places of the pins of the shape's flip pair (the inputs of
+an op amp), or mirrors a shape without one.
+A pin is PART.PIN, as amp.out or rf.2, by name or by number.
+.PP
+.I WAY
+.B from
+.I PIN
+places the part against the pin, its own pin facing back.
+If WAY is the way the pin points, the part continues the line, past
+the branches hung from the pin, with room for the junctions of the
+net; if WAY is across, the part hangs from the pin's lead as a branch,
+after the others.
+.B beside
+lays a part of the same shape in parallel, pin to pin: below one lying
+across and right of one standing, or above and left if there is no
+room, or the way said.
+.B of
+places a part next to another without joining them.
+.B between
+places a part of two pins along the line of the two pins, out the way
+said past everything that stands across that span; its pin 1 joins the
+first pin.
+Each part takes the first place out along its way where it, its label
+and its ground flags are clear of what is placed; labels go on the
+first clear side.
+A part placed in none of these ways stands to the right of all there
+is.
+.SS Wires and flags
+.B wire
+joins two pins without placing anything; the router finds the path,
+on the side WAY of the two pins if it is said.
+A wire closes a loop: the box round its two pins and the parts of its
+net, with their labels, is kept free of the parts of other nets, so a
+feedback loop stays small and an unrelated branch stands outside it.
+.BR ground ,
+.B chassis
+and
+.B supply
+put a flag on a pin, which joins it to the global net of the flag: GND,
+CHASSIS, or the name of the supply.
+A ground hangs under its pin; a supply or a port stands at the end of
+its line, past the branches.
+.SS Library
+The symbols are looked up in the directory
+.B symbols
+next to the source, then in the libraries of the program
+.RI ( schsym (5)).
+The ferrites of the kind the sheet uses most are drawn without their
+value, which goes without saying; every part shows its designator.
+.SH EXAMPLES
+.nf
+page 1
+port IN amp.in
+group amp
+  note inverting, gain of 10
+  opamp u LMH6609 flip
+  resistor rin 1k left from u.in-
+  resistor rf 10k between u.in- and u.out up
+  ground at u.in+
+  port in rin.2
+end
+.fi
+.SH SEE ALSO
+schdraw(1), schnet(1), schsym(5), netlist(5)

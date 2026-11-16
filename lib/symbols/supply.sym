@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# supply.sym -- The supply flag: the name of the rail alone
+# Copyright (c) 2026 Jakob Kastelic
+
+flag supply
+pin 1 0 0 d
+box 0 0 0 0
+

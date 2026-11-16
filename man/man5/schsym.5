@@ -1,0 +1,107 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" schsym.5 -- Manual page of the schematic symbol library
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SCHSYM 5
+.SH NAME
+schsym \- symbols, pin tables and sheets of schematics
+.SH DESCRIPTION
+The library holds three kinds of file.
+They are looked up in the project first (symbols and sheets next to
+the source), then in the libraries of the program.
+.SS Shapes
+.IB symbols / KIND .sym
+draws one kind of symbol, a record a line, in points (72 to the inch)
+from the origin of the shape; # starts a comment, and a line that ends
+in a backslash goes on on the next:
+.PP
+.RS
+.nf
+prefix R
+pin NAME X Y WAY
+box X0 Y0 X1 Y1
+side right|above|left|below
+swap NAME...
+flip NAME NAME
+flag ground|chassis|supply|port
+width W                 the weight of the lines after it (0.5)
+line X Y X Y ...        a line
+loop X Y X Y ...        a closed line
+fill X Y X Y ...        a filled polygon
+blank X Y X Y ...       a polygon filled with the paper
+circle X Y R            a circle
+disk X Y R              a filled circle
+.fi
+.RE
+.PP
+A pin is the end of a lead, at X Y in units of the grid, 0.1 in (7.2
+points), and a wire leaves it the way WAY points (r, u, l or d).
+The box, in units of the grid, is the body that wires and other parts
+keep out of, the pins left out.
+The prefix starts the designators; the side is where the text of the
+part goes as the shape stands; the swap list names pins that may
+trade places; the flip pair trades places when the part is flipped.
+A drawing record after the word
+.B flip
+is drawn only when the part is flipped, and after
+.B plain
+only when it is not: the signs of an op amp's inputs.
+A flag names a net instead of being a part.
+.PP
+.nf
+# resistor.sym -- a resistor, IEEE 315 zigzag
+prefix R
+pin 1 0 2 u
+pin 2 0 -2 d
+box -0.45 -1.5 0.45 1.5
+side right
+swap 1 2
+line 0 14.4 0 7.08 -2.07 5.9 2.07 3.54 -2.07 1.18 2.07 -1.18 ...
+.fi
+.SS Pin tables
+.IB symbols / maker / part
+gives the pins of one part number, in lower case:
+.PP
+.RS
+.nf
+shape opamp
+prefix U
+pin NAME NUMBER
+nc NUMBER...
+.fi
+.RE
+.PP
+Each pin of the shape takes a number of the package; nc lists the
+pins of the package on no pin of the shape.
+A part whose value is a part number with a pin table is drawn by its
+shape and numbered by its table.
+The pins of a shape without a table are numbered by their names.
+.SS Sheets
+.IB sheets / NAME .sheet
+draws the border and the title block of one paper, in points from its
+lower left corner, and says where the drawing goes:
+.PP
+.RS
+.nf
+paper W H
+room X0 Y0 X1 Y1
+clear body|text|label|flag D
+line X Y X Y ...
+text F S A J X Y TEXT
+.fi
+.RE
+.PP
+A text is a text record of
+.IR vec (5);
+a $ in it and the rest of the line name a field (Title, Rev, Date,
+Drawn from the source; Page and File made), which the sheet shows in
+its place, or nothing if it is empty.
+The clear records are the room the drawing keeps, D points at scale 1,
+which the placer, the router and the label placer of
+.IR schdraw (1)
+keep and any checker measures: body, between a wire and the body of a
+part not on its net, and between two bodies; text, between a label and
+any wire, body or other label; label, from a body to its own label; and
+flag, round a flag, which labels keep off.
+A sheet must give all four.
+.SH SEE ALSO
+schdraw(1), sch(5)

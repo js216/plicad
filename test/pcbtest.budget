@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# pcbtest.budget -- The budgets of the cases of test/pcbtest.sh
+# Copyright (c) 2026 Jakob Kastelic
+
+# rss KB cpu S -- CASE: the peak resident set of a case and the time it
+# took on the processor, user and system, as build/budget
+# (test/budget.c) measured them the first time.  A case may take a
+# tenth more memory and a quarter more time, and 0.02 s besides:
+# more fails it.
+margin rss 1.1 cpu 1.25 slack 0.02

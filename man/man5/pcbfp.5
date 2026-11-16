@@ -1,0 +1,47 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" pcbfp.5 -- Manual page of the footprint file
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PCBFP 5
+.SH NAME
+pcbfp \- footprint of a part
+.SH DESCRIPTION
+A footprint file, named for the footprint, gives its pads and its
+courtyard in mm from its origin, as seen from the top, a record a
+line; # starts a comment.
+.PP
+.RS
+.nf
+pad NAME rect|rrect|circle X Y W H [nopaste]
+hole NAME X Y D DRILL
+court X0 Y0 X1 Y1
+silk W X Y X Y ...
+.fi
+.RE
+.PP
+A pad is copper on the side of its part, soldered through the opening
+of its paste; a pad without paste (nopaste) is a contact pad, never
+soldered (a spring's or a block's ground contact), which a via may
+stand in (pcb(5), rule viagap).
+A hole is plated, of diameter
+D on every layer, drilled DRILL.
+The pads of one name are one pin and join inside the part.
+The courtyard keeps the parts of its side off.
+A silk line, of width W, goes on the silkscreen of the part's side.
+Footprints are found in the directory footprints next to the board
+source, then in the libraries.
+.SH EXAMPLES
+.nf
+# r0603 -- 0603 chip resistor
+pad 1 rrect -0.825 0 0.8 0.95
+pad 2 rrect 0.825 0 0.8 0.95
+court -1.48 -0.73 1.48 0.73
+.fi
+.PP
+A body outline with a mark at pin 1:
+.PP
+.nf
+silk 0.12 -3.4 2.55 1.95 2.55
+silk 0.12 -1.95 -2.55 1.95 -2.55
+.fi
+.SH SEE ALSO
+pcb(5)

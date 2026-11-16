@@ -1,0 +1,145 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" pcbview.1 -- Manual page of pcbview
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PCBVIEW 1
+.SH NAME
+pcbview \- show the layers of a board
+.SH SYNOPSIS
+.B pcbview
+.I layer.vec
+\&...
+.SH DESCRIPTION
+.I Pcbview
+shows the
+.IR vec (5)
+files (from
+.IR pcbvec (1),
+or from
+.IR gbrvec (1)
+for the Gerbers of other programs) in a window, the first underneath,
+smoothed, in the colors of
+KiCad's default theme, on black.
+Each file's layer comes from its
+.B layer
+record, whatever the file's name:
+.PP
+.RS
+.nf
+F.Cu                        top copper
+In1.Cu ... In4.Cu           inner copper
+B.Cu                        bottom copper
+F.Silkscreen                silkscreen (B.Silkscreen)
+F.Courtyard                 courtyards (B.Courtyard)
+F.Mask                      solder mask, at 40% (B.Mask)
+F.Paste                     paste, at 90% (B.Paste)
+Edge.Cuts                   outline
+Drill                       holes; 0.4 mm or less, a via's
+.fi
+.RE
+.PP
+A file of no layer known is gray.
+It opens fitted to all the layers loaded, shown or not, as Space fits
+them; the wheel zooms round the pointer and the left button drags the
+view.
+A click within 3 pixels of the box of an element of a part on a layer
+shown (a pad, its silk outline, its courtyard, its designator) selects
+the part, of the smallest such element under the pointer, and prints
+.B select
+.I NAME
+on stdout; a click on none clears the selection here alone and prints
+nothing.
+A click on a track, out of the pads, on a layer of copper shown, the
+topmost first, selects its connected track as KiCad does: the tracks of
+its net joined to it end to end where the end is in no pad (from pad to
+pad, or to a via); they are drawn brightened as a selected part, the
+net's name stands in the upper right corner, the part selected is
+cleared and nothing is printed; a click on anything else clears it.
+The selected part's records are drawn brightened as KiCad draws a
+selected item: each color c of brightness br (0.299 r + 0.587 g +
+0.117 b) goes toward white by f = 0.25 + br^3, or, if that changes
+its brightness by less than 0.05, darkens by 20% with its blue raised
+by f.
+The keys:
+.PP
+.RS
+.nf
+t, b        show or hide the top and bottom copper
+1 ... 9     the inner layers by number, on the keypad or not
+y           the courtyards
+s           the silkscreen
+e           the outline
+d           the holes
+a, A        all the layers on, all off (not z)
+z           draw the zones filled or as their outlines
+c           center the selected part; again, with nothing
+            changed in between, zoom in two times about it
+l           show or hide the bar of the layers
+Space       fit all
+?           a help of the keys, on and off
+q           quit
+.fi
+.RE
+.PP
+Zoomed in, the copper shows its names as KiCad does: on each pad its
+number over its net, along its longer side, each as large as fits, in
+white at 90%; along each track segment long enough its net, 0.7 of its
+width high, upright, in white at 70%; each name only once it is at
+least 7 pixels high, so a fitted board shows none, and under the copper
+of the layers above.
+The names are made when the files are read, from the pads and tracks
+of the files of copper (a pad's number from its pin record), as text
+of a file for each size twice the one before, and a frame draws only
+the files large enough.
+The masks and paste are always shown.
+The outline, the courtyards and the zones' outlines are not things of
+the board: they are drawn 1.5 pixels wide at every zoom, and the
+outline over all the layers.
+A zone is a plane, from a region under a net.
+The bar at the top left has the key of each layer loaded, from the top
+down, on the layer's color if it is shown, plain if not, and last z, on
+gray while the zones are filled; a click on a key does as the key.
+The pointer over a key names it at once, under the bar ("top copper
+(F.Cu)", "inner 1 (In1.Cu)", "silkscreen", "zones: filled", ...).
+It reads commands on stdin, a line each:
+.B select
+.I NAME
+selects,
+.B select
+clears (for scripts: the viewers never send it);
+.BR "layer top" ,
+.BR "layer bottom" ,
+.B layer
+.IR N ,
+.BR "layer silk" ,
+.BR "layer edge" ,
+.BR "layer drill" ,
+.BR "layer all" ,
+.BR "layer none" ,
+.BR courtyard ,
+.BR center
+and
+.B bar
+as the keys, and
+.B zones fill
+and
+.B zones outline
+as z;
+.B shot
+.I file
+draws the next frame into a PPM picture.
+The input of the window is taken before each command, so a picture
+shows all the keys and clicks that came before it.
+The layers go to the GPU once, as triangles; a frame only sets the
+matrix and draws them, by OpenGL, multisampled and in linear light,
+the opaque layers from the top down so each pixel is drawn about once.
+.SH EXAMPLES
+Two viewers cross-probe through two FIFOs:
+.PP
+.nf
+mkfifo a b
+schview ch1.vec < a > b &
+pcbview bottom.vec in1.vec top.vec drill.vec < b > a &
+echo "layer 1" > b
+.fi
+.SH SEE ALSO
+schview(1), gbrvec(1), vec(5)

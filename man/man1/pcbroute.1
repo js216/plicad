@@ -1,0 +1,85 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" pcbroute.1 -- Manual page of pcbroute
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PCBROUTE 1
+.SH NAME
+pcbroute \- route the copper of a board
+.SH SYNOPSIS
+.B pcbroute
+[
+.B \-v
+] [
+.B \-g
+.I group
+] [
+.B \-L
+.I lib
+] ...
+.I board.pcb
+[
+.I lock
+]
+.RI > new.lock
+.SH DESCRIPTION
+.I Pcbroute
+reads the board source,
+.IR pcb (5),
+and a lock with the parts placed, and writes the lock with the copper.
+What is kept, by connection, is kept as it is; the rest is routed anew
+among the copper kept, which nothing moves.
+.PP
+Each pad of a net of a plane layer gets a via on a neck track, the
+nearest place clear of all else, its ring the via gap from the pads of
+its net and the mask web from every opening of the mask, away from its
+part or the way a
+.B via
+statement says; a pad of a pin with a plated hole needs none.
+A small part of two pins (each pad 1 mm2 or less, an 0402 or 0603)
+must heat alike at its pads: its pad on a plane joins by a neck no wider
+than a track, whatever the net's width, and its pad on the plane's own
+layer is relieved, cleared from the pour and joined to it by a neck out
+along the pad's longer side; any other pad on its plane's layer is in
+the pour.
+Every other net is routed on the top layer as a tree of connections,
+each from a pad's center to another's: the pins of its
+.B path
+first, then the pins of its
+.B width
+statements, then the nearest pad not yet joined to the nearest joined,
+by the cheapest path over a grid of 0.05 mm in eight ways laid through
+the first pad's center, keeping the clearance from all copper of other
+nets and the edge rule from the outline.
+A track leaves and enters a pad along its longer side (any way for a
+round or square pad) and turns only outside it; pads in line are joined
+by one straight track through their centers.
+Each connection takes its own width, of a
+.B width
+.I PIN PIN W
+statement naming its pins, else the net's.
+The copper is kept by connection: one keeps its copper if its net's
+statements, its pads and its width are as they were and its copper is
+clear of the pads as they stand now, so an edit makes anew only the
+connections it touches.
+A net that finds no way is put first and all are routed again.
+With
+.B \-v
+each net and via is told on stderr; a part is named by its name and
+designator, there and in the faults.
+The lock, with the parts placed, comes from the file
+.IR lock ,
+or stdin.
+A run routes each group of a
+.B block
+statement alone, the deepest first, each in its section of the lock,
+then the board, the blocks' copper taken from their sections.
+With
+.B \-g
+.I group
+it routes that group alone, as pcbplace laid it out: the nets whose pads
+are all its own and the vias of its pads, with no outline; the copper of
+a block in it is its lock's, moved with its parts and kept.
+.SH SEE ALSO
+pcb(5), pcbplace(1), pcbcheck(1), pcbgerber(1)
+.SH DIAGNOSTICS
+FILE: net NAME: and what failed, with what is in the way; exit status
+1.

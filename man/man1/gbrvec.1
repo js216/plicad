@@ -1,0 +1,33 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" gbrvec.1 -- Manual page of gbrvec
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH GBRVEC 1
+.SH NAME
+gbrvec \- turn a Gerber or drill file into vectors
+.SH SYNOPSIS
+.B gbrvec
+.I file
+.RI > file.vec
+.SH DESCRIPTION
+.I Gbrvec
+reads an RS-274X or Excellon file and writes what it draws as
+.IR vec (5),
+in mm, with a name record for each part (from TO.C, or TO.P by its
+part).
+It reads the format and units, the apertures C, R and O, aperture
+macros with primitives 1, 4, 5, 20 and 21 and their arithmetic, draws,
+flashes, arcs, regions and polarity; and Excellon tools and holes.
+A region under a net attribute (TO.N) begins a zone of the net.
+The file function of Gerber X2 (TF.FileFunction, as an attribute or in
+a comment) gives the layer record, by KiCad's name of the layer (F.Cu,
+In1.Cu, B.Cu, F.Mask, F.Silkscreen, Edge.Cuts, ...); a drill file is
+the layer Drill.
+It reads the Gerbers of other programs, to compare or to show them;
+the boards of
+.IR pcb (5)
+have their vectors from
+.IR pcbvec (1).
+.SH EXAMPLES
+gbrvec gerber/top.gbr > top.vec
+.SH SEE ALSO
+vec(5), vecps(1), pcbview(1), pcbvec(1)

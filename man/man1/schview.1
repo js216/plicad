@@ -1,0 +1,67 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" schview.1 -- Manual page of schview
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SCHVIEW 1
+.SH NAME
+schview \- show a schematic sheet
+.SH SYNOPSIS
+.B schview
+.I sheet.vec
+.SH DESCRIPTION
+.I Schview
+shows a sheet in a window, smoothed, khaki (#BBBB99) on black.
+The sheet comes as
+.IR vec (5)
+from
+.IR schdraw (1);
+its text is drawn from the glyph table lib/fonts/nimbussans.txt, and
+everything is drawn by OpenGL, smoothed by multisampling and its lines
+shaded by their distance, in linear light.
+.PP
+It opens fitted to the sheet, as Space fits it; the wheel zooms round
+the pointer and the left button drags the view.
+A click within 3 pixels of the box of an element of a part (its
+symbol's body, or one of its texts: designator, value, pin numbers)
+selects the part, of the smallest such element under the pointer, and
+prints
+.B select
+.I NAME
+on stdout; a click on none clears the selection here alone and prints
+nothing.
+The selected part, its symbol, pins and labels, is drawn light cyan
+(#A0FFFF): its relative luminance, 0.86, is 1.8 times the khaki's, 0.48,
+so the change shows without color too.
+The keys:
+.PP
+.RS
+.nf
+c           center the selected part; again, with nothing
+            changed in between, zoom in two times about it
+Space       fit the sheet
+?           a help of the keys, on and off
+q           quit
+.fi
+.RE
+.PP
+It reads commands on stdin, a line each:
+.B select
+.I NAME
+selects,
+.B select
+clears (for scripts: the viewers never send it), and
+.B center
+is c;
+.B shot
+.I file
+draws the next frame into a PPM picture.
+The input of the window is taken before each command, so a picture
+shows all the keys and clicks that came before it.
+Cross-probing with
+.IR pcbview (1)
+is two FIFOs, each viewer's stdout the other's stdin.
+.SH EXAMPLES
+.nf
+schdraw ch1.sch > ch1.vec && schview ch1.vec
+.fi
+.SH SEE ALSO
+pcbview(1), schdraw(1), vec(5)

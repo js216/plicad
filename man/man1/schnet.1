@@ -1,0 +1,44 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" schnet.1 -- Manual page of schnet
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SCHNET 1
+.SH NAME
+schnet \- write the netlist of a schematic sheet
+.SH SYNOPSIS
+.B schnet
+[
+.B \-L
+.I lib
+] ...
+.I sheet.sch
+.SH DESCRIPTION
+.I Schnet
+reads a schematic source,
+.IR sch (5),
+and its symbols as
+.IR schdraw (1)
+does, and writes its flat netlist,
+.IR netlist (5),
+on the standard output: a part record for each part, by its
+designator, with its type, values, part number and name (the path of
+its groups and its own name, as
+.BR ch1.gain.rf ),
+and a net record for each net, with its pins by their numbers.
+A net named by a flag or by a port of the sheet is marked global.
+Flags are not parts; a pin on no net is left out.
+The output of a source is always the same: the parts and the pins of a
+net are sorted by designator and pin, the nets by name.
+.PP
+The designators come from the page of the sheet: R401 is the first
+resistor of page 4, counted by columns from the left and down each
+column.
+.SH EXAMPLES
+.nf
+schnet sheet.sch > sheet.nl && netdiff sheet.nl before.nl
+.fi
+.SH SEE ALSO
+sch(5), netlist(5), netdiff(1), schdraw(1)
+.SH DIAGNOSTICS
+FILE:LINE: and the fault, one a line; the netlist leaves out what a
+fault touches.
+Exit status 1 on any fault.

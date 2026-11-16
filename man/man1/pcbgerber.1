@@ -1,0 +1,40 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" pcbgerber.1 -- Manual page of pcbgerber
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PCBGERBER 1
+.SH NAME
+pcbgerber \- write the Gerber and drill files of a board
+.SH SYNOPSIS
+.B pcbgerber
+[
+.B \-L
+.I lib
+] ...
+.B \-o
+.I dir
+.I board.pcb
+.RI < board.lock
+.SH DESCRIPTION
+.I Pcbgerber
+writes into
+.I dir
+one RS-274X file for each copper layer, named after it (top.gbr,
+in1.gbr, ..., bottom.gbr), the outline (edge.gbr), the top solder mask
+and paste (topmask.gbr, toppaste.gbr), the silkscreen of each side
+(topsilk.gbr, bottomsilk.gbr), the outlines of the courtyards
+(topcourt.gbr, bottomcourt.gbr, a drawing only) and the Excellon
+drill file (drill.drl), in mm.
+The silkscreen is each footprint's silk lines and its part's
+designator, by its courtyard where it is clear (see
+.IR pcbcheck (1)),
+read from below on the bottom, and cut where the mask opens.
+A plane layer is the outline 0.3 mm in, cleared by the clearance round
+every hole, via, pad and track not of its net, and round each pad of
+its net that it relieves (a small part's of two pins), which joins it by
+its neck.
+Each pad carries its part's name (TO.C) and each object its net (TO.N);
+a plane is one region under its net.
+.SH EXAMPLES
+pcbgerber -o gerber ch1.pcb < ch1.lock
+.SH SEE ALSO
+pcb(5), gbrvec(1)

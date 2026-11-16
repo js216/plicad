@@ -1,0 +1,48 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" netlist.5 -- Manual page of the netlist
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH NETLIST 5
+.SH NAME
+netlist \- flat netlist of a circuit
+.SH DESCRIPTION
+A netlist lists the parts of a circuit and the nets between their
+pins.
+One record per line, words separated by blanks; # starts a comment.
+.PP
+.RS
+.nf
+part REF TYPE [KEY VALUE]...
+net NAME [global] REF.PIN...
+.fi
+.RE
+.PP
+A part record gives the designator and the type of a part (the symbol
+or the pin table it is drawn by, as resistor or ti/lmh6609) and then
+pairs of a key and a word:
+.B value
+(499, 0.1\[mc]F),
+.B rating
+(0.5W),
+.B mpn
+(the maker's part number),
+.B swap
+(the pins that may trade places, by number, as 1,2),
+.B pins
+(the names of the pins of a part with a pin table, as in+:3,out:6) and
+.B name
+(the name of the part in its source).
+A net record names the net and lists its pins by designator and pin
+number.
+A global net is a rail or a port, the same net wherever its name is
+used.
+Parts come before the nets that use them; a pin is on one net at
+most.
+.SH EXAMPLES
+.nf
+part R401 resistor value 249 swap 1,2 name ch1.gain.rg
+part U401 ti/lmh6609 value LMH6609 name ch1.gain.amp
+net GND global R401.2
+net ch1.gain.amp.in- R401.1 U401.2
+.fi
+.SH SEE ALSO
+schnet(1), netdiff(1), sch(5)

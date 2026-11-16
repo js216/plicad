@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bnc.sym -- A coaxial jack: its one pin is the center conductor
+# Copyright (c) 2026 Jakob Kastelic
+
+# A circle of 4.3 pt radius round a dot, the lead to the dot.  The
+# shield is not a pin: it is held by whatever the jack mounts in.
+prefix J
+pin 1 -2 0 l
+box -1.5 -0.8 0.8 0.8
+side above
+line -14.4 0 0 0
+circle 0 0 4.3
+disk 0 0 1.2

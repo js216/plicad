@@ -1,0 +1,77 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" pcbcheck.1 -- Manual page of pcbcheck
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PCBCHECK 1
+.SH NAME
+pcbcheck \- check a board against its netlist and rules
+.SH SYNOPSIS
+.B pcbcheck
+[
+.B \-l
+] [
+.B \-L
+.I lib
+] ...
+.I board.pcb
+.RI < board.lock
+.SH DESCRIPTION
+.I Pcbcheck
+checks the whole board from its copper alone: pads, tracks and vias
+join where they touch on a layer, vias and holes on every layer, and a
+via or hole of a plane's net, or a pad or track of it on the plane's
+layer, joins the plane (but a pad the plane relieves joins by its neck
+alone).
+Each net must be one piece and no piece may hold two nets; copper of two
+nets keeps the clearance; copper keeps the edge rule from the outline,
+but for the parts the rule excepts; each track ends at the center of a
+pad of its net or at a via (or, a neck, in its own plane); the copper
+between the two pins of a
+.B width
+.I PIN PIN W
+statement (the fewest pieces from one to the other), and each
+connection of the lock, is no narrower than its width; every via keeps
+the via gap from
+the pads of its net (a via inside or tangent to its pad is a fault); the
+solder mask keeps its web between two openings of two nets, or of one
+net apart (a sliver), and between an opening and a via; a small part of
+two pins with one pad on a plane joins it by a neck no wider than a
+track, with no via by it, or its pads heat unevenly (a thermal
+imbalance); no silkscreen, a footprint's lines or a designator, runs
+over an opening of the solder mask, where it would be cut; every part
+is placed by a current statement, with the nets of its pads as they are;
+and each net's copper was made by its current statements for its pads
+where they stand: the fault says what changed.
+A designator stands by its courtyard, above, below, left or right, and
+then 1 mm and 2 mm farther out, at the first place clear of the mask
+openings, the other parts' courtyards and the designators before it;
+if none is clear, above.
+Each fault is a line, naming a part by its name and designator
+(ch1.gain.rf (R401)) and a pad as ch1.gain.rf.1 (R401); nothing is
+printed when all is well.
+With
+.B \-l
+it prints, a net a line, the length of its tracks and its vias, and,
+for each part of two pins on two nets, the area of the loop of current
+through it:
+.PP
+.RS
+.nf
+length NET MM vias N
+loop PART REF NET NET MM2
+.fi
+.RE
+.PP
+The loop runs from each of the part's pads along the shortest copper
+of its net to the nearest pad of another part or via of the net, and
+closes straight between those two ends: a decoupling capacitor's loop
+from its supply pin to its ground via, a feedback resistor's between
+the amplifier's output and input.
+.SH EXAMPLES
+.nf
+pcbcheck -l outputs.pcb < outputs.lock | sort -k3 -n
+pcbcheck -l outputs.pcb < outputs.lock | awk '$1 == "loop"' | sort -k6 -n
+.fi
+.SH SEE ALSO
+pcb(5), pcbroute(1)
+.SH DIAGNOSTICS
+Exit status 1 on a fault.

@@ -1,0 +1,94 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" vec.5 -- Manual page of the vector file
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH VEC 5
+.SH NAME
+vec \- plain vectors of a drawing or a layer
+.SH DESCRIPTION
+A vec file is what a page or a layer draws, a record a line, in one
+unit (mm for a board, points for a sheet), y up.
+It is what the programs draw:
+.IR schdraw (1)
+writes a sheet and
+.IR pcbvec (1)
+the layers of a board;
+.IR schview (1)
+and
+.IR pcbview (1)
+show them and
+.IR vecps (1)
+prints them.
+.PP
+.RS
+.nf
+layer NAME              the layer of a board the file draws
+dark | clear            the polarity of what follows
+disk X Y R              a filled circle
+line W X Y X Y ...      a stroke of width W, round at its ends;
+                        of width 0, an outline, a hairline
+poly X Y X Y ...        a filled polygon
+text F S A J X Y TEXT   text, to the end of the line
+page W H                the size of the page of a sheet
+name NAME X0 Y0 X1 Y1   a named box: a part, for picking
+zone NET                the fill of a zone of copper begins
+end                     and ends
+part NAME [REF]         the records of a part begin
+part                    and end
+net NAME                the records of a net begin
+net                     and end
+pin REF.PIN X Y         a pin of a part: its end, or its pad's center
+flag NET X Y            the end of the pin of a flag of a net
+# TEXT                  a comment
+.fi
+.RE
+.PP
+A layer record comes before any drawing and names the layer by KiCad's
+name of it:
+.BR F.Cu ,
+.BR In1.Cu ,
+\&...,
+.B B.Cu
+for copper,
+.BR F.Mask ,
+.BR F.Paste ,
+.BR F.Silkscreen ,
+.B F.Courtyard
+(and
+.B B.
+on the bottom),
+.B Edge.Cuts
+for the outline and
+.B Drill
+for the holes; it is what a viewer shows the file as, whatever its
+name.
+Clear polarity erases what the file drew before, and nothing of other
+files.
+A text is in the font F (R, Nimbus Sans or Helvetica; I, its italic),
+S high (the size of its em), turned A degrees counterclockwise about
+(X, Y), from which it runs flush left (J 0), centered (1) or flush right
+(2); the text is UTF-8.
+The viewers draw it from the glyph table lib/fonts/nimbussans.txt,
+the printer in the PostScript fonts.
+The records between
+.B zone
+and
+.B end
+are a zone's fill: its dark polygons give its outline, and what it
+clears is its clearances.
+The records between
+.B part
+.I NAME
+and
+.B part
+draw that part, so a viewer can draw it brighter when it is selected;
+a part may have several such runs.
+The name is the part's in its source (ch1.gain.rf), which the viewers
+select by; REF, its designator (R401), is for the reader.
+A pin record gives where a wire meets a pin of a part on a sheet, or
+the center of a pad of a pin on a layer of copper, by its designator
+and pin number as the netlist names it (R401.2), and a flag
+record where it meets a flag (a ground, a supply, a port), by the name
+of the flag's net; they draw nothing, but say what the drawing joins,
+so a checker can compare it with the netlist.
+.SH SEE ALSO
+gbrvec(1), vecps(1), pcbview(1), schview(1)

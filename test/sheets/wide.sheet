@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# wide.sheet -- The plain A sheet with more room round bodies
+# Copyright (c) 2026 Jakob Kastelic
+
+paper 792 612
+room 36 104 756 576
+clear body 5.4
+clear text 1.5
+clear label 2.5
+clear flag 2
+line 18 18 774 18 774 594 18 594 18 18

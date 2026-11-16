@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# ground.sym -- The ground flag: three bars under the end of the wire
+# Copyright (c) 2026 Jakob Kastelic
+
+# The bars are 9.9, 6.3 and 2.6 pt long and 2.2 pt apart.
+flag ground
+pin 1 0 0 u
+box -0.75 -1.05 0.75 -0.3
+line -4.94 0 4.94 0
+line -3.15 -2.2 3.15 -2.2
+line -1.31 -4.34 1.31 -4.34

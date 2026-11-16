@@ -1,0 +1,120 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" schdraw.1 -- Manual page of schdraw
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SCHDRAW 1
+.SH NAME
+schdraw \- draw a schematic sheet
+.SH SYNOPSIS
+.B schdraw
+[
+.B \-v
+] [
+.B \-L
+.I lib
+] ...
+.I sheet.sch
+.SH DESCRIPTION
+.I Schdraw
+reads a schematic source,
+.IR sch (5),
+places its parts as its statements say, routes the wires and writes
+the page as
+.IR vec (5)
+on the standard output: the sheet template with its title block, each
+net's wires and dots, and each part's symbol and text, the text as
+text records.
+The records of each part are bracketed by its name (the path of its
+groups and its own, as ch1.gain.rf), with its box named, and those of
+each net by the net's name, for
+.IR schview (1).
+The symbols and the sheet templates are those of
+.IR schsym (5),
+from the directories symbols and sheets next to the source, then
+.IB lib /symbols
+and
+.IB lib /sheets
+for each
+.B \-L
+option, or from
+.B ../lib
+next to the program.
+With
+.B \-v
+it tells on stderr where each part was placed, by its line, its name
+and designator (ch1.gain.rf (R401)) and the rule that placed it, once
+the designators are known; its faults name parts so too.
+The records of each part are bracketed by its name and designator.
+.PP
+The drawing follows the conventions of the figures of
+.I The Art of Electronics:
+one thin line weight, signal from left to right, supplies up and
+ground down, filled dots at junctions and no four-way junctions,
+designators in italic with the number as a subscript, values beside
+the parts, all in Helvetica.
+.PP
+The pins of a net are wired in groups: a pin with a flag of its own
+and the flag are a group, and the other pins of the net are one group
+with the first of them.
+A group is routed as a tree on the grid, 0.1 in at scale 1: first the
+wires the source names, on their sides; then the two pins that face
+each other on one line farthest apart, so the signal runs straight;
+then every other pin takes the cheapest path to the tree, its nearest
+first.
+A path leaves and enters a pin along the way the pin points, runs
+through no body and no other pin and along no wire of another group,
+crosses other wires only at right angles, and joins its own tree only
+where that makes a T.
+Bends, running next to a body or a foreign wire, a
+junction next to another, and straying off a said side cost more than
+length; a crossing costs twice a step, so a wire crosses another
+rather than going round it.
+A group that finds no way is put first and all are routed again; once
+all are routed, each is routed again among the others and the cheaper
+path kept.
+Each label then takes, among the places along each side of its part,
+the one that covers least of the drawing, its own side and its middle
+first.
+.PP
+Where each pin meets its wire is written as a pin record, by its
+designator and number, and each flag's as a flag record, by its net, so
+the drawing alone tells what it joins: the tests check it against the
+netlist of
+.IR schnet (1)
+(a pin is on each wire that runs through or ends at it, two wires join
+where the end of one lies on the other, flags of one name join; each
+net must be one such group, no group may hold pins of two nets, and no
+four wires may meet at a point).
+.PP
+The drawing keeps the room the clear records of the sheet template give
+(schsym(5)), in points at scale 1; sch_a gives 3.6 between a wire and
+the body of a part not on its net, and between two bodies; 1.5 between
+a label and any wire, body or other label; 2.5 from a body to its own
+label; wires of two nets keep a pitch of the grid apart, as the grid
+gives them.
+The placer keeps a branch hung from a lead (a decoupling capacitor and
+its bead) out of a wired loop by that room and the thickness of its
+parts, so the branch takes a longer lead and the loop keeps its shape;
+the router keeps the room round every body; a label takes only a place
+that keeps its room, if there is one.
+Then schdraw measures every pair, and each that is too close is a
+fault: FILE:LINE: and the two names.
+.PP
+For print,
+.IR vecps (1)
+makes PostScript of the page and
+.IR ps2pdf (1)
+a PDF.
+.SH EXAMPLES
+.nf
+schdraw ch1.sch > ch1.vec && vecps ch1.vec > ch1.ps && ps2pdf ch1.ps
+schview ch1.vec
+schdraw -v ch1.sch 2>&1 >/dev/null | grep rf
+.fi
+.SH SEE ALSO
+sch(5), schsym(5), vec(5), schnet(1), netdiff(1), schview(1), vecps(1)
+.SH DIAGNOSTICS
+FILE:LINE: and the fault, for a statement that cannot be followed or a
+net that cannot be routed; each fault of the check on one line.
+A fault of the source leaves out what it touches, and the rest is
+drawn: a part that finds no place is not drawn, nor its wires.
+Exit status 1 on any fault.

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# bad_noclear.sheet -- A sheet that does not say the room round text
+# Copyright (c) 2026 Jakob Kastelic
+
+paper 792 612
+room 36 104 756 576
+clear body 3.6
+clear label 2.5
+clear flag 2
+line 18 18 774 18 774 594 18 594 18 18

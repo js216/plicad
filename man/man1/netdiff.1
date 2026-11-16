@@ -1,0 +1,48 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" netdiff.1 -- Manual page of netdiff
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH NETDIFF 1
+.SH NAME
+netdiff \- compare two netlists by their circuits
+.SH SYNOPSIS
+.B netdiff
+.I a.nl b.nl
+.SH DESCRIPTION
+.I Netdiff
+matches the parts of two netlists,
+.IR netlist (5),
+by their type, value, rating and part number and by how they are
+connected, and prints each part and each pin of a net that differs,
+one per line.
+No output means the circuits are the same.
+Designators and the names of nets play no part, except that a global
+net matches only the global net of its name.
+A net of one pin, unless global, is no connection.
+.PP
+Values compare as numbers with their units: 499R, 499 and 499\[*W]
+agree, as do 1.00K and 1k, or 0.1\[mc]F, 0.1uF, 100n and 100nF;
+ohms, farads and henries go without saying.
+The pins of a swap list may trade places.
+.PP
+The parts are matched by labels refined in turn, after Weisfeiler and
+Lehman: a part starts with a hash of its type and values, a net takes
+the sum of hashes of its pins (the label of the part and the class of
+the pin), and a part the sum of hashes of its nets, until the labels
+split no further.
+A label held by one unmatched part on each side pairs them; failing
+that, one pair of alike parts (as two resistors in parallel) is
+matched, and the refining goes on.
+Where the circuits differ, labels made with fewer passes, which see
+less far, pair the parts near the difference; parts still unmatched
+pair by their values where their nets agree best, or are reported.
+Each pass is linear in the pins.
+.SH EXAMPLES
+netdiff ours.nl theirs.nl
+.br
+part only in ours.nl: R12 resistor value 499
+.br
+net fb / N7: pin only in theirs.nl: R3.2
+.SH SEE ALSO
+netlist(5), schnet(1), diff(1)
+.SH DIAGNOSTICS
+Exit status 1 if the netlists differ, 2 on a fault in a file.

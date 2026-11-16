@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# pcb_twin.pcb -- Two alike filters laid out by groups, the second a copy
+# Copyright (c) 2026 Jakob Kastelic
+
+# Each filter is a block laid out alone; b has a's statements, renamed,
+# so its copper is a's, moved.
+netlist pcb_twin.nl
+board rect 0 0 40 20
+layer top signal
+layer bottom plane GND
+footprint resistor r0603
+footprint capacitor c0603
+
+fix a.r at 10 10
+fix b.r at 25 10
+block a
+block b
+
+place a.c right from a.r.2
+place b.c right from b.r.2

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# lmh6609 -- Texas Instruments LMH6609, a wideband voltage-feedback op
+# amp, in the 8-pin SOIC
+# Copyright (c) 2026 Jakob Kastelic
+shape opamp
+pin in+ 3
+pin in- 2
+pin out 6
+pin v+ 7
+pin v- 4
+nc 1 5 8
