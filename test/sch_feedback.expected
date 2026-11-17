@@ -4,9 +4,9 @@ part J101 bnc value BNC name feedback.out
 part R101 resistor value 1K swap 1,2 name feedback.rin
 part R102 resistor value 10K swap 1,2 name feedback.rfb
 part U101 ti/lmh6609 value LMH6609 pins in+:3,in-:2,out:6,v+:7,v-:4 name feedback.u
-net +5V global C101.1 U101.7
-net -5V global U101.4
-net GND global C101.2 U101.3
+net +5V global class power C101.1 U101.7
+net -5V global class power U101.4
+net GND global class power C101.2 U101.3
 net IN global R101.2
 net feedback.u.in- R101.1 R102.1 U101.2
 net feedback.u.out J101.1 R102.2 U101.6

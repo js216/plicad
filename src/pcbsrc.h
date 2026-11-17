@@ -59,9 +59,10 @@ struct pcb_end {
 };
 
 // A net: its name, the plane layer it is on (-1 for none), the width of
-// its tracks and its pads.
+// its tracks and its pads; global, and its class (NULL for none), as the
+// netlist says.
 struct pcb_net {
-	char *name;
+	char *name, *klass;
 	int global, plane;
 	int waits; // It has pins on parts unplaced, and so is not whole.
 	double width;
@@ -124,6 +125,10 @@ struct pcb {
 	double cut[8][4], cutr[8];
 	size_t ncut;
 	double clearance, track, via_dia, via_drill, edge;
+	// The classes of class CLASS width W: their names and widths.
+	char **klass;
+	double *class_width;
+	size_t nclass;
 	// From a pad's edge to the ring of a via of its net (the via joined
 	// to it by a neck track), and the least web of solder mask between
 	// two openings, or between an opening and a via, which is tented.
@@ -276,9 +281,14 @@ char *pcb_net_words(const struct pcb *b, size_t k);
 char *pcb_pad_key(const struct pcb *b, size_t q, size_t k);
 // The width of the copper between pads a and b of net n (PART.PAD; b
 // "via" for a pad's via): of a statement width PIN PIN W naming them,
-// else the net's (width NET W), else the rule's.
+// else the net's (width NET W), else its class's (class CLASS width W),
+// else rule track.
 double pcb_link_width(const struct pcb *b, int n, const char *a,
 		      const char *bb);
+// The width of the neck of a pad of part q on plane net n, to its via or
+// its plane: the net's, but no wider than rule track on a small part of
+// two pins, which takes heat alike at its two pads.
+double pcb_neck_width(const struct pcb *b, int n, size_t q);
 // Adds a connection; returns its index.
 int pcb_add_link(struct pcb *b, int n, const char *a, const char *bb, double w);
 // The designator of a part, or its name if it has none: for the lock,

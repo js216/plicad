@@ -7,7 +7,8 @@
 // Reads two netlists (netlist(5)) and matches the parts of one to those
 // of the other by their type, value, rating and part number and by how
 // they are connected; designators and the names of nets play no part,
-// but a global net matches only the global net of its name.  Then
+// but a global net matches only the global net of its name, and the
+// class of a net plays no part.  Then
 // prints each part and each pin of a net that differs, one per line; no
 // output means the circuits are the same.  A net of one pin, unless it
 // is global, is no connection.
@@ -393,6 +394,10 @@ static void load(struct list *l, const char *file)
 		memset(&t, 0, sizeof t);
 		t.name = nets[i][0];
 		t.global = first == 2;
+		// The class of the net plays no part.
+		if (first + 1 < nn[i] && !strcmp(nets[i][first], "class")) {
+			first += 2;
+		}
 		t.part = zalloc(nn[i] * sizeof *t.part);
 		t.pin = zalloc(nn[i] * sizeof *t.pin);
 		for (size_t j = first; j < nn[i]; j++) {

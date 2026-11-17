@@ -25,7 +25,9 @@ its groups and its own name, the page's first, as
 .BR outputs.ch1.gain.rf ),
 and a net record for each net, with its pins by their numbers.
 A net named by a flag or by a port of the sheet is marked global, and
-is one net over all the pages it is on.
+is one net over all the pages it is on; a net of a class is marked
+with it, power for one of a supply or ground flag.
+A net of two classes is a fault, and then no netlist is written.
 Flags are not parts; each pin on no net is a pin record after the
 nets, nc if an nc statement leaves it unconnected on purpose, \- if not,
 for

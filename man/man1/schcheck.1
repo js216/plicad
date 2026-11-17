@@ -20,7 +20,8 @@ a pin on no net (pin REF.PIN \-), unless the source marks it
 unconnected on purpose (nc, pin REF.PIN nc);
 a net of one pin alone;
 a part of two pins or more with all of them on one net, a part
-shorted.
+shorted;
+a net of two classes, by its line.
 It reads nothing but the netlist.
 .SH EXAMPLES
 .nf
@@ -37,6 +38,7 @@ FILE: and the fault (stdin: for none), as
 sheet.nl: R101.2 is on no net, and not marked nc
 sheet.nl: net N has one pin alone, R101.1
 sheet.nl: C102 has all its pins on net GND
+sheet.nl:12: net N is of class power and of class signal
 .fi
 .RE
 .PP

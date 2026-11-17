@@ -9,9 +9,9 @@ part R101 resistor value 1K swap 1,2 name filter.buf.rf
 part R102 resistor value 1K swap 1,2 name filter.buf.rg
 part R103 resistor value 10K swap 1,2 name filter.lpf.r
 part U101 ti/lmh6609 value LMH6609 pins in+:3,in-:2,out:6,v+:7,v-:4 name filter.buf.amp
-net +12V global FB101.2
-net -12V global FB102.2
-net GND global C101.2 C102.2 C103.2 C104.2 R102.2
+net +12V global class power FB101.2
+net -12V global class power FB102.2
+net GND global class power C101.2 C102.2 C103.2 C104.2 R102.2
 net IN global U101.3
 net OUT global C103.1 C104.1 R103.2
 net filter.buf.amp.in- R101.2 R102.1 U101.2

@@ -10,7 +10,8 @@
 //   nc), as schnet lists them (pin REF.PIN -);
 //   a net of one pin alone;
 //   a part with two pins or more, all of them on one net (a part
-//   shorted).
+//   shorted);
+//   a net of two classes, told by its line (FILE:LINE:).
 // The exit status is 1 on a fault, 2 if the file cannot be read.
 
 #include "util.h"
@@ -70,16 +71,40 @@ static void fault(const char *msg)
 	faults = 1;
 }
 
+// The first pin of the net record w[0] .. w[n-1], past its words global
+// and class CLASS; a second class is a fault of line line.
+static size_t first_pin(char **w, size_t n, int line)
+{
+	size_t first = 2;
+	const char *c = NULL;
+
+	if (first < n && !strcmp(w[first], "global")) {
+		first++;
+	}
+	for (; first + 1 < n && !strcmp(w[first], "class"); first += 2) {
+		if (c && strcmp(c, w[first + 1])) {
+			printf("%s:%d: net %.1000s is of class %.1000s and of "
+			       "class %.1000s\n",
+			       file, line, w[1], c, w[first + 1]);
+			faults = 1;
+		}
+		c = w[first + 1];
+	}
+	return first;
+}
+
 // Reads the netlist: its nets and their pins, and the pins on none.
 static void read_netlist(FILE *in)
 {
 	char *buf = xmalloc(LINE), **w = xmalloc(WORDS * sizeof *w), msg[2100];
+	int line = 0;
 
 	while (fgets(buf, LINE, in)) {
 		size_t n = split(buf, w);
 
+		line++;
 		if (n >= 2 && !strcmp(w[0], "net")) {
-			size_t first = n > 2 && !strcmp(w[2], "global") ? 3 : 2;
+			size_t first = first_pin(w, n, line);
 			char *name = xstrdup(w[1]);
 
 			nets = xrealloc(nets, (nnets + 1) * sizeof *nets);

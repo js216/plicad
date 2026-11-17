@@ -34,6 +34,7 @@ chassis at PIN
 supply NAME at PIN
 global NAME at PIN
 nc PIN
+class CLASS PIN...
 .fi
 .RE
 .PP
@@ -174,6 +175,19 @@ its own, with no list of pages.
 .B nc
 marks a pin left unconnected on purpose: it is drawn with a small cross
 at its end, and the netlist lists it as nc, not as a pin forgotten.
+.SS Classes
+.B class
+gives the net of each pin its class, a plain word (letters, digits,
+\- and _), as
+.B class power fb.1
+for the net at pin fb.1.
+The nets of the supply and ground flags are of class power without a
+word.
+The schematic says what a net is, not what it takes: the board source
+gives a class its tracks
+.RI ( pcb (5)).
+A net given two classes, on one page or over several, is a fault, told
+once by the line of a class statement.
 .SS Library
 The symbols are looked up in the directory
 .B symbols

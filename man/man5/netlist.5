@@ -12,7 +12,7 @@ One record per line, words separated by blanks; # starts a comment.
 .RS
 .nf
 part REF TYPE [KEY VALUE]...
-net NAME [global] REF.PIN...
+net NAME [global] [class CLASS] REF.PIN...
 pin REF.PIN nc|\-
 .fi
 .RE
@@ -36,6 +36,11 @@ A net record names the net and lists its pins by designator and pin
 number.
 A global net is a rail or a port, the same net wherever its name is
 used.
+A net's class is a word of the source
+.RI ( sch (5)),
+power for a rail of a supply or ground flag; the board source maps it
+to geometry
+.RI ( pcb (5)).
 Parts come before the nets that use them; a pin is on one net at
 most.
 A pin record, after the nets, is a pin on no net: nc if the source
@@ -46,7 +51,7 @@ if not.
 .nf
 part R401 resistor value 249R swap 1,2 name ch1.gain.rg
 part U401 ti/lmh6609 value LMH6609 name ch1.gain.amp
-net GND global R401.2
+net GND global class power R401.2
 net ch1.gain.amp.in- R401.1 U401.2
 .fi
 .SH SEE ALSO

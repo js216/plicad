@@ -41,7 +41,11 @@ between the two pins of a
 .B width
 .I PIN PIN W
 statement (the fewest pieces from one to the other), and each
-connection of the lock, is no narrower than its width; every via keeps
+connection of the lock, of every net, is no narrower than its width
+.RI ( pcb (5):
+the width statements, else its class's, else rule track), a neck to a via or plane no narrower than the net's width, or
+on a small part of two pins than rule track (one fault a connection);
+every via keeps
 the via gap from
 the pads of its net (a via inside or tangent to its pad is a fault); the
 solder mask keeps its web between two openings of two nets, or of one

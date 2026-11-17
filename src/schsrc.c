@@ -522,9 +522,10 @@ struct alias {
 struct later {
 	int kind, side, line;
 	char *ref[2], *scope, *name;
+	long pid; // Of a class, its pin once known, or -1.
 };
 
-enum { WIRE, FLAG, NC };
+enum { WIRE, FLAG, NC, CLASS };
 
 static struct sch *R;
 static struct pinrec *pins;
@@ -766,6 +767,15 @@ static int dir_word(const char *s)
 		}
 	}
 	return -1;
+}
+
+// Whether s is a plain word: letters, digits, - and _ alone.
+static int plain_word(const char *s)
+{
+	size_t n = strspn(s, "abcdefghijklmnopqrstuvwxyz"
+			     "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
+
+	return n && !s[n];
 }
 
 static size_t add_part(const struct sch_part *q, const struct place *pl)
@@ -2082,10 +2092,32 @@ static void read_statement(char **w, int n)
 		l.ref[0] = sch_strdup(w[1]);
 		l.ref[1] = NULL;
 		l.name = NULL;
+		l.pid = -1;
 		l.scope = sch_strdup(group_path);
 		l.line = line_no;
 		laters = grow(laters, nlaters, sizeof *laters);
 		laters[nlaters++] = l;
+	} else if (!strcmp(w[0], "class") && n >= 3) {
+		// The net of each pin is of the class.
+		if (!plain_word(w[1])) {
+			fault("%s: a class is a plain word, not %s", where,
+			      w[1]);
+			return;
+		}
+		for (int i = 2; i < n; i++) {
+			struct later l;
+
+			l.kind = CLASS;
+			l.side = -1;
+			l.ref[0] = sch_strdup(w[i]);
+			l.ref[1] = NULL;
+			l.name = sch_strdup(w[1]);
+			l.scope = sch_strdup(group_path);
+			l.line = line_no;
+			l.pid = -1;
+			laters = grow(laters, nlaters, sizeof *laters);
+			laters[nlaters++] = l;
+		}
 	} else if (!strcmp(w[0], "wire") && (n == 4 || n == 5) &&
 		   !strcmp(w[2], "to")) {
 		struct later l;
@@ -2101,6 +2133,7 @@ static void read_statement(char **w, int n)
 		l.ref[1] = sch_strdup(w[3]);
 		l.scope = sch_strdup(group_path);
 		l.name = NULL;
+		l.pid = -1;
 		l.line = line_no;
 		laters = grow(laters, nlaters, sizeof *laters);
 		laters[nlaters++] = l;
@@ -2119,6 +2152,7 @@ static void read_statement(char **w, int n)
 							      "CHASSIS");
 		l.scope = sch_strdup(group_path);
 		l.line = line_no;
+		l.pid = -1;
 		laters = grow(laters, nlaters, sizeof *laters);
 		laters[nlaters++] = l;
 	} else if (is_symbol(w[0]) &&
@@ -2288,6 +2322,8 @@ static void resolve_all(void)
 			h.side = l->side;
 			R->hint = grow(R->hint, R->nhint, sizeof *R->hint);
 			R->hint[R->nhint++] = h;
+		} else if (l->kind == CLASS) {
+			laters[i].pid = a;
 		} else if (l->kind == NC) {
 			struct sch_part *q = &R->part[pins[a].part];
 
@@ -2350,6 +2386,38 @@ static void common_ferrite(void)
 	}
 }
 
+// Gives net t, of the pins of root r, its class: of its class
+// statements, or power if a supply or ground flag is on it.  A second
+// class is a fault, told once.
+static void net_class(struct sch_net *t, size_t r, int power)
+{
+	const char *c = power ? "power" : NULL;
+	int told = 0;
+
+	for (size_t i = 0; i < nlaters; i++) {
+		const struct later *l = &laters[i];
+
+		if (l->kind != CLASS || l->pid < 0 ||
+		    root((size_t)l->pid) != r) {
+			continue;
+		}
+		if (c && strcmp(c, l->name)) {
+			if (!told) {
+				fault("%s:%d: net %s is of class %s and of "
+				      "class %s",
+				      R->file, l->line, t->name, c, l->name);
+			}
+			told = t->clash = 1;
+			continue;
+		}
+		c = l->name;
+		if (!t->class_line) {
+			t->class_line = l->line;
+		}
+	}
+	t->klass = c ? sch_strdup(c) : NULL;
+}
+
 // Makes the nets: the pins joined, each set that has two pins or a flag.
 // A net takes its global name, or the name of its outermost port, or the
 // name of its first pin.  Each pin with a flag and the flag make a group
@@ -2364,7 +2432,8 @@ static void make_nets(void)
 		size_t r = root(i), n = 0;
 		struct sch_net t;
 		const char *name = NULL;
-		int best = 1 << 30, flagged = 0, rest = -1, rflag = 0;
+		int best = 1 << 30, flagged = 0, rest = -1, rflag = 0,
+		    power = 0;
 
 		if (!pins[i].used || done[r]) {
 			continue;
@@ -2381,6 +2450,9 @@ static void make_nets(void)
 			}
 			n++;
 			flagged |= pj->flag != NULL;
+			power |= pj->flag && pj->flag->flag &&
+				 (!strcmp(pj->flag->flag, "supply") ||
+				  !strcmp(pj->flag->flag, "ground"));
 			if (pj->global) {
 				if (t.global && strcmp(name, pj->global)) {
 					fault("%s: nets %s and %s are joined",
@@ -2444,6 +2516,7 @@ static void make_nets(void)
 		} else {
 			t.name = sch_strdup(name);
 		}
+		net_class(&t, r, power);
 		R->net = grow(R->net, R->nnet, sizeof *R->net);
 		R->net[R->nnet++] = t;
 	}

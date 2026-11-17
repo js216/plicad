@@ -313,12 +313,19 @@ static void read_netlist(struct pcb *b, const char *path, int line)
 		} else if (n >= 2 && !strcmp(w[0], "net")) {
 			struct pcb_net t;
 			size_t k = b->nnet;
-			int first = n > 2 && !strcmp(w[2], "global") ? 3 : 2;
+			int first = 2;
 
 			memset(&t, 0, sizeof t);
 			t.name = pcb_strdup(w[1]);
 			t.plane = -1;
-			t.global = first == 3;
+			if (first < n && !strcmp(w[first], "global")) {
+				t.global = 1;
+				first++;
+			}
+			if (first + 1 < n && !strcmp(w[first], "class")) {
+				t.klass = pcb_strdup(w[first + 1]);
+				first += 2;
+			}
 			b->net = pcb_grow(b->net, k, sizeof *b->net);
 			b->net[b->nnet++] = t;
 			pend_part = pcb_grow(pend_part, k, sizeof *pend_part);
@@ -848,6 +855,13 @@ double pcb_link_width(const struct pcb *b, int n, const char *a, const char *bb)
 	return b->net[n].width;
 }
 
+double pcb_neck_width(const struct pcb *b, int n, size_t q)
+{
+	double w = b->net[n].width;
+
+	return pcb_small_two_pin(&b->part[q]) ? fmin(w, b->track) : w;
+}
+
 int pcb_add_link(struct pcb *b, int n, const char *a, const char *bb, double w)
 {
 	struct pcb_link l;
@@ -1087,6 +1101,29 @@ static void statement(struct pcb *b, char **w, int n, int line, char **dirs,
 				b, line,
 				"rule clearance|track|via|viagap|maskweb|edge ...");
 		}
+		return;
+	}
+	if (!strcmp(w[0], "class")) {
+		// The width of the tracks of the nets of a class.
+		size_t k = b->nclass;
+
+		if (n != 4 || strcmp(w[2], "width") || !number(w[3], &v[0]) ||
+		    v[0] <= 0) {
+			pcb_error(b, line, "class CLASS width W");
+			return;
+		}
+		for (size_t i = 0; i < k; i++) {
+			if (!strcmp(b->klass[i], w[1])) {
+				pcb_error(b, line, "class %s again", w[1]);
+				return;
+			}
+		}
+		b->klass = pcb_grow(b->klass, k, sizeof *b->klass);
+		b->class_width =
+			pcb_grow(b->class_width, k, sizeof *b->class_width);
+		b->klass[k] = pcb_strdup(w[1]);
+		b->class_width[k] = v[0];
+		b->nclass++;
 		return;
 	}
 	if (!strcmp(w[0], "netlist") && n == 2) {
@@ -1895,6 +1932,11 @@ void pcb_read(struct pcb *b, const char *file, char **lib, size_t nlib,
 	read_copies(b);
 	for (size_t k = 0; k < b->nnet; k++) {
 		b->net[k].width = b->track;
+		for (size_t i = 0; b->net[k].klass && i < b->nclass; i++) {
+			if (!strcmp(b->klass[i], b->net[k].klass)) {
+				b->net[k].width = b->class_width[i];
+			}
+		}
 		for (size_t i = 0; i < b->nlayer; i++) {
 			if (b->layer[i].kind == LAYER_PLANE &&
 			    b->layer[i].net &&
@@ -1960,6 +2002,11 @@ void pcb_free(struct pcb *b)
 		free(b->edge_except[i]);
 	}
 	free(b->edge_except);
+	for (size_t i = 0; i < b->nclass; i++) {
+		free(b->klass[i]);
+	}
+	free(b->klass);
+	free(b->class_width);
 	for (size_t i = 0; i < b->nlayer; i++) {
 		free(b->layer[i].name);
 		free(b->layer[i].net);
@@ -1981,6 +2028,7 @@ void pcb_free(struct pcb *b)
 	free(b->part);
 	for (size_t k = 0; k < b->nnet; k++) {
 		free(b->net[k].name);
+		free(b->net[k].klass);
 		free(b->net[k].end);
 		if (b->netby) {
 			free(b->netby[k]);

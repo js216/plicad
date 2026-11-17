@@ -16,8 +16,10 @@
 // When a net finds no way, its pads and where it got stuck are named.
 //
 // The statements:
-//   width NET W            its tracks W mm wide (rule track by default)
+//   width NET W            its tracks W mm wide (its class's width, else
+//                          rule track, by default)
 //   width PIN PIN W        the copper between two pins of one net
+//   class CLASS width W    the tracks of the nets of the class W mm wide
 //   path NET PIN PIN...    its pins wired in this order, one to the next
 //   fork NET PIN to PIN PIN  the two last joined, the first to the
 //                          middle of their copper
@@ -1335,16 +1337,6 @@ static void neck(int n, int link, const struct pcb_part *q,
 	}
 }
 
-// The width of the neck of pad k of part q, of plane net n: the net's,
-// but no wider than a track on a small part of two pins, which takes
-// heat alike at its two pads.
-static double neck_width(int n, size_t q)
-{
-	double w = B.net[n].width;
-
-	return pcb_small_two_pin(&B.part[q]) ? fmin(w, B.track) : w;
-}
-
 // Whether a connection of net n from pad key (to its via or plane) is
 // there.
 static int has_link(int n, const char *key)
@@ -1386,7 +1378,7 @@ static int vias(int n)
 		}
 		key = pcb_pad_key(&B, e->part, e->pad);
 		have = has_link(n, key);
-		w = neck_width(n, e->part);
+		w = pcb_neck_width(&B, n, e->part);
 		if (s.layer == B.net[n].plane) {
 			if (!have && pcb_relieved(&B, e->part, e->pad)) {
 				neck(n, pcb_add_link(&B, n, key, "plane", w), q,
@@ -1649,7 +1641,7 @@ static int keep_link(long l, char **now, size_t nnow)
 		}
 		w = pcb_link_width(&B, n, k->a, k->b);
 	} else {
-		w = neck_width(n, (size_t)q);
+		w = pcb_neck_width(&B, n, (size_t)q);
 	}
 	return fabs(w - k->w) < 1e-6 && link_clear(l);
 }

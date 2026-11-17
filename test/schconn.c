@@ -251,6 +251,10 @@ static void read_netlist(const char *path)
 			if (!strcmp(w, "global")) {
 				continue;
 			}
+			if (!strcmp(w, "class")) {
+				(void)strtok_r(NULL, " \t\r\n", &save);
+				continue;
+			}
 			pin_name =
 				more(pin_name, (npins + 1) * sizeof *pin_name);
 			pin_net = more(pin_net, (npins + 1) * sizeof *pin_net);

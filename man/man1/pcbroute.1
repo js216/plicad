@@ -85,7 +85,13 @@ a point where the track would break the edge rule is never taken.
 Each connection takes its own width, of a
 .B width
 .I PIN PIN W
-statement naming its pins, else the net's.
+statement naming its pins, else the net's, else its class's
+.RB ( class
+.I CLASS
+.BR width ),
+else
+.BR "rule track" ;
+it keeps its width into a pad narrower than it.
 The copper is kept by connection: one keeps its copper if its net's
 statements, its pads and its width are as they were and its copper is
 clear of the pads as they stand now and keeps the edge rule, so an edit

@@ -17,7 +17,9 @@
 //   each track ends at the center of a pad of its net (or an end of a
 //   long pad), at a via, or on the copper a fork of its net feeds;
 //   the copper between two pins of a width statement, and each
-//   connection, is no narrower than its width;
+//   connection of every net, is no narrower than its width (the width
+//   statements, else its class's width, else rule track; a
+//   neck to a via or plane, pcb_neck_width);
 //   every via keeps the via gap from the pads of its net, so a neck
 //   joins them; the solder mask keeps its web between two openings and
 //   between an opening and a via; a small part of two pins with one pad
@@ -917,13 +919,53 @@ static size_t pad_item(size_t q, size_t k)
 	return nitems;
 }
 
+// The pad of net n that key (PART.PAD) names, to *q and *k; 0 if none.
+static int link_pad(int n, const char *key, long *q, long *k)
+{
+	for (size_t j = 0; j < B.net[n].nend; j++) {
+		const struct pcb_end *e = &B.net[n].end[j];
+		char *s = pcb_pad_key(&B, e->part, e->pad);
+		int same = !strcmp(s, key);
+
+		free(s);
+		if (same) {
+			*q = (long)e->part;
+			*k = (long)e->pad;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// Whether a statement width PIN PIN W names pads (qa, ka) and (qb, kb).
+static int stated(long qa, long ka, long qb, long kb)
+{
+	for (size_t s = 0; s < B.nstmt; s++) {
+		const struct pcb_stmt *st = &B.stmt[s];
+		size_t q[2], p[2];
+
+		if (!strcmp(st->w[0], "width") && st->n == 4 &&
+		    pcb_pin(&B, st->w[1], &q[0], &p[0]) &&
+		    pcb_pin(&B, st->w[2], &q[1], &p[1]) &&
+		    (((long)q[0] == qa && (long)p[0] == ka &&
+		      (long)q[1] == qb && (long)p[1] == kb) ||
+		     ((long)q[0] == qb && (long)p[0] == kb &&
+		      (long)q[1] == qa && (long)p[1] == ka))) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 // The width of each connection as stated: between the two pins of each
 // width PIN PIN W, the copper from one to the other (the fewest pieces
-// that join them) no narrower than W; and each connection of the lock
-// no narrower than its width now, the net's or the rule's.
+// that join them) no narrower than W; and each connection of the lock,
+// of every net, no narrower than its width now (pcb_link_width), a neck
+// to a via or a plane no narrower than pcb_neck_width.  One fault a
+// connection: one of a width PIN PIN W is told by the first.
 static void check_widths(void)
 {
-	char msg[2048];
+	char msg[2800], *done;
 	size_t *from = pcb_alloc((nitems + 1) * sizeof *from);
 	size_t *queue = pcb_alloc((nitems + 1) * sizeof *queue);
 
@@ -984,25 +1026,40 @@ static void check_widths(void)
 	}
 	free(from);
 	free(queue);
+	done = pcb_alloc(B.nlink + 1);
+	memset(done, 0, B.nlink + 1);
 	for (size_t i = 0; i < B.ntrack; i++) {
 		const struct pcb_track *t = &B.track_[i];
 		const struct pcb_link *l = t->link >= 0 ? &B.link[t->link] :
 							  NULL;
+		int neck;
+		long qa, ka, qb = -1, kb = -1;
 		double w;
 
-		if (!l || l->net < 0 || B.net[l->net].plane >= 0 ||
-		    !strcmp(l->b, "via") || !strcmp(l->b, "plane")) {
+		if (!l || l->net < 0 || done[t->link] ||
+		    !link_pad(l->net, l->a, &qa, &ka)) {
 			continue;
 		}
-		w = pcb_link_width(&B, l->net, l->a, l->b);
-		if (t->w < w - 1e-6) {
-			snprintf(msg, sizeof msg,
-				 "the copper from %s to %s is %.3f mm wide, "
-				 "narrower than its width %.3f",
-				 l->a, l->b, t->w, w);
-			fault(msg, t->xy[0], t->xy[1]);
+		neck = !strcmp(l->b, "via") || !strcmp(l->b, "plane");
+		if (!neck && !link_pad(l->net, l->b, &qb, &kb)) {
+			continue;
 		}
+		w = neck ? pcb_neck_width(&B, l->net, (size_t)qa) :
+			   pcb_link_width(&B, l->net, l->a, l->b);
+		if (t->w >= w - 1e-6 || (!neck && stated(qa, ka, qb, kb))) {
+			continue;
+		}
+		done[t->link] = 1;
+		snprintf(msg, sizeof msg,
+			 "net %.200s: the copper from pad %s to %s%s is %.3f "
+			 "mm wide, narrower than its width %.3f",
+			 B.net[l->net].name, pad_name((size_t)qa, (size_t)ka),
+			 neck ? "its " : "pad ",
+			 neck ? l->b : pad_name((size_t)qb, (size_t)kb), t->w,
+			 w);
+		fault(msg, t->xy[0], t->xy[1]);
 	}
+	free(done);
 }
 
 // Every part placed by a current statement.

@@ -7,7 +7,9 @@
 // Reads the source (sch(5)), every page of it, and its symbols, as
 // schdraw does, and writes the flat netlist (netlist(5)): a part record
 // for each part, by its designator, and a net record for each net, with
-// its pins by their numbers; a global net of several pages is one net.
+// its pins by their numbers and its class (power for the net of a
+// supply or ground flag); a global net of several pages is one net.  A
+// net of two classes is a fault, and then no netlist is written.
 // Flags are not parts; each pin on no net is a pin record of its own,
 // after the nets, nc if the source leaves it unconnected on purpose, -
 // if not.  The parts and the pins of a net are sorted by designator and
@@ -124,13 +126,43 @@ static void write_part(const struct sch_part *q)
 	printf(" name %s\n", q->name);
 }
 
+// The class of the nets n[0] .. n[m-1], of one name, or NULL; *clash
+// is set if they are of two classes, told once, by the line of a class
+// statement.
+static const char *net_class(const struct net_at *n, size_t m, int *clash)
+{
+	const struct net_at *c = NULL;
+
+	for (size_t i = 0; i < m; i++) {
+		const struct net_at *o = &n[i];
+
+		*clash |= o->t->clash;
+		if (!o->t->klass) {
+			continue;
+		}
+		if (!c) {
+			c = o;
+		} else if (strcmp(c->t->klass, o->t->klass)) {
+			const struct net_at *at = o->t->class_line ? o : c;
+
+			sch_warn("%s:%d: net %s is of class %s and of class %s",
+				 at->s->file, at->t->class_line, o->t->name,
+				 c->t->klass, o->t->klass);
+			*clash = 1;
+			break;
+		}
+	}
+	return c ? c->t->klass : NULL;
+}
+
 // Writes the net record of the nets n[0] .. n[m-1], of one name: their
 // pins, those of the flags left out, if any are left.
 static void write_net(const struct net_at *n, size_t m)
 {
 	struct at *pin;
 	size_t np = 0, k = 0;
-	int global = 0;
+	int global = 0, clash = 0;
+	const char *c = net_class(n, m, &clash);
 
 	for (size_t i = 0; i < m; i++) {
 		np += n[i].t->nend;
@@ -149,7 +181,8 @@ static void write_net(const struct net_at *n, size_t m)
 	}
 	qsort(pin, k, sizeof *pin, by_pin);
 	if (k) {
-		printf("net %s%s", n[0].t->name, global ? " global" : "");
+		printf("net %s%s%s%s", n[0].t->name, global ? " global" : "",
+		       c ? " class " : "", c ? c : "");
 		for (size_t j = 0; j < k; j++) {
 			const struct sch_part *q = &pin[j].s->part[pin[j].part];
 
@@ -166,7 +199,7 @@ int main(int argc, char **argv)
 	size_t nlib = 0, npage, npart = 0, nnet = 0;
 	struct at *part;
 	struct net_at *net;
-	int i = 1, faults;
+	int i = 1, faults, clash = 0;
 
 	for (; i < argc && argv[i][0] == '-'; i++) {
 		if (strcmp(argv[i], "-L") == 0 && i + 1 < argc) {
@@ -218,12 +251,29 @@ int main(int argc, char **argv)
 		}
 	}
 	qsort(part, npart, sizeof *part, by_ref);
+	qsort(net, nnet, sizeof *net, by_name);
+	// A net of two classes: no netlist.
+	for (size_t k = 0, m; k < nnet; k += m) {
+		for (m = 1; k + m < nnet &&
+			    !strcmp(net[k].t->name, net[k + m].t->name);
+		     m++) {
+		}
+		(void)net_class(&net[k], m, &clash);
+	}
+	if (clash) {
+		free(part);
+		free(net);
+		for (size_t k = 0; k < nlib; k++) {
+			free(lib[k]);
+		}
+		free(lib);
+		return 1;
+	}
 	printf("# netlist of %s, from schnet\n",
 	       strrchr(argv[i], '/') ? strrchr(argv[i], '/') + 1 : argv[i]);
 	for (size_t k = 0; k < npart; k++) {
 		write_part(&part[k].s->part[part[k].part]);
 	}
-	qsort(net, nnet, sizeof *net, by_name);
 	for (size_t k = 0, m; k < nnet; k += m) {
 		for (m = 1; k + m < nnet &&
 			    !strcmp(net[k].t->name, net[k + m].t->name);

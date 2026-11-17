@@ -43,6 +43,7 @@ place PART|GROUP near THING [WAY] [GAP] [rot R]
                                      in the nearest room by THING
 width NET W                          its tracks
 width PIN PIN W                      the copper between two of its pins
+class CLASS width W                  the tracks of the nets of the class
 path NET PIN PIN...                  its pins wired in this order
 fork NET PIN to PIN PIN              the pin fed to the middle of the
                                      copper between the two
@@ -77,7 +78,20 @@ chooses, of the four turns, the one that brings its pad of the pin's
 net nearest the pin.
 .PP
 The width of the copper between two pins of a net is the width of a
-statement naming them, else the net's, else the rule's.
+statement naming them, else the net's, else its class's
+.RB ( class
+.I CLASS
+.B width
+.IR W ,
+of the class the netlist gives the net,
+.IR netlist (5)),
+else rule track.
+A class will carry the other requirements of its nets later, as an
+impedance.
+A track keeps its width end to end, into a pad narrower than it too;
+the one copper narrower is the neck of a plane net's pad of a small
+part of two pins (each pad 1 mm2 or less), to its via or its plane: no
+wider than rule track, so the part heats alike at its pads.
 The rules, in mm: clearance between copper of two nets (0.2); track,
 the width of a track (0.2); via, a via's diameter and drill (0.6 0.3);
 viagap, from the edge of a pad soldered (a pad with paste, or a plated

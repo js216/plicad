@@ -91,12 +91,16 @@ struct sch_end {
 };
 
 // A net: its name and its pins.  A global net, one named by a flag or by
-// a port of the sheet, is the same net wherever its name is used.
+// a port of the sheet, is the same net wherever its name is used.  Its
+// class, NULL for none, is of a class statement, or power for the net of
+// a supply or ground flag; class_line is the line of the class
+// statement, 0 for none, and clash tells that a second class was given
+// it, a fault.
 struct sch_net {
-	char *name;
+	char *name, *klass;
 	struct sch_end *end;
 	size_t nend;
-	int global, line;
+	int global, line, class_line, clash;
 };
 
 // A wire said in the source between two pins, with the side its path
