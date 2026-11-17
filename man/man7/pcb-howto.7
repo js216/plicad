@@ -11,13 +11,13 @@ In one call, read this page and the notes of the groups to lay out, in
 the schematic source: grep -nE '^ *(group|note|end)' board.sch.
 .IP 2. 3
 Write the statements of one block.
-Blocks alike are copies: write the first after a marker comment, then
-copy from the marker on with a shell loop renaming the group; the lines
-above the marker (outline, rules, fixed parts) stay single.
+A block alike is a copy: write the first, then one line for each
+other, block GROUP as GROUP, and place its root (fix main.ch2.jack.j
+at ...); the copy needs no other statement.
 .nf
-b=$(sed -n '/^# ch1 begins/,$p' board.pcb)
-for c in 2 3 4; do printf '%s\en' "$b" |
-  sed "s/\e.ch1\eb/.ch$c/g; s/^# ch1 /# ch$c /"; done >> board.pcb
+block main.ch1
+block main.ch2 as main.ch1
+block main.ch3 as main.ch1
 .fi
 .IP 3. 3
 Write and run in the same call: append with a here-document
@@ -54,6 +54,7 @@ place PART WAY from PIN [rot R]       its pad of the pin's net by the pin
 place PART|GROUP near THING [WAY] [GAP]  the nearest clear room by a
                                       part, group, pin, cutout N or edge
 block GROUP                           laid out alone, then moved whole
+block GROUP as GROUP                  a copy of the second block
 path NET PIN PIN...                   the net's pins wired in this order
 width NET W | width PIN PIN W         track width, net or one stretch
 via PIN WAY                           the way its plane via goes

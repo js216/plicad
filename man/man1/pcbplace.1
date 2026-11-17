@@ -72,6 +72,13 @@ A run lays out the whole board by its groups: each group of a
 statement alone, the deepest first (of one depth in the order of their
 names), each in its section of the lock, then the board, of its blocks
 (pcb(5)).
+A copy
+.RB ( block
+.I COPY
+.B as
+.IR SOURCE )
+is not laid out: after SOURCE, its sections become SOURCE's, renamed
+part for part and net for net.
 With
 .B \-g
 .I group

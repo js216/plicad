@@ -102,6 +102,20 @@ struct pcb_stmt {
 	int n, line;
 };
 
+// A block copied from another (block GROUP as GROUP): the copy, its
+// source and the line; whether the two are of the same parts and nets
+// (ok), and then the net of the copy for each net of the source (-1 for
+// none); and the statements of the copy placing what one of its
+// source's places, each replaced by the source's (by index), and the
+// lines they were on.
+struct pcb_copy {
+	char *group, *src;
+	int line, ok;
+	long *net;
+	size_t *dup, ndup;
+	int *dup_line;
+};
+
 struct pcb {
 	const char *file;
 	double board[4]; // The outline, a rectangle.
@@ -130,6 +144,11 @@ struct pcb {
 	size_t nlink;
 	struct pcb_stmt *stmt;
 	size_t nstmt;
+	// The copies: the statements of each source's parts and nets, renamed,
+	// are among the statements, so each program reads a copy's parts as
+	// placed and routed like its source's.
+	struct pcb_copy *copy;
+	size_t ncopy;
 	// For each net, the words its copper was made from, and its pads as
 	// they stood then, a line each (pcb_net_pads).
 	char **netby, ***netpad;
@@ -180,12 +199,22 @@ typedef int pcb_pass(const char *file, char **lib, size_t nlib,
 		     const char *group, FILE *in, FILE *out);
 // Runs pass over every group of a block statement of the source, the
 // deepest first (a group within another before it; of one depth, in the
-// order of their names), then over the board, each on the lock the one
-// before wrote; or over the group alone, if one is given.  The lock is
-// read from in and the last pass writes to out.  Returns non-zero if any
-// pass failed.
+// order of their names, the copies last), then over the board, each on
+// the lock the one before wrote; or over the group alone, if one is
+// given.  A copy is no pass: its sections become its source's, renamed
+// part for part and net for net.  The lock is read from in and the last
+// pass writes to out.  Returns non-zero if any pass failed.
 int pcb_passes(const char *file, char **lib, size_t nlib, const char *group,
 	       FILE *in, FILE *out, pcb_pass *pass);
+// Tells the faults of the copies (block GROUP as GROUP): a source that
+// is no block, or is or holds a copy; a copy and source of which one
+// holds the other, or the source shallower; the two not of the same
+// parts and nets; a statement of the copy placing what one of its
+// source's places.
+void pcb_tell_copies(struct pcb *b);
+// The statement that places part k: a place or fix statement naming it
+// (the last), else one placing a group of it whole (the first), or NULL.
+const struct pcb_stmt *pcb_placed_by(const struct pcb *b, size_t k);
 // Opens the lock of the command line: the file named, stdin for none; a
 // file that is not there is nothing locked yet (NULL).
 FILE *pcb_open_lock(const char *path);

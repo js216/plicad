@@ -1316,12 +1316,460 @@ static size_t depth(const char *g)
 	return n;
 }
 
+// Whether a name is of a group: GROUP.REST.
+static int of_group(const char *name, const char *group)
+{
+	size_t n = strlen(group);
+
+	return !strncmp(name, group, n) && name[n] == '.';
+}
+
+// A name of the source in the copy: the copy's group for the source's,
+// GROUP.REST of the copy for GROUP.REST of the source; any other name
+// as it is.
+static char *moved(const struct pcb_copy *cp, const char *w)
+{
+	char *s;
+
+	if (strcmp(w, cp->src) && !of_group(w, cp->src)) {
+		return pcb_strdup(w);
+	}
+	s = pcb_alloc(strlen(cp->group) + strlen(w));
+	strcpy(s, cp->group);
+	strcat(s, w + strlen(cp->src));
+	return s;
+}
+
+// A word of the source in the copy: a net of the source, the copy's
+// net; else as moved.
+static char *in_copy(const struct pcb *b, const struct pcb_copy *cp,
+		     const char *w)
+{
+	long k = net_named(b, w);
+
+	if (k >= 0 && cp->net[k] >= 0) {
+		return pcb_strdup(b->net[cp->net[k]].name);
+	}
+	return moved(cp, w);
+}
+
+// The name of the net of pad p of part q, "-" for none.
+static const char *net_word(const struct pcb *b, size_t q, size_t p)
+{
+	int n = pcb_net_of(b, q, p);
+
+	return n >= 0 ? b->net[n].name : "-";
+}
+
+// Whether the two groups of a copy are of the same parts (by name past
+// the group, of one footprint) and nets, pad for pad, making the map of
+// the nets; the fault, if any, told if tell is set.
+static int copy_alike(struct pcb *b, struct pcb_copy *cp, int tell)
+{
+	const char *c = cp->group, *s = cp->src;
+	long *back = pcb_alloc((b->nnet + 1) * sizeof *back);
+	char why[2048] = "";
+	int block = 0, held = 0;
+
+	free(cp->net);
+	cp->net = pcb_alloc((b->nnet + 1) * sizeof *cp->net);
+	for (size_t k = 0; k < b->nnet; k++) {
+		cp->net[k] = back[k] = -1;
+	}
+	for (size_t i = 0; i < b->nstmt; i++) {
+		block |= !strcmp(b->stmt[i].w[0], "block") &&
+			 b->stmt[i].n == 2 && !strcmp(b->stmt[i].w[1], s);
+	}
+	for (size_t i = 0; i < b->ncopy; i++) {
+		held |= !strcmp(b->copy[i].group, s) ||
+			of_group(b->copy[i].group, s);
+	}
+	if (!strcmp(c, s) || of_group(c, s) || of_group(s, c)) {
+		snprintf(why, sizeof why, "the one holds the other");
+	} else if (held) {
+		snprintf(why, sizeof why,
+			 "%s is or holds a copy; copy a block that is none", s);
+	} else if (!block) {
+		snprintf(why, sizeof why, "%s is no block", s);
+	} else if (depth(s) < depth(c)) {
+		snprintf(why, sizeof why,
+			 "%s is shallower than %s, so laid out after it", s, c);
+	}
+	for (size_t i = 0; !*why && i < b->npart; i++) {
+		const char *name = b->part[i].name;
+		int mine = of_group(name, c);
+		char *o;
+		long j;
+
+		if (!mine && !of_group(name, s)) {
+			continue;
+		}
+		o = pcb_alloc(strlen(name) + strlen(c) + strlen(s));
+		sprintf(o, "%s%s", mine ? s : c, name + strlen(mine ? c : s));
+		j = part_named(b, o);
+		if (j < 0 || b->part[j].fp != b->part[i].fp) {
+			snprintf(why, sizeof why,
+				 "not of the same parts (%s %s %s)", name,
+				 j < 0 ? "and no" : "of another footprint than",
+				 o);
+		}
+		free(o);
+		for (size_t p = 0;
+		     !*why && !mine && b->part[i].fp && p < b->part[i].fp->npad;
+		     p++) {
+			int ns = pcb_net_of(b, i, p),
+			    nc = pcb_net_of(b, (size_t)j, p);
+
+			if ((ns < 0) != (nc < 0) ||
+			    (ns >= 0 &&
+			     ((cp->net[ns] >= 0 && cp->net[ns] != nc) ||
+			      (back[nc] >= 0 && back[nc] != ns)))) {
+				char *ks = pcb_pad_key(b, i, p),
+				     *kc = pcb_pad_key(b, (size_t)j, p);
+
+				snprintf(why, sizeof why,
+					 "not of the same nets (%s on %s, %s "
+					 "on %s)",
+					 ks, net_word(b, i, p), kc,
+					 net_word(b, (size_t)j, p));
+				free(ks);
+				free(kc);
+			} else if (ns >= 0) {
+				cp->net[ns] = nc;
+				back[nc] = ns;
+			}
+		}
+	}
+	if (*why && tell) {
+		pcb_error(b, cp->line, "block %s as %s: %s", c, s, why);
+	}
+	free(back);
+	return !*why;
+}
+
+// Whether statement st of the source is the copy's too, renamed: a
+// block statement of a group in the source; a place statement of a
+// part or group of the source against one of it; a ref, width, path,
+// fork or via statement naming a part, pin or net of the source (a net
+// the copy has another of) and no part or pin outside it.
+static int copied(const struct pcb *b, const struct pcb_copy *cp,
+		  const struct pcb_stmt *st)
+{
+	const char *k = st->w[0];
+	int in = 0;
+
+	if (!strcmp(k, "block")) {
+		return st->n == 2 && of_group(st->w[1], cp->src);
+	}
+	if (!strcmp(k, "place")) {
+		return st->n >= 4 && of_group(st->w[1], cp->src) &&
+		       of_group(!strcmp(st->w[2], "near") ? st->w[3] :
+				st->n >= 5		  ? st->w[4] :
+							    "",
+				cp->src);
+	}
+	if (strcmp(k, "ref") && strcmp(k, "width") && strcmp(k, "path") &&
+	    strcmp(k, "fork") && strcmp(k, "via")) {
+		return 0;
+	}
+	for (int i = 1; i < st->n; i++) {
+		long n = net_named(b, st->w[i]);
+		size_t q, p;
+
+		if (of_group(st->w[i], cp->src) ||
+		    (n >= 0 && cp->net[n] >= 0 && cp->net[n] != n)) {
+			in = 1;
+		} else if (part_named(b, st->w[i]) >= 0 ||
+			   pcb_pin(b, st->w[i], &q, &p)) {
+			return 0;
+		}
+	}
+	return in;
+}
+
+// Whether two statements place the same thing (place or fix), or its
+// designator (ref), or make the same block.
+static int same_place(const struct pcb_stmt *a, const struct pcb_stmt *o)
+{
+	int pa = !strcmp(a->w[0], "place") || !strcmp(a->w[0], "fix"),
+	    po = !strcmp(o->w[0], "place") || !strcmp(o->w[0], "fix");
+
+	return a->n >= 2 && o->n >= 2 && !strcmp(a->w[1], o->w[1]) &&
+	       (pa ? po :
+		     (!strcmp(a->w[0], "ref") || !strcmp(a->w[0], "block")) &&
+				!strcmp(a->w[0], o->w[0]));
+}
+
+// Reads the copies (block GROUP as GROUP), each its statement made
+// block GROUP; then gives each copy of the same parts and nets as its
+// source the source's statements, renamed, on the copy's line, each in
+// place of the copy's own statement placing the same (a fault).
+static void read_copies(struct pcb *b)
+{
+	size_t n0 = b->nstmt;
+
+	for (size_t i = 0; i < n0; i++) {
+		struct pcb_stmt *st = &b->stmt[i];
+		struct pcb_copy cp;
+
+		if (strcmp(st->w[0], "block") || st->n != 4 ||
+		    strcmp(st->w[2], "as")) {
+			continue;
+		}
+		memset(&cp, 0, sizeof cp);
+		cp.group = pcb_strdup(st->w[1]);
+		cp.src = st->w[3];
+		cp.line = st->line;
+		free(st->w[2]);
+		st->n = 2;
+		b->copy = pcb_grow(b->copy, b->ncopy, sizeof *b->copy);
+		b->copy[b->ncopy++] = cp;
+	}
+	for (size_t c = 0; c < b->ncopy; c++) {
+		struct pcb_copy *cp = &b->copy[c];
+
+		cp->ok = copy_alike(b, cp, 0);
+		for (size_t i = 0; cp->ok && i < n0; i++) {
+			struct pcb_stmt st;
+			size_t u = 0;
+
+			if (!copied(b, cp, &b->stmt[i])) {
+				continue;
+			}
+			st.n = b->stmt[i].n;
+			st.line = cp->line;
+			st.w = pcb_alloc((size_t)st.n * sizeof *st.w);
+			for (int j = 0; j < st.n; j++) {
+				st.w[j] = in_copy(b, cp, b->stmt[i].w[j]);
+			}
+			while (u < n0 && !same_place(&b->stmt[u], &st)) {
+				u++;
+			}
+			if (u < n0) {
+				cp->dup = pcb_grow(cp->dup, cp->ndup,
+						   sizeof *cp->dup);
+				cp->dup_line = pcb_grow(cp->dup_line, cp->ndup,
+							sizeof *cp->dup_line);
+				cp->dup[cp->ndup] = u;
+				cp->dup_line[cp->ndup++] = b->stmt[u].line;
+				for (int j = 0; j < b->stmt[u].n; j++) {
+					free(b->stmt[u].w[j]);
+				}
+				free(b->stmt[u].w);
+				b->stmt[u] = st;
+				continue;
+			}
+			b->stmt = pcb_grow(b->stmt, b->nstmt, sizeof *b->stmt);
+			b->stmt[b->nstmt++] = st;
+		}
+	}
+}
+
+void pcb_tell_copies(struct pcb *b)
+{
+	for (size_t c = 0; c < b->ncopy; c++) {
+		struct pcb_copy *cp = &b->copy[c];
+
+		if (!copy_alike(b, cp, 1)) {
+			continue;
+		}
+		for (size_t i = 0; i < cp->ndup; i++) {
+			pcb_error(b, cp->dup_line[i],
+				  "%s is of the copy %s, laid out as in its "
+				  "source %s",
+				  b->stmt[cp->dup[i]].w[1], cp->group, cp->src);
+		}
+	}
+}
+
+const struct pcb_stmt *pcb_placed_by(const struct pcb *b, size_t k)
+{
+	const char *name = b->part[k].name;
+	const struct pcb_stmt *by = NULL;
+
+	for (size_t s = 0; s < b->nstmt; s++) {
+		const struct pcb_stmt *st = &b->stmt[s];
+
+		if ((!strcmp(st->w[0], "place") || !strcmp(st->w[0], "fix")) &&
+		    st->n >= 2 && !strcmp(st->w[1], name)) {
+			by = st;
+		}
+	}
+	for (size_t s = 0; !by && s < b->nstmt; s++) {
+		const struct pcb_stmt *st = &b->stmt[s];
+
+		if (!strcmp(st->w[0], "place") &&
+		    ((st->n >= 5 && !strcmp(st->w[3], "from")) ||
+		     (st->n >= 4 && !strcmp(st->w[2], "near"))) &&
+		    of_group(name, st->w[1])) {
+			by = st;
+		}
+	}
+	return by;
+}
+
+// A line of a section of the source's lock, in the copy: its parts and
+// nets renamed; a part by its statement now and a net by its words now.
+static void copy_line(const struct pcb *b, const struct pcb_copy *cp, char **w,
+		      int n, FILE *f)
+{
+	int last = !strcmp(w[0], "link") ? 3 : !strcmp(w[0], "pad") ? 2 : 1;
+
+	if (!strcmp(w[0], "part") && n >= 7) {
+		char *name = moved(cp, w[1]), *by;
+		long k = part_named(b, name);
+		const struct pcb_stmt *st =
+			k >= 0 ? pcb_placed_by(b, (size_t)k) : NULL;
+
+		if (st) {
+			by = pcb_by(b, (size_t)k, st);
+			fprintf(f, "part %s %s %s %s %s %s %s\n", name,
+				pcb_ref(&b->part[k]), w[3], w[4], w[5], w[6],
+				by);
+			free(by);
+		}
+		free(name);
+		return;
+	}
+	if (!strcmp(w[0], "net") && n >= 3) {
+		char *name = in_copy(b, cp, w[1]);
+		long k = net_named(b, name);
+		char *by = k >= 0 ? pcb_net_words(b, (size_t)k) :
+				    pcb_strdup("");
+
+		fprintf(f, "net %s by%s%s\n", name, *by ? " " : "", by);
+		free(name);
+		free(by);
+		return;
+	}
+	for (int i = 0; i < n; i++) {
+		char *t = i && i <= last ? in_copy(b, cp, w[i]) :
+					   pcb_strdup(w[i]);
+
+		// A pad's designator: its part's in the copy.
+		if (!strcmp(w[0], "pad") && i == 3 && n == 9) {
+			char *part = in_copy(b, cp, w[2]);
+			long k;
+
+			if (strrchr(part, '.')) {
+				*strrchr(part, '.') = 0;
+			}
+			k = part_named(b, part);
+			free(t);
+			t = pcb_strdup(k >= 0 ? pcb_ref(&b->part[k]) : "-");
+			free(part);
+		}
+		fprintf(f, "%s%s", i ? " " : "", t);
+		free(t);
+	}
+	fputc('\n', f);
+}
+
+// The text of a section of the source's lock, in the copy.
+static char *copy_text(const struct pcb *b, const struct pcb_copy *cp,
+		       const char *text)
+{
+	char *out = NULL, *line = pcb_alloc(LINE),
+	     **w = pcb_alloc(WORDS * sizeof *w);
+	size_t len = 0;
+	FILE *f = open_memstream(&out, &len);
+
+	if (!f) {
+		pcb_die("out of memory");
+	}
+	while (*text) {
+		size_t l = strcspn(text, "\n");
+		int n;
+
+		snprintf(line, LINE, "%.*s", (int)l, text);
+		text += l + (text[l] == '\n');
+		n = split(line, w);
+		if (n) {
+			copy_line(b, cp, w, n, f);
+		}
+	}
+	fclose(f);
+	free(line);
+	free(w);
+	return out;
+}
+
+// The copy of a group, or NULL.
+static const struct pcb_copy *copy_of(const struct pcb *b, const char *group)
+{
+	for (size_t i = 0; i < b->ncopy; i++) {
+		if (!strcmp(b->copy[i].group, group)) {
+			return &b->copy[i];
+		}
+	}
+	return NULL;
+}
+
+// The pass of a copy: the lock with the copy's sections (its group's and
+// those of groups in it) the source's, in the copy, in place of what
+// they were; nothing is placed or routed.
+static int copy_lock(const char *file, char **lib, size_t nlib,
+		     const char *group, FILE *in, FILE *out)
+{
+	struct pcb b;
+	const struct pcb_copy *cp;
+	size_t n = 0;
+
+	pcb_read(&b, file, lib, nlib, in, NULL);
+	cp = copy_of(&b, group);
+	for (size_t i = 0; i < b.nsec; i++) {
+		if (!strcmp(b.sec_name[i], group) ||
+		    of_group(b.sec_name[i], group)) {
+			free(b.sec_name[i]);
+			free(b.sec_text[i]);
+			continue;
+		}
+		b.sec_name[n] = b.sec_name[i];
+		b.sec_text[n++] = b.sec_text[i];
+	}
+	b.nsec = n;
+	for (size_t i = 0; cp && cp->ok && i < n; i++) {
+		if (!strcmp(b.sec_name[i], cp->src) ||
+		    of_group(b.sec_name[i], cp->src)) {
+			char *name = moved(cp, b.sec_name[i]);
+			char *text = copy_text(&b, cp, b.sec_text[i]);
+			size_t k = store_of(&b, name);
+
+			free(b.sec_text[k]);
+			b.sec_text[k] = text;
+			free(name);
+		}
+	}
+	pcb_write_lock(&b, out);
+	pcb_free(&b);
+	return 0;
+}
+
+static const struct pcb *order_src; // The source of the passes.
+
 static int deeper_first(const void *x, const void *y)
 {
 	const char *a = *(char *const *)x, *b = *(char *const *)y;
 	size_t da = depth(a), db = depth(b);
+	int ca = copy_of(order_src, a) != NULL,
+	    cb = copy_of(order_src, b) != NULL;
 
-	return da != db ? (da < db) - (da > db) : strcmp(a, b);
+	return da != db ? (da < db) - (da > db) :
+	       ca != cb ? ca - cb :
+			  strcmp(a, b);
+}
+
+// Whether a group is laid out by no pass: a copy not alike its source,
+// or a group in a copy.
+static int no_pass(const struct pcb *b, const char *group)
+{
+	for (size_t i = 0; i < b->ncopy; i++) {
+		if (of_group(group, b->copy[i].group) ||
+		    (!b->copy[i].ok && !strcmp(group, b->copy[i].group))) {
+			return 1;
+		}
+	}
+	return 0;
 }
 
 int pcb_passes(const char *file, char **lib, size_t nlib, const char *group,
@@ -1332,12 +1780,20 @@ int pcb_passes(const char *file, char **lib, size_t nlib, const char *group,
 	size_t ng = 0, len = 0;
 	int failed = 0;
 
-	if (group) {
-		return pass(file, lib, nlib, group, in, out);
-	}
 	pcb_read(&src, file, lib, nlib, NULL, NULL);
+	if (group) {
+		const struct pcb_copy *cp = copy_of(&src, group);
+
+		failed = cp && cp->ok ?
+				 copy_lock(file, lib, nlib, group, in, out) :
+				 pass(file, lib, nlib, group, in, out);
+		pcb_free(&src);
+		return failed;
+	}
+	order_src = &src;
 	for (size_t i = 0; i < src.nstmt; i++) {
-		if (!strcmp(src.stmt[i].w[0], "block") && src.stmt[i].n == 2) {
+		if (!strcmp(src.stmt[i].w[0], "block") && src.stmt[i].n == 2 &&
+		    !no_pass(&src, src.stmt[i].w[1])) {
 			groups = pcb_grow(groups, ng, sizeof *groups);
 			groups[ng++] = src.stmt[i].w[1];
 		}
@@ -1354,8 +1810,9 @@ int pcb_passes(const char *file, char **lib, size_t nlib, const char *group,
 		if (!mid || (i && len && !prev)) {
 			pcb_die("out of memory");
 		}
-		failed |= pass(file, lib, nlib, i < ng ? groups[i] : NULL, prev,
-			       mid);
+		failed |= (i < ng && copy_of(&src, groups[i]) ? copy_lock :
+								pass)(
+			file, lib, nlib, i < ng ? groups[i] : NULL, prev, mid);
 		if (i && prev) {
 			fclose(prev);
 		}
@@ -1435,6 +1892,7 @@ void pcb_read(struct pcb *b, const char *file, char **lib, size_t nlib,
 		}
 	}
 	give_pads(b);
+	read_copies(b);
 	for (size_t k = 0; k < b->nnet; k++) {
 		b->net[k].width = b->track;
 		for (size_t i = 0; i < b->nlayer; i++) {
@@ -1555,6 +2013,14 @@ void pcb_free(struct pcb *b)
 		free(b->stmt[i].w);
 	}
 	free(b->stmt);
+	for (size_t i = 0; i < b->ncopy; i++) {
+		free(b->copy[i].group);
+		free(b->copy[i].src);
+		free(b->copy[i].net);
+		free(b->copy[i].dup);
+		free(b->copy[i].dup_line);
+	}
+	free(b->copy);
 	for (size_t i = 0; i < b->nsec; i++) {
 		free(b->sec_name[i]);
 		free(b->sec_text[i]);

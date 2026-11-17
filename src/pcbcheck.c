@@ -1010,32 +1010,11 @@ static void check_lock(void)
 {
 	for (size_t q = 0; q < B.npart; q++) {
 		const struct pcb_part *p = &B.part[q];
-		char *by = NULL;
-
-		for (size_t s = 0; s < B.nstmt; s++) {
-			const struct pcb_stmt *st = &B.stmt[s];
-
-			if ((!strcmp(st->w[0], "place") ||
-			     !strcmp(st->w[0], "fix")) &&
-			    st->n >= 2 && !strcmp(st->w[1], p->name)) {
-				free(by);
-				by = pcb_by(&B, q, st);
-			}
-		}
 		// The part of a group placed whole that no statement places
 		// is placed by the group's (pcb(5)).
-		for (size_t s = 0; !by && s < B.nstmt; s++) {
-			const struct pcb_stmt *st = &B.stmt[s];
-			size_t n = st->n >= 2 ? strlen(st->w[1]) : 0;
+		const struct pcb_stmt *st = pcb_placed_by(&B, q);
+		char *by = st ? pcb_by(&B, q, st) : NULL;
 
-			if (!strcmp(st->w[0], "place") &&
-			    ((st->n >= 5 && !strcmp(st->w[3], "from")) ||
-			     (st->n >= 4 && !strcmp(st->w[2], "near"))) &&
-			    !strncmp(p->name, st->w[1], n) && n &&
-			    p->name[n] == '.') {
-				by = pcb_by(&B, q, st);
-			}
-		}
 		if (!p->fp) {
 			continue;
 		}
@@ -1441,6 +1420,7 @@ int main(int argc, char **argv)
 		pcb_die("usage: pcbcheck [-l] [-r] [-L LIB]... board.pcb < board.lock");
 	}
 	pcb_read(&B, argv[i], lib, nlib, stdin, NULL);
+	pcb_tell_copies(&B);
 	gather();
 	check_copper();
 	check_viagap();

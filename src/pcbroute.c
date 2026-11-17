@@ -60,6 +60,8 @@
 // copper of a block (block GROUP) is its section's, moved with its
 // parts, and kept as it is, but for a connection that breaks the edge
 // rule on the board (a group alone has no outline): that is made anew.
+// A copy (block GROUP as SRC) is not routed: its sections are SRC's,
+// renamed part for part and net for net (pcb_passes).
 
 #define _POSIX_C_SOURCE 200809L // For fmemopen.
 

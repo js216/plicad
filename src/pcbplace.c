@@ -54,6 +54,8 @@
 // a pin outside lies with its pad of the pin's net toward it, the way
 // back, so the port faces its neighbor.  A statement
 //   block GROUP        the group is laid out alone, its section in the lock
+//   block GROUP as SRC a copy of block SRC: its sections are SRC's,
+//                      renamed, and the statements of SRC's parts hold
 // makes the group one rigid body in any layout round it: its parts stand
 // as its section has them, the whole moved, unturned, to where its root's
 // statement puts its root, then pushed out its way until clear.
@@ -1068,7 +1070,7 @@ static void read_blocks(char **lib, size_t nlib)
 			continue;
 		}
 		if (st->n != 2) {
-			pcb_error(&B, st->line, "block GROUP");
+			pcb_error(&B, st->line, "block GROUP [as GROUP]");
 			continue;
 		}
 		if (scope && !of_group(st->w[1], scope)) {
@@ -1337,6 +1339,9 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 	blocks = NULL;
 	nblocks = 0;
 	pcb_read(&B, file, lib, nlib, in, scope);
+	if (!scope) {
+		pcb_tell_copies(&B);
+	}
 	stmt_of = pcb_alloc((B.npart + 1) * sizeof *stmt_of);
 	anchor = pcb_alloc((B.npart + 1) * sizeof *anchor);
 	kept = pcb_alloc((B.npart + 1) * sizeof *kept);

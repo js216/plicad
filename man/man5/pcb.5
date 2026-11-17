@@ -49,6 +49,7 @@ fork NET PIN to PIN PIN              the pin fed to the middle of the
 via PIN WAY                          the way its plane via goes
 unplaced GROUP			   its parts not on the board yet
 block GROUP                          the group laid out alone
+block GROUP as GROUP                 a copy of the second, a block
 ref PART SIDE [ALIGN] [rot 90] [size H]
                                    its designator by its courtyard
 text TEXT at X Y [size H] [bottom]   text on the silkscreen
@@ -189,6 +190,38 @@ In a layout round it, a block's pads keep the clearance from the vias of
 the other blocks.
 So a board is made inside out: the leaf blocks, then the groups of
 blocks, each its own section, then the board.
+.PP
+.B block
+.I COPY
+.B as
+.I SOURCE
+makes the group COPY a block that is a copy of the block SOURCE: its
+sections of the lock (COPY's and those of the groups in it) are
+SOURCE's, renamed part for part and net for net, so its parts stand in
+the same places and turns, relative to each other, with the same
+copper.
+Nothing of the copy is placed or routed: its sections are copied anew
+from SOURCE's in each run, after SOURCE is laid out.
+The statements of SOURCE about its parts and nets (its blocks, the
+place statements against its own parts, and its ref, width, path, fork
+and via statements naming none outside it) hold for the copy, renamed;
+so the copy's parts need no statements of their own, and a statement
+of the copy placing what one of SOURCE's places is a fault, naming the
+part.
+The copy's root (its part of the name of SOURCE's root) is placed by
+a statement of its own, outside the copy (fixed, or placed against a
+part or pin outside it), and the copy stands where its root stands, as
+a block does.
+The two groups must be of the same parts (the same names past the
+group, of the same footprints) on nets that match one to one, pad for
+pad (a net of both, as a supply, matches itself).
+A fault, each told once, names the statement: the two not of the same
+parts or nets (the first part or pad that differs); a SOURCE that is
+no block, or is or holds a copy (a copy is of a block that is none);
+the one group holding the other; a SOURCE shallower than COPY, so laid
+out after it.
+.IR Pcbcheck (1)
+checks the copy as any other copper.
 .SS Lock
 The lock is what the programs resolved, beside the source: generated,
 never edited, but kept, so its diff is the review of an edit.
@@ -259,6 +292,16 @@ place outputs.ch1.term up from outputs.ch1.jack.j.1
 place outputs.ch1.term.r2 left of outputs.ch1.term.r1
 fork outputs.ch1.gain.out outputs.ch1.gain.amp.out to outputs.ch1.term.r1.1 outputs.ch1.term.r2.1
 fork outputs.ch1.term.out outputs.ch1.jack.j.1 to outputs.ch1.term.r1.2 outputs.ch1.term.r2.2
+.fi
+.PP
+A second channel laid out as the first, a copy of its block, standing
+by its own jack:
+.PP
+.nf
+block outputs.ch1
+block outputs.ch2 as outputs.ch1
+fix outputs.ch1.jack.j at 93.5736 -141.224
+fix outputs.ch2.jack.j at 113.8936 -141.224
 .fi
 .SH SEE ALSO
 pcbplace(1), pcbroute(1), pcbcheck(1), pcbgerber(1), pcbfp(5),

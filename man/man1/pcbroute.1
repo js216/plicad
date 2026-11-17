@@ -104,6 +104,13 @@ statement alone, the deepest first, each in its section of the lock,
 then the board, the blocks' copper taken from their sections, but for a
 connection that breaks the edge rule on the board (a group alone has no
 outline), which is made anew.
+A copy
+.RB ( block
+.I COPY
+.B as
+.IR SOURCE )
+is not routed: after SOURCE, its sections become SOURCE's, renamed part
+for part and net for net.
 With
 .B \-g
 .I group
