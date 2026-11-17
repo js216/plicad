@@ -7,9 +7,15 @@ pcb \- board source and lock
 .SH DESCRIPTION
 The board source says in words where the parts go and how their copper
 runs; it is the only file anyone edits.
-Parts and pins have the names of the schematic (ch1.gain.rf,
-ch1.gain.amp.out); there are no coordinates but those the mechanics
-fix.
+There are no coordinates but those the mechanics fix.
+.PP
+Parts and pins are named as in the netlist, by the schematic's page and
+group path: a part is PAGE.GROUP...PART (outputs.ch1.term.r1), a pin is
+PART.PIN by the symbol's pin name or number (outputs.ch1.gain.amp.out,
+outputs.ch1.jack.j.1), and a group is named the same way without the
+part (outputs.ch1.term).
+The netlist, the output of schnet, lists every name.
+.PP
 A statement a line, words separated by blanks; # starts a comment.
 Lengths are mm, y up; angles degrees: the rot R of a fix or place
 statement is 0, 90, 180 or 270.
@@ -124,8 +130,8 @@ with pins on them is whole among its placed pins alone, and
 .IR pcbcheck (1)
 notes the group and each such net.
 .SS Blocks
-A board is laid out by groups, the groups of the schematic (ch1,
-ch1.gain): a block statement says a group is laid out alone, and
+A board is laid out by groups, the groups of the schematic (outputs.ch1,
+outputs.ch1.gain): a block statement says a group is laid out alone, and
 .I pcbplace
 and
 .I pcbroute
@@ -204,10 +210,10 @@ source and lock give the same bytes.
 Deleting a line, or the lock, resolves that anew.
 .SH EXAMPLES
 .nf
-fix ch1.jack.j at 93.5736 -141.224
-place ch1.gain.amp up of ch1.jack.j 9 rot 270
-place ch1.vpos.c down from ch1.gain.amp.v+
-width ch1.term.out 0.635
+fix outputs.ch1.jack.j at 93.5736 -141.224
+place outputs.ch1.gain.amp up of outputs.ch1.jack.j 9 rot 270
+place outputs.ch1.vpos.c down from outputs.ch1.gain.amp.v+
+width outputs.ch1.term.out 0.635
 .fi
 .PP
 A pair of resistors in parallel, their pads in line, between an
