@@ -36,7 +36,7 @@
 // the nearest pad not yet joined to the nearest joined, each by the
 // cheapest path over a grid of 0.05 mm in eight ways laid through the
 // center of its first pad, by A* (Dijkstra's method led by the octile
-// distance), which leaves and enters each pad along its longer side and
+// distance), which leaves and enters each pad any of the eight ways and
 // turns only outside it, keeping its clearance from all copper of other
 // nets, a run between two cells as well as the cells, and from the
 // edge; a bend costs a little more than its length.  So pads in line are
@@ -409,22 +409,6 @@ static void window(int n, double w, double mx, double my, double ox, double oy)
 	}
 }
 
-// The ways a track may leave or enter a pad by, as a mask of the eight
-// ways: along its longer side, right and left or up and down; any of
-// the four for a pad round or about as long as it is wide (within a
-// tenth), and for a long pad, met along its side as well as at its ends.
-static unsigned axis(const struct pcb_spot *s)
-{
-	double e[2][2];
-
-	if (s->shape == PAD_CIRCLE ||
-	    fabs(s->w - s->h) < 0.1 * fmax(s->w, s->h) ||
-	    pcb_pad_ends(s, e) == 2) {
-		return 0x55;
-	}
-	return s->w > s->h ? 0x11 : 0x44;
-}
-
 // The least the path from cell c to the target can cost: the octile
 // distance to the box of its cells (A*).
 static double estimate(int c)
@@ -662,16 +646,14 @@ static void end_at(const unsigned char *g, const struct pcb_spot *s,
 }
 
 // Routes a section of net n of width w from point a to point b, both in
-// the window laid about their middle: out of a the ways of mask ma, into
-// b the ways of mb, straight while in the pad of either (sa, sb, or
-// NULL for a point between); a long pad is left or met at any point of
+// the window laid about their middle, straight while in the pad of
+// either (sa, sb, or NULL for a point between); a long pad is left or met at any point of
 // the line between its ends.  Its corners, from a to b, go to *xy (their
 // number to *n); returns 0 if there is no way, and where it got nearest
 // goes to near.
-static int section(int n, double w, const double *a, unsigned ma,
-		   const struct pcb_spot *sa, const double *b, unsigned mb,
-		   const struct pcb_spot *sb, double **xy, size_t *np,
-		   double near[2])
+static int section(int n, double w, const double *a, const struct pcb_spot *sa,
+		   const double *b, const struct pcb_spot *sb, double **xy,
+		   size_t *np, double near[2])
 {
 	int ca, cb, goal = -1, best, start = -1;
 	size_t m = 0;
@@ -724,9 +706,7 @@ static int section(int n, double w, const double *a, unsigned ma,
 	for (int c = 0; c < WIN * WIN; c++) {
 		for (int d = 0; ga[c] && d < 8; d++) {
 			inp[c] = 1;
-			if (ma >> d & 1) {
-				reach(c * 8 + d, 0, 8);
-			}
+			reach(c * 8 + d, 0, 8);
 		}
 	}
 	while (nheap) {
@@ -742,8 +722,7 @@ static int section(int n, double w, const double *a, unsigned ma,
 		for (int nd = 0; nd < 8; nd++) {
 			int ni = i + DI[nd], nj = j + DJ[nd], nc, turn;
 
-			// Straight while in a pad: out of the first along its
-			// side, into the second along its side.
+			// Straight while in a pad.
 			if ((inp[c] || inq[c]) && nd != d) {
 				continue;
 			}
@@ -751,9 +730,6 @@ static int section(int n, double w, const double *a, unsigned ma,
 				continue;
 			}
 			nc = nj * WIN + ni;
-			if ((inq[nc] || gb[nc]) && !(mb >> nd & 1)) {
-				continue;
-			}
 			if (!gb[nc] && ((bad[nc] & 2) ||
 					(bad[nc] && !inq[nc] && !inp[nc]))) {
 				continue;
@@ -849,9 +825,7 @@ static int midpoint(int n, double w, const double *p, const double *u,
 
 // Joins pad a of net n to pad b: a connection of width w from the center
 // of a to the center of b (of a long pad, from any point of the line
-// between its ends, the nearest the other pad first), leaving and
-// entering each along its longer side (a long pad any of four ways), in
-// sections along the straight line between them, each within the
+// between its ends, the nearest the other pad first), in sections along the straight line between them, each within the
 // window; or, with at, from the point at on copper of the net, left any
 // way, to a, on a grid laid through at, the connection named by a and b
 // all the same.  Returns 0 if there is no way, and stuck says where.
@@ -908,8 +882,7 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 				break;
 			}
 		}
-		ok = section(n, w, from, i || !s0 ? 0xFFu : axis(s0),
-			     i ? NULL : s0, to, i == k - 1 ? axis(s1) : 0xFFu,
+		ok = section(n, w, from, i ? NULL : s0, to,
 			     i == k - 1 ? s1 : NULL, &xy, &m, near);
 		// The sections end to end, each joint once.
 		for (size_t j = nall ? 1 : 0; ok && j < m; j++) {
