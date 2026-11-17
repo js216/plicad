@@ -44,8 +44,12 @@ Every other net is routed on the top layer as a tree of connections,
 each from a pad's center to another's (of a long pad, twice as long as
 wide or more, from its end nearest the other pad, a half width in from
 the end): the pins of its
+.B fork
+statements first (the two last pins joined, then the first pin routed
+from the middle of that copper, by its length, on a grid laid through
+that point, to its pad), then the pins of its
 .B path
-first, then the pins of its
+statements, then the pins of its
 .B width
 statements, then the nearest pad not yet joined to the nearest joined,
 by the cheapest path over a grid of 0.05 mm in eight ways laid through

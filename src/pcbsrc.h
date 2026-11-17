@@ -239,7 +239,7 @@ char *pcb_by(const struct pcb *b, size_t k, const struct pcb_stmt *st);
 // in the order of the net, those placed alone (a group laid out alone
 // places only its own).  The count goes to *n.
 char **pcb_net_pads(const struct pcb *b, size_t k, size_t *n);
-// The statements about net k as a whole (path, via), joined by " ; ":
+// The statements about net k as a whole (path, fork, via), joined by " ; ":
 // what its copper is made from.  The widths are each connection's.
 char *pcb_net_words(const struct pcb *b, size_t k);
 // The name of pad k of part q as the lock and the links name it:

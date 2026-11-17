@@ -15,7 +15,7 @@
 //   the outline and the cutouts, measured from the copper itself to the
 //   round corners (but for the parts it excepts);
 //   each track ends at the center of a pad of its net (or an end of a
-//   long pad) or at a via;
+//   long pad), at a via, or on the copper a fork of its net feeds;
 //   the copper between two pins of a width statement, and each
 //   connection, is no narrower than its width;
 //   every via keeps the via gap from the pads of its net, so a neck
@@ -786,10 +786,56 @@ static void check_thermal(void)
 	}
 }
 
+// Whether (x, y) is on the copper between the two last pins of a fork
+// statement of net n (fork NET PIN to PIN PIN), on its layer: where the
+// fork's first pin is fed.
+static int on_fork(int n, int layer, double x, double y)
+{
+	for (size_t i = 0; i < B.nstmt; i++) {
+		const struct pcb_stmt *st = &B.stmt[i];
+		size_t q[2], p[2];
+		char *ka, *kb;
+		int on = 0;
+
+		if (strcmp(st->w[0], "fork") || st->n != 6 ||
+		    strcmp(st->w[1], B.net[n].name) ||
+		    !pcb_pin(&B, st->w[4], &q[0], &p[0]) ||
+		    !pcb_pin(&B, st->w[5], &q[1], &p[1])) {
+			continue;
+		}
+		ka = pcb_pad_key(&B, q[0], p[0]);
+		kb = pcb_pad_key(&B, q[1], p[1]);
+		for (size_t j = 0; !on && j < B.ntrack; j++) {
+			const struct pcb_track *t = &B.track_[j];
+			const struct pcb_link *l =
+				t->link >= 0 ? &B.link[t->link] : NULL;
+
+			if (t->net != n || t->layer != layer || !l ||
+			    !((!strcmp(l->a, ka) && !strcmp(l->b, kb)) ||
+			      (!strcmp(l->a, kb) && !strcmp(l->b, ka)))) {
+				continue;
+			}
+			for (size_t e = 1; !on && e < t->n; e++) {
+				on = pcb_seg_dist(x, y, t->xy[2 * e - 2],
+						  t->xy[2 * e - 1],
+						  t->xy[2 * e],
+						  t->xy[2 * e + 1]) < 1e-3;
+			}
+		}
+		free(ka);
+		free(kb);
+		if (on) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 // Each track ends at the center of a pad of its net on its layer, or at
-// a via of its net, or in its own plane on the plane's layer (a neck):
-// a route never ends on the side of a pad, or in the middle of another
-// track.
+// a via of its net, or in its own plane on the plane's layer (a neck),
+// or on the copper between the two last pins of a fork of its net: a
+// route never ends on the side of a pad, or in the middle of another
+// track but a fork's.
 static void check_ends(void)
 {
 	char msg[2048];
@@ -834,6 +880,7 @@ static void check_ends(void)
 					}
 				}
 			}
+			ok = ok || on_fork(t->net, t->layer, x, y);
 			if (!ok) {
 				snprintf(
 					msg, sizeof msg,

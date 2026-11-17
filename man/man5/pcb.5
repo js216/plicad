@@ -36,6 +36,8 @@ place PART|GROUP near THING [WAY] [GAP] [rot R]
 width NET W                          its tracks
 width PIN PIN W                      the copper between two of its pins
 path NET PIN PIN...                  its pins wired in this order
+fork NET PIN to PIN PIN              the pin fed to the middle of the
+                                     copper between the two
 via PIN WAY                          the way its plane via goes
 unplaced GROUP			   its parts not on the board yet
 block GROUP                          the group laid out alone
@@ -58,6 +60,21 @@ soldered, and a via may stand in it; maskweb, the
 least web of solder mask between two openings, and between the opening
 of a pad soldered and a via, which the mask covers (0.1); edge, from copper to the
 outline and the cutouts (0.5), but for the parts it excepts.
+.PP
+A fork statement joins the two pins after to, pins of the net on the
+top, by one connection, a straight track for pads in line with a clear
+way between, then routes the first pin to the middle of that copper, by
+its length, meeting it any way; so the copper from the first pin splits
+equally to both, as a pair in parallel is fed symmetrically.
+The lock keeps the track to the middle as a connection of the first pin
+and the second, and it is made anew whenever the track between the two
+is.
+The two connections take the place of any the router would make
+between the three pins; the other connections of the net are routed as
+before, the pins of the forks first, then those of the paths, then
+those of the widths.
+The track to the middle is as wide as the copper between the first pin
+and the second.
 .PP
 A ref statement puts a part's designator on a SIDE of its courtyard
 (above, below, left or right, at the gap the placer leaves), at the
@@ -131,8 +148,9 @@ A block placed by
 .I GROUP WAY
 .B from
 .I PIN
-stands as one part of two sides: its pads of the pin's net face the
-pin, centered on it across the way, and its other side faces away; its
+stands as one part of two sides: the box of its parts' courtyards
+centered on the pin across the way, its pads of the pin's net toward
+the pin and its other side away; its
 root is its one part that no statement places, its other parts placed
 against each other only.
 In a layout round it, a block's pads keep the clearance from the vias of
@@ -165,7 +183,7 @@ via NET X Y DIA DRILL
 All a program needs to tell what is stale is there in plain words.
 A part is listed with its designator, where it stands, the net of each
 of its pads (its turn depends on them) and the statement it was placed
-by; a net with the statements its copper was made from (path, via,
+by; a net with the statements its copper was made from (path, fork, via,
 joined by ;) and, a pad a line, each of its pads as it stood then:
 its part and name, the part's designator, its center, its size along x
 and y, and its side.
@@ -190,6 +208,19 @@ fix ch1.jack.j at 93.5736 -141.224
 place ch1.gain.amp up of ch1.jack.j 9 rot 270
 place ch1.vpos.c down from ch1.gain.amp.v+
 width ch1.term.out 0.635
+.fi
+.PP
+A pair of resistors in parallel, their pads in line, between an
+amplifier's output and a jack: the block centered on the jack's pin, the
+output fed to the middle of the pair's track on one side and the jack's
+pin drawn from the middle of the other.
+.PP
+.nf
+block ch1.term
+place ch1.term up from ch1.jack.j.1
+place ch1.term.r2 left of ch1.term.r1
+fork ch1.gain.out ch1.gain.amp.out to ch1.term.r1.1 ch1.term.r2.1
+fork ch1.term.out ch1.jack.j.1 to ch1.term.r1.2 ch1.term.r2.2
 .fi
 .SH SEE ALSO
 pcbplace(1), pcbroute(1), pcbcheck(1), pcbgerber(1), pcbfp(5)

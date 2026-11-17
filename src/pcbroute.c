@@ -18,12 +18,16 @@
 //   width NET W            its tracks W mm wide (rule track by default)
 //   width PIN PIN W        the copper between two pins of one net
 //   path NET PIN PIN...    its pins wired in this order, one to the next
+//   fork NET PIN to PIN PIN  the two last joined, the first to the
+//                          middle of their copper
 //   via PIN WAY            the via of a pin of a plane net goes that way
 // A net of a plane layer gets a via by each of its pads, on a neck
 // track, the nearest place clear of all else; the via joins the pad to
 // the plane.  Holes join every layer.  Every other net is routed on the
 // top layer as a tree of connections from pad center to pad center: the
-// pins of its paths first, then the pins of its widths, then the nearest
+// pins of its forks first (the two last pins joined, then the first pin
+// to the middle of that copper, a point met any way), then those of
+// its paths, then the pins of its widths, then the nearest
 // pad not yet joined to the nearest joined, each by the cheapest path
 // over a grid of 0.05 mm in eight ways laid through the center of its
 // first pad, by A* (Dijkstra's method led by the octile distance), which
@@ -754,12 +758,14 @@ static int midpoint(int n, double w, const double *p, const double *u,
 // Joins pad a of net n to pad b: a connection of width w from the center
 // of a to the center of b (of a long pad, from its end nearest the
 // other), leaving and entering each along its longer side, in sections
-// along the straight line between them, each within the window.
-// Returns 0 if there is no way, and stuck says where.
+// along the straight line between them, each within the window; or,
+// with at, from the point at on copper of the net, left any way, to a,
+// on a grid laid through at, the connection named by a and b all the
+// same.  Returns 0 if there is no way, and stuck says where.
 static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
-		   double w)
+		   const double *at, double w)
 {
-	struct pcb_spot sa, sb;
+	struct pcb_spot sa, sb, *s0 = &sa, *s1 = &sb;
 	double pa[2], pb[2], len, u[2], *all = NULL, near[2] = { 0, 0 };
 	double span = (WIN - 2 * MARGIN - 2 * SLIDE) * CELL;
 	size_t nall = 0;
@@ -771,6 +777,13 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 	pad_point(n, &sa, sb.x, sb.y, w, pa);
 	pad_point(n, &sb, pa[0], pa[1], w, pb);
 	pad_point(n, &sa, pb[0], pb[1], w, pa);
+	if (at) {
+		// From the point to the pad, so the point is on the grid.
+		pad_point(n, &sa, at[0], at[1], w, pb);
+		memcpy(pa, at, sizeof pa);
+		s0 = NULL;
+		s1 = &sa;
+	}
 	len = hypot(pb[0] - pa[0], pb[1] - pa[1]);
 	u[0] = len > 0 ? -(pb[1] - pa[1]) / len : 0;
 	u[1] = len > 0 ? (pb[0] - pa[0]) / len : 1;
@@ -802,9 +815,9 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 				break;
 			}
 		}
-		ok = section(n, w, from, i ? 0xFFu : axis(&sa), i ? NULL : &sa,
-			     to, i == k - 1 ? axis(&sb) : 0xFFu,
-			     i == k - 1 ? &sb : NULL, &xy, &m, near);
+		ok = section(n, w, from, i || !s0 ? 0xFFu : axis(s0),
+			     i ? NULL : s0, to, i == k - 1 ? axis(s1) : 0xFFu,
+			     i == k - 1 ? s1 : NULL, &xy, &m, near);
 		// The sections end to end, each joint once.
 		for (size_t j = nall ? 1 : 0; ok && j < m; j++) {
 			all = pcb_grow(all, 2 * nall + 1, sizeof *all);
@@ -838,8 +851,9 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 		B.track_[B.ntrack++] = t;
 	}
 	if (verbose) {
-		fprintf(stderr, "%s: %s to %s, %.3f wide, %d sections\n",
-			B.net[n].name, pad_label(a), pad_label(b), w, k);
+		fprintf(stderr, "%s: %s to %s%s, %.3f wide, %d sections\n",
+			B.net[n].name, pad_label(a), at ? "the middle of " : "",
+			pad_label(b), w, k);
 	}
 	return 1;
 }
@@ -933,16 +947,124 @@ static int join(int n, const struct pcb_end *ends, size_t m, size_t *g,
 	w = pcb_link_width(&B, n, ka, kb);
 	free(ka);
 	free(kb);
-	ok = connect(n, &ends[i], &ends[j], w);
+	ok = connect(n, &ends[i], &ends[j], NULL, w);
 	if (ok) {
 		groups(n, ends, m, g);
 	}
 	return ok;
 }
 
+// Whether statement st is a fork of net n: fork NET PIN to PIN PIN.
+static int is_fork(const struct pcb_stmt *st, int n)
+{
+	return !strcmp(st->w[0], "fork") && st->n == 6 &&
+	       !strcmp(st->w[3], "to") && !strcmp(st->w[1], B.net[n].name);
+}
+
+// The connection of net n between the pads of keys ka and kb, named
+// either way, or -1.
+static long link_of(int n, const char *ka, const char *kb)
+{
+	for (size_t l = 0; l < B.nlink; l++) {
+		const struct pcb_link *k = &B.link[l];
+
+		if (k->net == n && ((!strcmp(k->a, ka) && !strcmp(k->b, kb)) ||
+				    (!strcmp(k->a, kb) && !strcmp(k->b, ka)))) {
+			return (long)l;
+		}
+	}
+	return -1;
+}
+
+// The key of the pad of a pin (PART.PIN), or NULL.
+static char *pin_key(const char *pin)
+{
+	size_t q, p;
+
+	return pcb_pin(&B, pin, &q, &p) ? pcb_pad_key(&B, q, p) : NULL;
+}
+
+// The middle of the copper of connection l, by its length.
+static void middle(long l, double p[2])
+{
+	const struct pcb_track *t = NULL;
+	double len = 0, f;
+
+	for (size_t i = 0; !t && i < B.ntrack; i++) {
+		t = B.track_[i].link == l && B.track_[i].n ? &B.track_[i] :
+							     NULL;
+	}
+	if (!t) {
+		p[0] = p[1] = 0;
+		return;
+	}
+	for (size_t j = 1; j < t->n; j++) {
+		len += hypot(t->xy[2 * j] - t->xy[2 * j - 2],
+			     t->xy[2 * j + 1] - t->xy[2 * j - 1]);
+	}
+	f = len / 2;
+	p[0] = t->xy[2 * t->n - 2];
+	p[1] = t->xy[2 * t->n - 1];
+	for (size_t j = 1; j < t->n; j++) {
+		const double *e = &t->xy[2 * j - 2];
+		double d = hypot(e[2] - e[0], e[3] - e[1]);
+
+		if (f <= d) {
+			p[0] = d > 0 ? e[0] + (e[2] - e[0]) * f / d : e[0];
+			p[1] = d > 0 ? e[1] + (e[3] - e[1]) * f / d : e[1];
+			return;
+		}
+		f -= d;
+	}
+}
+
+// Carries out statement st, a fork of net n: joins its two last pins by
+// one connection, then its first pin to the middle of that copper, a
+// connection named by the first pin and the second.
+static int fork_net(int n, const struct pcb_stmt *st,
+		    const struct pcb_end *ends, size_t m, size_t *g)
+{
+	size_t p = end_of(st->w[2], ends, m), a = end_of(st->w[4], ends, m);
+	size_t b = end_of(st->w[5], ends, m);
+	char *ka, *kb, *kp;
+	double mid[2];
+	long l;
+	int ok;
+
+	if (p == m || a == m || b == m || p == a || p == b || a == b) {
+		pcb_error(&B, st->line,
+			  "fork NET PIN to PIN PIN, three pins of the net "
+			  "on the top");
+		return 1;
+	}
+	if (!join(n, ends, m, g, a, b)) {
+		return 0;
+	}
+	ka = pin_key(st->w[4]);
+	kb = pin_key(st->w[5]);
+	kp = pin_key(st->w[2]);
+	l = link_of(n, ka, kb);
+	ok = 1;
+	if (l < 0) {
+		pcb_error(&B, st->line, "fork: %s and %s joined otherwise",
+			  st->w[4], st->w[5]);
+	} else if (g[p] != g[a]) {
+		middle(l, mid);
+		ok = connect(n, &ends[p], &ends[a], mid,
+			     pcb_link_width(&B, n, kp, ka));
+		if (ok) {
+			groups(n, ends, m, g);
+		}
+	}
+	free(ka);
+	free(kb);
+	free(kp);
+	return ok;
+}
+
 // Routes signal net n: joins its groups of pads by connections, those
-// its paths and widths name first, then the nearest pad not joined to
-// the nearest joined.  Returns 0 if a pad finds no way, and *who says
+// its forks name first, then those of its paths and widths, then the
+// nearest pad not joined to the nearest joined.  Returns 0 if a pad finds no way, and *who says
 // which, from which, and where it got stuck.
 static int route_net(int n, const char **who)
 {
@@ -951,6 +1073,12 @@ static int route_net(int n, const char **who)
 	int ok = 1;
 
 	groups(n, ends, m, g);
+	for (size_t i = 0; ok && i < B.nstmt; i++) {
+		if (is_fork(&B.stmt[i], n)) {
+			ok = fork_net(n, &B.stmt[i], ends, m, g);
+			*who = ok ? *who : stuck;
+		}
+	}
 	for (size_t i = 0; ok && i < B.nstmt; i++) {
 		const struct pcb_stmt *st = &B.stmt[i];
 
@@ -1617,6 +1745,30 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 			free(now[j]);
 		}
 		free(now);
+	}
+	// A fork's first connection, to the middle of its second, is kept
+	// only with it.
+	for (size_t k = 0; k < B.nnet; k++) {
+		for (size_t s = 0; s < B.nstmt; s++) {
+			const struct pcb_stmt *st = &B.stmt[s];
+			char *kp, *ka, *kb;
+			long stem, trunk;
+
+			if (!is_fork(st, (int)k)) {
+				continue;
+			}
+			kp = pin_key(st->w[2]);
+			ka = pin_key(st->w[4]);
+			kb = pin_key(st->w[5]);
+			stem = kp && ka ? link_of((int)k, kp, ka) : -1;
+			trunk = ka && kb ? link_of((int)k, ka, kb) : -1;
+			if (stem >= 0 && (trunk < 0 || !kept[trunk])) {
+				kept[stem] = 0;
+			}
+			free(kp);
+			free(ka);
+			free(kb);
+		}
 	}
 	for (size_t l = 0; l < B.nlink; l++) {
 		if (!kept[l] && B.link[l].net >= 0) {

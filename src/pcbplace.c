@@ -20,8 +20,9 @@
 //   place PART WAY from PIN [rot R]     its pad of the pin's net next
 //                                        to the pin, lying out WAY
 //   place GROUP WAY from PIN            a block whole, as one part of two
-//                                        sides: its pads of the pin's net
-//                                        centered on the pin, toward it
+//                                        sides: its box centered on the
+//                                        pin, its pads of the pin's net
+//                                        toward it
 //   place PART|GROUP near THING [WAY] [GAP] [rot R]
 //                                        the nearest room by THING (a part,
 //                                        group, pin, cutout [N] or edge)
@@ -918,21 +919,19 @@ static int place(size_t k, int block_rot, int *way_out)
 }
 
 // Moves block b, placed whole from a pin by statement st the way way,
-// to stand as one part of two sides would: its pads of the pin's net
-// centered on the pin across the way, its courtyards starting at the
-// anchor's along it.
+// to stand as one part of two sides would: the box of its courtyards
+// centered on the pin across the way, starting at the anchor's
+// courtyard along it.
 static void center_block(size_t b, const struct pcb_stmt *st, int way)
 {
 	size_t a, ap;
 	struct pcb_spot pin;
 	double c[4] = { 1e300, 1e300, -1e300, -1e300 }, d[4];
-	double sx = 0, sy = 0, dx, dy;
-	int net, n = 0;
+	double dx, dy;
 
 	if (!pcb_pin(&B, st->w[4], &a, &ap) || way < 0) {
 		return;
 	}
-	net = pcb_net_of(&B, a, ap);
 	pcb_spot(&B, &B.part[a], ap, &pin);
 	pcb_court(&B.part[a], d);
 	for (size_t i = 0; i < B.npart; i++) {
@@ -946,25 +945,15 @@ static void center_block(size_t b, const struct pcb_stmt *st, int way)
 		c[1] = fmin(c[1], e[1]);
 		c[2] = fmax(c[2], e[2]);
 		c[3] = fmax(c[3], e[3]);
-		for (size_t p = 0; p < B.part[i].fp->npad; p++) {
-			struct pcb_spot o;
-
-			if (net >= 0 && pcb_net_of(&B, i, p) == net) {
-				pcb_spot(&B, &B.part[i], p, &o);
-				sx += o.x;
-				sy += o.y;
-				n++;
-			}
-		}
 	}
-	if (!n) {
+	if (c[0] > c[2]) {
 		return;
 	}
 	if (way == 1 || way == 3) {
-		dx = pin.x - sx / n;
+		dx = pin.x - (c[0] + c[2]) / 2;
 		dy = way == 1 ? d[3] + GAP - c[1] : d[1] - GAP - c[3];
 	} else {
-		dy = pin.y - sy / n;
+		dy = pin.y - (c[1] + c[3]) / 2;
 		dx = way == 0 ? d[2] + GAP - c[0] : d[0] - GAP - c[2];
 	}
 	// By whole steps of the lock's 0.1 um, as the block moves.

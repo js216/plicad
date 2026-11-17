@@ -770,7 +770,8 @@ char *pcb_net_words(const struct pcb *b, size_t k)
 		const struct pcb_stmt *st = &b->stmt[i];
 		int about = 0;
 
-		if (!strcmp(st->w[0], "path") && st->n >= 2) {
+		if ((!strcmp(st->w[0], "path") || !strcmp(st->w[0], "fork")) &&
+		    st->n >= 2) {
 			about = !strcmp(st->w[1], b->net[k].name);
 		} else if (!strcmp(st->w[0], "via") && st->n == 3) {
 			size_t q, p;
