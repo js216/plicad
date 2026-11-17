@@ -1,20 +1,20 @@
 # netlist of sch_filter.sch, from schnet
-part C701 capacitor value 100nF swap 1,2 name filter.vpos.c
-part C702 capacitor value 100nF swap 1,2 name filter.vneg.c
-part C703 capacitor value 10nF swap 1,2 name filter.lpf.c
-part C704 capacitor value 10nF swap 1,2 name filter.lpf.c2
-part FB701 ferrite value 600R swap 1,2 name filter.vpos.fb
-part FB702 ferrite value 600R swap 1,2 name filter.vneg.fb
-part R701 resistor value 1k swap 1,2 name filter.buf.rf
-part R702 resistor value 1k swap 1,2 name filter.buf.rg
-part R703 resistor value 10k swap 1,2 name filter.lpf.r
-part U701 ti/lmh6609 value LMH6609 pins in+:3,in-:2,out:6,v+:7,v-:4 name filter.buf.amp
-net +12V global FB701.2
-net -12V global FB702.2
-net GND global C701.2 C702.2 C703.2 C704.2 R702.2
-net IN global U701.3
-net OUT global C703.1 C704.1 R703.2
-net filter.buf.amp.in- R701.2 R702.1 U701.2
-net filter.buf.out R701.1 R703.1 U701.6
-net filter.buf.vn C702.1 FB702.1 U701.4
-net filter.buf.vp C701.1 FB701.1 U701.7
+part C101 capacitor value 100nF swap 1,2 name filter.vpos.c
+part C102 capacitor value 100nF swap 1,2 name filter.vneg.c
+part C103 capacitor value 10nF swap 1,2 name filter.lpf.c
+part C104 capacitor value 10nF swap 1,2 name filter.lpf.c2
+part FB101 ferrite value 600R swap 1,2 name filter.vpos.fb
+part FB102 ferrite value 600R swap 1,2 name filter.vneg.fb
+part R101 resistor value 1k swap 1,2 name filter.buf.rf
+part R102 resistor value 1k swap 1,2 name filter.buf.rg
+part R103 resistor value 10k swap 1,2 name filter.lpf.r
+part U101 ti/lmh6609 value LMH6609 pins in+:3,in-:2,out:6,v+:7,v-:4 name filter.buf.amp
+net +12V global FB101.2
+net -12V global FB102.2
+net GND global C101.2 C102.2 C103.2 C104.2 R102.2
+net IN global U101.3
+net OUT global C103.1 C104.1 R103.2
+net filter.buf.amp.in- R101.2 R102.1 U101.2
+net filter.buf.out R101.1 R103.1 U101.6
+net filter.buf.vn C102.1 FB102.1 U101.4
+net filter.buf.vp C101.1 FB101.1 U101.7

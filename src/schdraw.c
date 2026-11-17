@@ -47,6 +47,7 @@
 
 #include "schsrc.h"
 #include <limits.h>
+#include <ctype.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -999,12 +1000,14 @@ static int flag_box(const struct sch_part *q, double b[4], double *tx,
 	double px, py, off, w;
 	const char *fl = q->dev->shape->flag;
 
-	if (strcmp(fl, "supply") && strcmp(fl, "port")) {
+	if (strcmp(fl, "supply") && strcmp(fl, "port") && strcmp(fl, "global")) {
 		return 0;
 	}
 	sch_pin_at(q, 0, &x, &y, &d);
 	out = (d + 2) % 4;
-	off = strcmp(fl, "port") == 0 ? 1.7 + 2.5 : 2.5;
+	off = !strcmp(fl, "port")   ? 1.7 + 2.5 :
+	      !strcmp(fl, "global") ? 1.2 + 2.5 :
+				      2.5;
 	px = x * GRID + DX[out] * off;
 	py = y * GRID + DY[out] * off;
 	w = sch_text_width(q->text, TEXT);
@@ -1411,16 +1414,42 @@ static void extent(double e[4])
 	e[3] += 2;
 }
 
-// The text of a flag: the name of its net beyond its end.
+// The text of a flag: the name of its net beyond its end; of a port,
+// its name and each piece of its list of pages a text of its own (BUF,
+// (, 1, ",", 2, )), so a reader finds where each page number stands.
 static void flag_text(const struct sch_part *q)
 {
 	double b[4], x, y;
-	int align;
-	struct run r = { q->text, 0, TEXT, 0 };
+	int align, n = 1;
+	size_t len = strlen(q->name);
+	struct run r[256];
+	char piece[256][8];
+	const char *t = q->text + (strncmp(q->text, q->name, len) ? 0 : len);
 
-	if (flag_box(q, b, &x, &y, &align)) {
-		text_runs(&r, 1, x, y, align);
+	if (!flag_box(q, b, &x, &y, &align)) {
+		return;
 	}
+	r[0].s = q->name;
+	r[0].italic = 0;
+	r[0].size = TEXT;
+	r[0].drop = 0;
+	if (t == q->text) {
+		r[0].s = q->text;
+		t = "";
+	}
+	while (*t && n < 256) {
+		size_t k = isdigit((unsigned char)*t) ? strspn(t, "0123456789") :
+							1;
+
+		k = k < sizeof piece[0] ? k : sizeof piece[0] - 1;
+		memcpy(piece[n], t, k);
+		piece[n][k] = 0;
+		r[n] = r[0];
+		r[n].s = piece[n];
+		n++;
+		t += k;
+	}
+	text_runs(r, n, x, y, align);
 }
 
 // The pin numbers of a part with a pin table, by its leads.
@@ -1438,7 +1467,9 @@ static void pin_numbers(const struct sch_part *q)
 }
 
 // Where each pin of a part meets its wire, by its designator and number
-// (pin R401.2 X Y), or a flag's, by its net (flag GND X Y).
+// (pin R401.2 X Y), or a flag's, by its net and whether it is a port of
+// the sheet or a global (a ground, a supply, a global): flag GND X Y
+// global.
 static void pin_ends(const struct sch_part *q)
 {
 	for (size_t p = 0; p < q->dev->shape->npin; p++) {
@@ -1447,6 +1478,11 @@ static void pin_ends(const struct sch_part *q)
 		sch_pin_at(q, p, &x, &y, &d);
 		if (q->dev->shape->flag) {
 			printf("flag %s", q->name);
+			printf(" %.3f %.3f %s\n", OX + x * GRID * SC,
+			       OY + y * GRID * SC,
+			       !strcmp(q->dev->shape->flag, "port") ? "port" :
+								      "global");
+			continue;
 		} else {
 			printf("pin %s.%s", q->ref, sch_pnum(q->dev, p));
 		}
@@ -1532,10 +1568,13 @@ static void write_vec(void)
 		const struct label *b = &labels[i];
 		double bx[4];
 
+		// A flag is of its net, drawn lit with it.
 		if (q->dev->shape->flag) {
+			printf("net %s\n", q->name);
 			symbol(q);
 			flag_text(q);
 			pin_ends(q);
+			printf("net\n");
 			continue;
 		}
 		sch_box(q, bx);
@@ -1880,8 +1919,9 @@ static void drop_unplaced(void)
 	free(to);
 }
 
-// Gives each port of the sheet the other pages it is on, by number, after
-// its name, in brackets: BUF(2,5).
+// Gives each port of the sheet the pages it is on, its own too, by
+// number, after its name, in brackets: BUF(1,2); a port on one page
+// alone has none.
 static void cross_refs(void)
 {
 	for (size_t i = 0; i < S.npart; i++) {
@@ -1895,26 +1935,22 @@ static void cross_refs(void)
 		}
 		t = sch_alloc(strlen(q->name) + 8 + 4 * S.npages);
 		strcpy(t, q->name);
-		for (int n = 1; n <= 99; n++) {
+		for (size_t p = 0; p < S.npages; p++) {
+			const struct sch_page *pg = &S.pages[p];
 			int on = 0;
 
-			for (size_t p = 0; p < S.npages; p++) {
-				const struct sch_page *pg = &S.pages[p];
-
-				for (size_t j = 0;
-				     n != S.page && pg->num == n &&
-				     j < pg->nport;
-				     j++) {
-					on |= !strcmp(pg->port[j], q->name);
-				}
+			for (size_t j = 0; j < pg->nport; j++) {
+				on |= !strcmp(pg->port[j], q->name);
 			}
 			if (on) {
 				sprintf(t + strlen(t), "%c%d", any++ ? ',' : '(',
-					n);
+					pg->num);
 			}
 		}
-		if (any) {
+		if (any > 1) {
 			strcat(t, ")");
+		} else {
+			t[strlen(q->name)] = 0;
 		}
 		q->text = t;
 	}

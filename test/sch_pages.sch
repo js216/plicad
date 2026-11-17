@@ -6,13 +6,13 @@
 # port MID of the sheet is said on both, so its pins are one net.  A
 # circuit made up for the tests.
 
-page 5 upper
+page upper
 title Upper half
 resistor r 10k
 supply +5V at r.1
 port MID r.2
 
-page 6 lower
+page lower
 resistor r 4.7k
 ground at r.2
 port MID r.1

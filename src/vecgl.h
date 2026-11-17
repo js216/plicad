@@ -20,11 +20,11 @@
 #include <stdio.h>
 
 // A run: its triangles and segments in the buffers; dark or clear, of a
-// zone's fill, the outline of a zone, a via's hole, and the part (-1
-// none).
+// zone's fill, the outline of a zone, a via's hole, the part (-1 none)
+// and the net (-1 none, vg_net).
 struct vg_run {
 	int first, count, sfirst, scount;
-	int dark, zone, edge, via, part;
+	int dark, zone, edge, via, part, net;
 };
 
 // An element of a part, for picking: the box of what it draws (a body,
@@ -116,6 +116,10 @@ void vg_part_box(int part, double b[4]);
 // The index of the part of the name, added if new; its name.
 int vg_part(const char *s);
 const char *vg_part_name(int i);
+// The index of the net of the name, from its net records, added if new;
+// its name.
+int vg_net(const char *s);
+const char *vg_net_name(int i);
 // Sets the color, in sRGB and opacity; the frame blends in linear light.
 void vg_color(const double c[3], double a);
 // Draws text in a black box in the upper right corner of the window.

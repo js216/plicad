@@ -2,7 +2,7 @@
 # bad_sch_rails.sch -- Two supplies on one net
 # Copyright (c) 2026 Jakob Kastelic
 
-page 1 bad
+page bad
 resistor r 1k
 supply +5V at r.1
 wire r.1 to r.2

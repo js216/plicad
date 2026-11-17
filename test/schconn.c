@@ -6,8 +6,9 @@
 //
 // A test of schdraw, from its output alone: the sheet as vec(5) and
 // the netlist of schnet (netlist(5)).  It sees only what is drawn: the
-// wires (the lines of the nets), the ends of the pins (pin records) and
-// of the flags (flag records).  A pin is on every wire that runs through
+// wires (the lines of the nets; a net bracket that holds a flag record
+// is that flag's drawing, not wires), the ends of the pins (pin records)
+// and of the flags (flag records).  A pin is on every wire that runs through
 // or ends at it; two wires join where the end of one lies on the other;
 // pins at one point join; flags of one name join.  Then each net of the
 // netlist must be one such group, no group may hold pins of two nets (or
@@ -131,6 +132,7 @@ static void read_vec(const char *path)
 	char *line = NULL;
 	size_t cap = 0;
 	int in_net = 0, pages = 0;
+	size_t first = 0; // The first wire of the net bracket open.
 	double shift = 0; // Of the page, to the right of the one before.
 	char part[1024] = "";
 
@@ -153,6 +155,7 @@ static void read_vec(const char *path)
 		} else if (!strncmp(line, "net", 3) &&
 			   (!line[3] || line[3] == ' ')) {
 			in_net = line[3] == ' ';
+			first = nwires;
 		} else if (in_net && !strncmp(line, "line ", 5)) {
 			struct wire w = { NULL, 0 };
 
@@ -190,6 +193,10 @@ static void read_vec(const char *path)
 			ends[nends].x = q(x + shift);
 			ends[nends].y = q(y);
 			ends[nends++].flag = line[0] == 'f';
+			// A flag's lines are its drawing: no wires.
+			while (line[0] == 'f' && in_net && nwires > first) {
+				free(wires[--nwires].xy);
+			}
 		}
 	}
 	free(line);

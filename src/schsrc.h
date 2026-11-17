@@ -105,7 +105,7 @@ struct sch_hint {
 	int side;
 };
 
-// A page of the file: its number and name, the line of its page
+// A page of the file: its number (its place in the file) and name, the line of its page
 // statement, and its sheet ports (the ports outside any group) by name,
 // each with the line it is first said on.
 struct sch_page {
@@ -158,7 +158,7 @@ extern int sch_verbose;
 // of the file come with it.  Each fault of the page is told on stderr,
 // by its line, and the reading goes on without what it touches (a part
 // that cannot be placed is not placed); the faults of the file as a
-// whole (a page number twice, a sheet port on one page alone) are told
+// whole (a page name twice, a sheet port on one page alone) are told
 // with page 0.  Returns the number of faults.
 int sch_read(struct sch *s, const char *file, size_t k, char **lib,
 	     size_t nlib);

@@ -4,7 +4,7 @@
 
 # The branch must keep its room from the return, by a longer lead, and
 # the return its shape.
-page 1 room
+page room
 title Room
 port IN amp.in+
 opamp amp LMH6609

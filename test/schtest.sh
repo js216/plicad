@@ -11,7 +11,7 @@
 # with two pins traded, must not; each test/bad_sch_*.sch must fail
 # with the message of its .expected; a sheet template with more room
 # round bodies draws another sheet, still without a fault; a source of
-# two pages draws two, each port of the sheet naming the other page, and
+# two pages draws two, each port of the sheet naming its pages, and
 # prints as two; the netdiff cases compare by hand-made netlists.  It prints ok or FAIL for each
 # and exits non-zero if any fails.
 
@@ -70,9 +70,9 @@ check sh -c '! "$1/schconn" "$2/swap.vec" "$2/good.nl" > "$2/out" &&
 # Designators wherever a part is named, but never in the source: the
 # brackets of the drawing and the traces of -v.
 name="schdraw names its parts by designator too"
-check sh -c 'grep -qx "part filter.buf.rf R701" "$1/good.vec" &&
+check sh -c 'grep -qx "part filter.buf.rf R101" "$1/good.vec" &&
 	"$2/schdraw" -v -L "$3" test/sch_filter.sch 2>&1 > /dev/null |
-	grep -q "^test/sch_filter.sch:[0-9]*: filter.buf.rf (R701) at "' \
+	grep -q "^test/sch_filter.sch:[0-9]*: filter.buf.rf (R101) at "' \
 	- "$tmp" "$P" "$L"
 
 # Every part shows its designator; the ferrites of the kind the sheet
@@ -96,19 +96,19 @@ check sh -c '"$1/schdraw" -L "$2" "$3/wide/w.sch" > "$3/w.vec" 2> "$3/err" &&
 	! test -s "$3/err" && ! cmp -s "$3/w.vec" "$3/good.vec"' \
 	- "$P" "$L" "$tmp"
 
-# A source of two pages: a page record of each number, each port of the
-# sheet named with the other page it is on, and a page of PostScript for
-# each.
+# A source of two pages: a page record of each number, by their order,
+# each port of the sheet named with every page it is on, and a page of
+# PostScript for each.
 "$P/schdraw" -L "$L" test/sch_pages.sch > "$tmp/pages.vec"
 name="schdraw draws each page from its page record"
-check sh -c 'grep -q "^page [0-9]* [0-9]* 5$" "$1" &&
-	grep -q "^page [0-9]* [0-9]* 6$" "$1" &&
+check sh -c 'grep -q "^page [0-9]* [0-9]* 1$" "$1" &&
+	grep -q "^page [0-9]* [0-9]* 2$" "$1" &&
 	test "$(grep -c "^page " "$1")" = 2' - "$tmp/pages.vec"
-name="schdraw names the other pages of a port of the sheet"
-check awk '$1 == "page" { n = $4 }
-	$1 == "text" && / MID\(6\)$/ && n == 5 { a = 1 }
-	$1 == "text" && / MID\(5\)$/ && n == 6 { b = 1 }
-	END { exit !(a && b) }' "$tmp/pages.vec"
+name="schdraw names the pages of a port of the sheet, its own too"
+check awk '$1 == "page" { n = $4; s = "" }
+	$1 == "text" { s = s $NF } $1 != "text" && $1 != "flag" { s = "" }
+	$1 == "flag" && $2 == "MID" && $NF == "port" && s == "MID(1,2)" { on[n] = 1 }
+	END { exit !(on[1] && on[2]) }' "$tmp/pages.vec"
 name="vecps prints a page for each page record"
 check sh -c '"$1/vecps" "$2" > "$3/pages.ps" &&
 	grep -q "^%%Pages: 2$" "$3/pages.ps" &&

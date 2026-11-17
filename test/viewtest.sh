@@ -152,8 +152,9 @@ echo "!$X schview click $(px 105 130) click $(px 155 143) \
 	click $(px 50 260)" | view "$P/schview" test/view_pick.vec
 check sh -c 'printf "select a\nselect a\nselect b\n" |
 	diff -u - "$1/out"' - "$tmp"
-# The last clicks, on a wire, the frame and nothing, select nothing: no
-# pixel is the cyan of a selection.
+# The last clicks, on a wire, the frame and nothing, select no part, and
+# the last, on nothing, clears the net the wire selected: no pixel is the
+# cyan of a selection.
 name="schview lights nothing of no part"
 check sh -c '! od -An -tu1 -v -w3 "$1/shot.ppm" |
 	awk "\$1 < 200 && \$2 > 250 && \$3 > 250 { f = 1 }

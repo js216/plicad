@@ -840,7 +840,8 @@ static int label_box_at(const struct sch_part *q, int want, double b[4])
 		int x, y, d, out;
 
 		if (!q->text || (strcmp(q->dev->shape->flag, "supply") &&
-				 strcmp(q->dev->shape->flag, "port"))) {
+				 strcmp(q->dev->shape->flag, "port") &&
+				 strcmp(q->dev->shape->flag, "global"))) {
 			return 0;
 		}
 		sch_pin_at(q, 0, &x, &y, &d);
@@ -2075,16 +2076,17 @@ static void read_statement(char **w, int n)
 		laters[nlaters++] = l;
 	} else if (((!strcmp(w[0], "ground") || !strcmp(w[0], "chassis")) &&
 		    n == 3 && !strcmp(w[1], "at")) ||
-		   (!strcmp(w[0], "supply") && n == 4 && !strcmp(w[2], "at"))) {
+		   ((!strcmp(w[0], "supply") || !strcmp(w[0], "global")) &&
+		    n == 4 && !strcmp(w[2], "at"))) {
 		struct later l;
 
 		l.kind = FLAG;
 		l.side = -1;
 		l.ref[0] = sch_strdup(w[n - 1]);
 		l.ref[1] = sch_strdup(w[0]);
-		l.name = sch_strdup(w[0][0] == 's' ? w[1] :
-				    w[0][0] == 'g' ? "GND" :
-						     "CHASSIS");
+		l.name = sch_strdup(n == 4		   ? w[1] :
+				    !strcmp(w[0], "ground") ? "GND" :
+							      "CHASSIS");
 		l.scope = sch_strdup(group_path);
 		l.line = line_no;
 		laters = grow(laters, nlaters, sizeof *laters);
@@ -2483,22 +2485,25 @@ static void forget(void)
 	npins = naliases = nlaters = 0;
 }
 
-// Notes a page statement, PAGE N NAME, among the pages of the file; the
-// page read checks its words.
+// Notes a page statement, page NAME, among the pages of the file,
+// numbered by its place among them; the page read checks its words.
 static void add_page(struct sch *s, char **w, int n, int read)
 {
 	struct sch_page pg;
+	int num;
 
 	memset(&pg, 0, sizeof pg);
 	pg.line = line_no;
-	pg.name = sch_strdup(n == 3 ? w[2] : "");
-	if (n != 3 || !integer(w[1], &pg.num) || pg.num < 1 || pg.num > 99) {
+	pg.name = sch_strdup(n == 2 ? w[1] : "");
+	pg.num = (int)s->npages + 1;
+	if (n != 2 || integer(w[1], &num)) {
 		if (read) {
-			fault("%s: page N NAME, N 1 to 99", where);
+			fault("%s: page NAME, a name and no number", where);
 		}
-		pg.num = 0;
-	} else if (strchr(w[2], '.') && read) {
+	} else if (strchr(w[1], '.') && read) {
 		fault("%s: a name has no dot", where);
+	} else if (pg.num > 99 && read) {
+		fault("%s: more than 99 pages", where);
 	}
 	s->pages = grow(s->pages, s->npages, sizeof *s->pages);
 	s->pages[s->npages++] = pg;
@@ -2526,8 +2531,7 @@ static void note_port(struct sch_page *pg, char **w, int n, int *open)
 	}
 }
 
-// Tells the faults of the pages of the file: a number or a name of a
-// page twice, and, as a warning, a sheet port on one page alone.
+// Tells the faults of the pages of the file: a name of a page twice, and, as a warning, a sheet port on one page alone.
 static void check_pages(const struct sch *s)
 {
 	if (!s->npages) {
@@ -2539,10 +2543,7 @@ static void check_pages(const struct sch *s)
 		for (size_t i = 0; i < j; i++) {
 			const struct sch_page *a = &s->pages[i];
 
-			if (b->num && a->num == b->num) {
-				fault("%s:%d: page %d again", s->file, b->line,
-				      b->num);
-			} else if (*b->name && !strcmp(a->name, b->name)) {
+			if (*b->name && !strcmp(a->name, b->name)) {
 				fault("%s:%d: page %s again", s->file, b->line,
 				      b->name);
 			}
@@ -2632,7 +2633,7 @@ int sch_read(struct sch *s, const char *file, size_t k, char **lib, size_t nlib)
 			add_page(s, w, n, s->npages == k);
 			open = 0;
 			if (s->npages == k + 1) {
-				s->page = s->pages[k].num ? s->pages[k].num : 1;
+				s->page = s->pages[k].num;
 				free(s->name);
 				s->name = sch_strdup(s->pages[k].name);
 				snprintf(group_path, sizeof group_path, "%s",

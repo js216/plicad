@@ -235,7 +235,7 @@ awk '/^link filter.buf.out filter.buf.amp.6 filter.lpf.r.1/ { on = 1; print; nex
 	$1 == "track" && on { $4 = "0.2000" } { print }' "$tmp/w/lock" > "$tmp/w/narrow"
 cp "$tmp/w/keep.pcb" "$tmp/w/pcb_filter.pcb"
 check sh -c '! "$1/pcbcheck" "$2/w/pcb_filter.pcb" < "$2/w/narrow" > "$2/out" &&
-	grep -q "the copper from pad filter.buf.amp.6 (U701) to pad filter.lpf.r.1 (R703) is 0.200 mm wide, narrower than its width 0.500" "$2/out"' \
+	grep -q "the copper from pad filter.buf.amp.6 (U101) to pad filter.lpf.r.1 (R103) is 0.200 mm wide, narrower than its width 0.500" "$2/out"' \
 	- "$P" "$tmp"
 # A layout by groups: the filter laid out alone (its root at the
 # origin, its section of the lock its own), then the board with the
@@ -321,9 +321,9 @@ check sh -c '"$1/pcbvec" -o "$2/v" "$3" < "$2/a" &&
 	grep -q "^name filter.buf.amp " "$2/v/top.vec" &&
 	grep -q "^part filter.buf.amp" "$2/v/topsilk.vec"' - "$P" "$tmp" "$B"
 name="the layout names its parts by designator too"
-check sh -c 'grep -qx "part filter.buf.amp U701" "$2/v/top.vec" &&
+check sh -c 'grep -qx "part filter.buf.amp U101" "$2/v/top.vec" &&
 	"$1/pcbplace" -v "$3" < /dev/null 2>&1 > /dev/null |
-	grep -q ": filter.buf.rf (R701) at "' - "$P" "$tmp" "$B"
+	grep -q ": filter.buf.rf (R101) at "' - "$P" "$tmp" "$B"
 # Each layer says what it is, before it draws, by KiCad's name; so do
 # the Gerbers through gbrvec.
 name="the vectors name their layers"
@@ -337,10 +337,10 @@ check sh -c 'cd "$1/v" && for f in top:F.Cu in1:In1.Cu in2:In2.Cu \
 # the designators and the nets' names in it; and the window of a file
 # is of its drawing alone (a net named -500 is no point).
 name="vecps renders the region of a part with its names"
-check sh -c '"$1/vecps" -p U701 "$2/v/top.vec" "$2/v/topsilk.vec" > "$2/r.ps" &&
-	grep -q "(U701) dup stringwidth" "$2/r.ps" &&
+check sh -c '"$1/vecps" -p U101 "$2/v/top.vec" "$2/v/topsilk.vec" > "$2/r.ps" &&
+	grep -q "(U101) dup stringwidth" "$2/r.ps" &&
 	grep -q "(filter.buf.out) dup stringwidth" "$2/r.ps" &&
-	"$1/vecps" -r 0 0 40 30 "$2/v/top.vec" | grep -q "(U701) dup"' \
+	"$1/vecps" -r 0 0 40 30 "$2/v/top.vec" | grep -q "(U101) dup"' \
 	- "$P" "$tmp"
 printf "net -500\nline 0.1 0 0 10 10\nnet\n" > "$tmp/neg.vec"
 name="vecps windows a file by its drawing alone"

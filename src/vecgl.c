@@ -16,8 +16,8 @@
 
 #define PI 3.14159265358979323846
 
-static char *font_file, **parts;
-static size_t nparts;
+static char *font_file, **parts, **nets;
+static size_t nparts, nnets;
 
 static void *more(void *p, size_t n)
 {
@@ -45,6 +45,24 @@ int vg_part(const char *s)
 const char *vg_part_name(int i)
 {
 	return i >= 0 && (size_t)i < nparts ? parts[i] : "";
+}
+
+int vg_net(const char *s)
+{
+	for (size_t i = 0; i < nnets; i++) {
+		if (!strcmp(nets[i], s)) {
+			return (int)i;
+		}
+	}
+	nets = more(nets, (nnets + 1) * sizeof *nets);
+	nets[nnets] = more(NULL, strlen(s) + 1);
+	strcpy(nets[nnets], s);
+	return (int)nnets++;
+}
+
+const char *vg_net_name(int i)
+{
+	return i >= 0 && (size_t)i < nnets ? nets[i] : "";
 }
 
 // The glyphs of lib/fonts/nimbussans.txt: by font and code point, the
@@ -255,7 +273,7 @@ static void run(void)
 {
 	if (state.dark == cur.dark && state.zone == cur.zone &&
 	    state.edge == cur.edge && state.via == cur.via &&
-	    state.part == cur.part) {
+	    state.part == cur.part && state.net == cur.net) {
 		return;
 	}
 	cur.count = (int)(npt / 2) - cur.first;
@@ -422,6 +440,7 @@ void vg_load_stream(struct vg_file *f, FILE *in, double via)
 	memset(&state, 0, sizeof state);
 	state.dark = 1;
 	state.part = -1;
+	state.net = -1;
 	cur = state;
 	for (int i = 0; i < 4; i++) {
 		f->box[i] = rb[i] = i < 2 ? 1e300 : -1e300;
@@ -445,6 +464,9 @@ void vg_load_stream(struct vg_file *f, FILE *in, double via)
 			}
 			state.part = line[4] ? vg_part(line + 5) : -1;
 			open_elem = -1;
+		} else if (!strncmp(line, "net", 3) &&
+			   (!line[3] || line[3] == ' ')) {
+			state.net = line[3] ? vg_net(line + 4) : -1;
 		} else if (!strncmp(line, "text ", 5)) {
 			text(line);
 			element('t');

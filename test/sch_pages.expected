@@ -1,6 +1,6 @@
 # netlist of sch_pages.sch, from schnet
-part R501 resistor value 10k swap 1,2 name upper.r
-part R601 resistor value 4.7k swap 1,2 name lower.r
-net +5V global R501.1
-net GND global R601.2
-net MID global R501.2 R601.1
+part R101 resistor value 10k swap 1,2 name upper.r
+part R201 resistor value 4.7k swap 1,2 name lower.r
+net +5V global R101.1
+net GND global R201.2
+net MID global R101.2 R201.1

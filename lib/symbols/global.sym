@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# global.sym -- The global flag: a small filled diamond and its name
+# Copyright (c) 2026 Jakob Kastelic
+
+# The diamond is 2.4 pt across, filled, on the end of the wire.
+flag global
+pin 1 0 0 r
+box 0 0 0 0
+fill 1.2 0 0 1.2 -1.2 0 0 -1.2

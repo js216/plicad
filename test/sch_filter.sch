@@ -4,7 +4,7 @@
 
 # The supplies are decoupled at the pins; a circuit made up for the tests.
 
-page 7 filter
+page filter
 title Filtered buffer
 field Rev 1
 

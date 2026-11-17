@@ -1,9 +1,9 @@
 # netlist of sch_divider.sch, from schnet
-part C201 capacitor value 1uF swap 1,2 name divider.c
-part D201 diode name divider.clamp
-part R201 resistor value 10k swap 1,2 name divider.top
-part R202 resistor value 4.7k swap 1,2 name divider.bottom
-net +5V global R201.1
-net 3V3 global D201.2
-net GND global C201.2 R202.2
-net divider.top.2 C201.1 D201.1 R201.2 R202.1
+part C101 capacitor value 1uF swap 1,2 name divider.c
+part D101 diode name divider.clamp
+part R101 resistor value 10k swap 1,2 name divider.top
+part R102 resistor value 4.7k swap 1,2 name divider.bottom
+net +5V global R101.1
+net 3V3 global D101.2
+net GND global C101.2 R102.2
+net divider.top.2 C101.1 D101.1 R101.2 R102.1

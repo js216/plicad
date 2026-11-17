@@ -7,7 +7,7 @@
 # under the output jack, joined to it by nothing.  A circuit made up for
 # the tests.
 
-page 3 feedback
+page feedback
 title Inverting amplifier
 
 opamp u LMH6609 flip

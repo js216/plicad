@@ -37,14 +37,15 @@ part                    and end
 net NAME                the records of a net begin
 net                     and end
 pin REF.PIN X Y         a pin of a part: its end, or its pad's center
-flag NET X Y            the end of the pin of a flag of a net
+flag NET X Y port|global
+                        the end of the pin of a flag of a net
 # TEXT                  a comment
 .fi
 .RE
 .PP
 A file may hold several pages, each from its page record to the next;
 the records before the first page record belong to the first page.
-N is the number of the page, as the source numbers it.
+N is the number of the page, by its order in the source.
 .PP
 A layer record comes before any drawing and names the layer by KiCad's
 name of it:
@@ -92,7 +93,15 @@ A pin record gives where a wire meets a pin of a part on a sheet, or
 the center of a pad of a pin on a layer of copper, by its designator
 and pin number as the netlist names it (R401.2), and a flag
 record where it meets a flag (a ground, a supply, a port), by the name
-of the flag's net; they draw nothing, but say what the drawing joins,
-so a checker can compare it with the netlist.
+of the flag's net, and port for a port of the sheet or global for any
+other flag (a ground, a supply, a global); they draw nothing, but say
+what the drawing joins, so a checker can compare it with the netlist.
+A flag is drawn between net records of its net, so it lights with the
+net; a net bracket that holds a flag record is that flag's drawing, and
+its lines are no wires.
+The text records just before a flag record are the flag's text, a
+record a span: a port's name, then each piece of its list of pages, the
+bracket, each number and each comma, a text of its own; so a viewer or
+a printer knows where each page number stands.
 .SH SEE ALSO
 gbrvec(1), vecps(1), pcbview(1), schview(1)

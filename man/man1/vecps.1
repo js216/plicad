@@ -34,8 +34,17 @@ from its k-th page record to the next.
 Text is set in Helvetica and Helvetica-Oblique, in ISO Latin-1.
 The window
 .B \-w
-is the region drawn, by default all of the first file (its drawing
-records); clear polarity is drawn white.
+is the region drawn, by default all the files, the layers of a board
+whole (their drawing records, each line's width and each disk's radius
+counted); clear polarity is drawn white.
+On a sheet, each port of the first file links to pages, as
+.IR schview (1)
+follows a click on it: its circle and its name to the first page of its
+list other than its own, each page number of its list but its own to
+that page; the links are pdfmark annotations, each fitting its page in
+the window and drawn with no border, which
+.IR ps2pdf (1)
+keeps; a global links nowhere.
 .PP
 A region render crops to a window and names what is in it, a sheet or a
 board alike:

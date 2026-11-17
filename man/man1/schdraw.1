@@ -23,8 +23,11 @@ its pages as
 on the standard output, each from a page record with its number: the
 sheet template with its title block, each net's wires and dots, and
 each part's symbol and text, the text as text records.
-Each port of the sheet names after it, in brackets, the other pages it
-is on, as BUF(2,5).
+Each port of the sheet names after it, in brackets, every page it is
+on, its own too, as BUF(1,2), each piece of the list a text record of
+its own; a port on one page alone has none.
+A flag record says whether its flag is a port of the sheet or a global,
+and a flag is drawn between the records of its net.
 The records of each part are bracketed by its name (the path of its
 groups and its own, as outputs.ch1.gain.rf), with its box named, and those of
 each net by the net's name, for

@@ -16,7 +16,13 @@
 // PostScript.  Clear polarity is drawn white.  Text is set in Helvetica,
 // or Helvetica-Oblique for the font I, in ISO Latin-1 (but - is the
 // hyphen, as in the fonts' own encoding).  With -n the
-// names of the boxes of the first file are written in them.
+// names of the boxes of the first file are written in them.  The
+// window by default holds all the files, their lines' widths and
+// disks' radii counted.  Each port of the sheet of the first file links
+// to pages as schview(1) follows its clicks: its circle and name to the
+// first page it lists other than its own, each number of its list but
+// its own to that page (pdfmark /Link, /Fit, no border); a global links
+// nowhere.
 //
 // A region render (-r, or -p) crops to a window and names what is in it:
 // -r X0 Y0 X1 Y1 is the window; -p PART (by its name or designator,
@@ -101,7 +107,8 @@ static int page_of(const char *path, int k, double *w, double *h)
 	return n;
 }
 
-// The extent of a file: of its drawing records alone.
+// Grows e by the extent of a file: of its drawing records alone, each
+// line by its half width and each disk by its radius.
 static void extent(const char *path, double e[4])
 {
 	FILE *f = fopen(path, "r");
@@ -110,32 +117,33 @@ static void extent(const char *path, double e[4])
 	if (!f || !buf) {
 		die(path, "cannot read");
 	}
-	e[0] = e[1] = 1e300;
-	e[2] = e[3] = -1e300;
 	while (fgets(buf, LINE, f)) {
-		char *s = buf, *end;
-		int k = 0, skip;
+		char *s = buf + 5, *end;
+		double v[3], r = 0;
+		int k = 0;
 
-		if (strncmp(buf, "disk ", 5) && strncmp(buf, "line ", 5) &&
-		    strncmp(buf, "poly ", 5)) {
+		if (sscanf(buf, "disk %lf %lf %lf", &v[0], &v[1], &v[2]) == 3) {
+			e[0] = fmin(e[0], v[0] - v[2]);
+			e[1] = fmin(e[1], v[1] - v[2]);
+			e[2] = fmax(e[2], v[0] + v[2]);
+			e[3] = fmax(e[3], v[1] + v[2]);
 			continue;
 		}
-		skip = !strncmp(buf, "line", 4) ? 2 : 1;
-		for (int w = 0; w < skip; w++) {
-			s += strcspn(s, " \n");
-			s += strspn(s, " ");
+		if (strncmp(buf, "line ", 5) && strncmp(buf, "poly ", 5)) {
+			continue;
+		}
+		if (buf[0] == 'l') {
+			r = strtod(s, &end) / 2;
+			s = end;
 		}
 		for (;; k++) {
-			double v = strtod(s, &end);
+			double x = strtod(s, &end);
 
 			if (end == s) {
 				break;
 			}
-			if (!strncmp(buf, "disk", 4) && k == 2) {
-				break;
-			}
-			e[k % 2] = fmin(e[k % 2], v);
-			e[k % 2 + 2] = fmax(e[k % 2 + 2], v);
+			e[k % 2] = fmin(e[k % 2], x - r);
+			e[k % 2 + 2] = fmax(e[k % 2 + 2], x + r);
 			s = end;
 		}
 	}
@@ -143,14 +151,83 @@ static void extent(const char *path, double e[4])
 	free(buf);
 }
 
+// A text record of a sheet, kept for the links of the flag after it.
+struct span {
+	char t[64];
+	double size, x, y;
+};
+
+// Writes a link of a box to page n of the PDF, as pdfmark: x1 is the
+// PostScript that puts the box's right on the stack.
+static void link(double x0, double y0, const char *x1, double y1, int n)
+{
+	printf("[ /Rect [ %.3f %.3f %s %.3f ] /Border [ 0 0 0 ] /Page %d "
+	       "/View [ /Fit ] /Subtype /Link /ANN pdfmark\n",
+	       x0, y0, x1, y1, n);
+}
+
+// The links of a port of the sheet on page k, as schview follows its
+// clicks: its circle and name to the first page it lists other than k,
+// each number of its list but k to that page; its spans are the text
+// records before its flag record (vec(5)), the right of each measured
+// by the font.
+static void port_links(const struct span *sp, int n, double x, double y,
+		       int k)
+{
+	int first = 0;
+	char right[1024], t[160];
+
+	for (int i = 1; i < n && !first; i++) {
+		if (sp[i].t[0] >= '0' && sp[i].t[0] <= '9' &&
+		    atoi(sp[i].t) != k) {
+			first = atoi(sp[i].t);
+		}
+	}
+	for (int i = 0; i < n; i++) {
+		int to = !i ? first :
+			 sp[i].t[0] >= '0' && sp[i].t[0] <= '9' &&
+					 atoi(sp[i].t) != k ?
+				    atoi(sp[i].t) :
+				    0;
+
+		size_t m = 0;
+
+		if (!to) {
+			continue;
+		}
+		// The text as a PostScript string, its brackets escaped.
+		for (const char *c = sp[i].t; *c && m + 2 < sizeof t; c++) {
+			if (*c == '(' || *c == ')' || *c == '\\') {
+				t[m++] = '\\';
+			}
+			t[m++] = *c;
+		}
+		t[m] = 0;
+		snprintf(right, sizeof right,
+			 "/VecR findfont %.3f scalefont setfont (%.159s) "
+			 "stringwidth pop %.3f add",
+			 sp[i].size, t, sp[i].x);
+		link(sp[i].x, sp[i].y - 0.25 * sp[i].size, right,
+		     sp[i].y + 0.75 * sp[i].size, to);
+	}
+	if (first && n) {
+		char cx[64];
+		double r = sp[0].size / 4;
+
+		snprintf(cx, sizeof cx, "%.3f", x + r);
+		link(x - r, y - r, cx, y + r, first);
+	}
+}
+
 // Draws a file in the color, filled or outlined: its page k (from 1),
 // or all of it for k 0.
 static void draw(const char *path, const double rgb[3], int outline, int names,
-		 int k)
+		 int k, int links)
 {
 	FILE *f = fopen(path, "r");
 	char *buf = malloc(LINE);
-	int now = 1, seen = 0;
+	int now = 1, seen = 0, nsp = 0;
+	struct span sp[32];
 
 	if (!f || !buf) {
 		die(path, "cannot read");
@@ -158,12 +235,36 @@ static void draw(const char *path, const double rgb[3], int outline, int names,
 	printf("%.3f %.3f %.3f setrgbcolor\n", rgb[0], rgb[1], rgb[2]);
 	while (fgets(buf, LINE, f)) {
 		char *s = buf + strcspn(buf, " \n"), *end;
+		char net[512], kind[16];
+		double fx, fy;
+		int sat = 0;
 
 		if (!strncmp(buf, "page ", 5) && seen++) {
 			now++;
 		}
 		if (k && now != k) {
 			continue;
+		}
+		// The texts before a flag of a port are its spans.
+		if (k && sscanf(buf, "text %*c %lf %*f %*d %lf %lf %n",
+				&sp[nsp < 32 ? nsp : 31].size,
+				&sp[nsp < 32 ? nsp : 31].x,
+				&sp[nsp < 32 ? nsp : 31].y, &sat) == 3 &&
+		    sat) {
+			struct span *q = &sp[nsp < 32 ? nsp : 31];
+
+			buf[strcspn(buf, "\n")] = 0;
+			copy_prefix(q->t, sizeof q->t, buf + sat,
+				    strlen(buf + sat));
+			nsp += nsp < 32;
+		} else if (k && sscanf(buf, "flag %511s %lf %lf %15s", net,
+				       &fx, &fy, kind) == 4) {
+			if (!strcmp(kind, "port") && links) {
+				port_links(sp, nsp, fx, fy, k);
+			}
+			nsp = 0;
+		} else {
+			nsp = 0;
 		}
 		if (!strncmp(buf, "dark", 4)) {
 			printf("%.3f %.3f %.3f setrgbcolor\n", rgb[0], rgb[1],
@@ -531,7 +632,13 @@ int main(int argc, char **argv)
 
 		copy_prefix(path, sizeof path, argv[i], strcspn(argv[i], "="));
 		page = page_of(path, 1, &pw, &ph);
-		extent(path, win);
+		win[0] = win[1] = 1e300;
+		win[2] = win[3] = -1e300;
+		for (int k = i; k < argc; k++) {
+			copy_prefix(path, sizeof path, argv[k],
+				    strcspn(argv[k], "="));
+			extent(path, win);
+		}
 	}
 	printf("%%!PS-Adobe-3.0\n%%%%BoundingBox: 0 0 %.0f %.0f\n%%%%Pages: %d\n"
 	       "%%%%EndComments\n",
@@ -541,7 +648,9 @@ int main(int argc, char **argv)
 	       "  /Encoding ISOLatin1Encoding 256 array copy dup 45 /hyphen "
 	       "put def currentdict end definefont "
 	       "pop } def\n"
-	       "/VecR /Helvetica VecFont /VecI /Helvetica-Oblique VecFont\n");
+	       "/VecR /Helvetica VecFont /VecI /Helvetica-Oblique VecFont\n"
+	       "/pdfmark where { pop } { userdict /pdfmark /cleartomark load "
+	       "put } ifelse\n");
 	// A sheet is drawn page by page, each at its size and scale 1.
 	for (int pg = 1; pg <= (page ? page : 1); pg++) {
 		if (page) {
@@ -585,7 +694,7 @@ int main(int argc, char **argv)
 			}
 			outline = eq && strstr(eq, ",line") != NULL;
 			draw(path, rgb, outline, names && k == a0,
-			     page ? pg : 0);
+			     page ? pg : 0, k == a0);
 		}
 		for (int k = a0; region && k < argc; k++) {
 			char path[4096];

@@ -18,7 +18,7 @@ anchors allow.
 .PP
 .RS
 .nf
-page N NAME
+page NAME
 title TEXT
 field NAME TEXT
 sheet TEMPLATE
@@ -32,6 +32,7 @@ wire PIN to PIN [WAY]
 ground at PIN
 chassis at PIN
 supply NAME at PIN
+global NAME at PIN
 nc PIN
 .fi
 .RE
@@ -59,9 +60,10 @@ opens a page, and the page holds every statement up to the next
 .B page
 or the end of the file; a file has one page or more, and a statement
 before the first is a fault.
-N (1 to 99) numbers the page, once in the file: the designators of
-page 4 run R401, R402, ....
-NAME is the top group of the page: its parts are named NAME.group...part,
+The pages are numbered by their order in the file, from 1 (99 at
+most): the designators of the fourth page run R401, R402, ....
+NAME, a name and no number, once in the file, is the top group of the
+page: its parts are named NAME.group...part,
 as outputs.ch1.gain.rf.
 .B title
 and
@@ -88,6 +90,9 @@ A port outside any group is a port of the sheet, drawn as an open
 circle with its name, and names its net, the same on every page.
 It may be said at several pins, and on several pages: each is drawn,
 and they are one net.
+After its name in brackets stand the numbers of every page that holds
+it, its own too, in ascending order, separated by a comma and no space:
+BUF(1,2); a port on one page alone has no list.
 A port of the sheet on one page alone, in a file of several, is
 warned of.
 .B note
@@ -148,13 +153,17 @@ A wire closes a loop: the box round its two pins and the parts of its
 net, with their labels, is kept free of the parts of other nets, so a
 feedback loop stays small and an unrelated branch stands outside it.
 .BR ground ,
-.B chassis
-and
+.BR chassis ,
 .B supply
+and
+.B global
 put a flag on a pin, which joins it to the global net of the flag: GND,
-CHASSIS, or the name of the supply.
-A ground hangs under its pin; a supply or a port stands at the end of
-its line, past the branches.
+CHASSIS, or the name of the supply or of the global.
+Flags of one name join, whatever their kind and on whatever page.
+A ground hangs under its pin; a supply, a global or a port stands at
+the end of its line, past the branches.
+A global is drawn as its name at the pin, by a small filled diamond of
+its own, with no list of pages.
 .B nc
 marks a pin left unconnected on purpose: it is drawn with a small cross
 at its end, and the netlist lists it as nc, not as a pin forgotten.
@@ -167,7 +176,7 @@ The ferrites of the kind the page uses most are drawn without their
 value, which goes without saying; every part shows its designator.
 .SH EXAMPLES
 .nf
-page 1 front
+page front
 port IN amp.in
 group amp
   note inverting, gain of 10
@@ -178,7 +187,7 @@ group amp
   port in rin.2
 end
 
-page 2 back
+page back
 resistor load 50
 port IN load.1
 ground at load.2
