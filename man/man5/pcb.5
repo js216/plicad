@@ -7,6 +7,8 @@ pcb \- board source and lock
 .SH DESCRIPTION
 The board source says in words where the parts go and how their copper
 runs; it is the only file anyone edits.
+A first layout follows the loop of
+.IR pcb-howto (7).
 There are no coordinates but those the mechanics fix.
 .PP
 Parts and pins are named as in the netlist, by the schematic's page and
@@ -248,4 +250,5 @@ fork outputs.ch1.gain.out outputs.ch1.gain.amp.out to outputs.ch1.term.r1.1 outp
 fork outputs.ch1.term.out outputs.ch1.jack.j.1 to outputs.ch1.term.r1.2 outputs.ch1.term.r2.2
 .fi
 .SH SEE ALSO
-pcbplace(1), pcbroute(1), pcbcheck(1), pcbgerber(1), pcbfp(5)
+pcbplace(1), pcbroute(1), pcbcheck(1), pcbgerber(1), pcbfp(5),
+pcb-howto(7)

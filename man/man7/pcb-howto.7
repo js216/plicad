@@ -1,0 +1,99 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" pcb-howto.7 -- Manual page of the loop of a board layout
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH PCB-HOWTO 7
+.SH NAME
+pcb-howto \- laying out a board from its schematic, on one page
+.SH THE LOOP
+.PD 0
+.IP 1. 3
+In one call, read this page and the notes of the groups to lay out, in
+the schematic source: grep -nE '^ *(group|note|end)' board.sch.
+.IP 2. 3
+Write the statements of one block.
+Blocks alike are copies: write the first after a marker comment, then
+copy from the marker on with a shell loop renaming the group; the lines
+above the marker (outline, rules, fixed parts) stay single.
+.nf
+b=$(sed -n '/^# ch1 begins/,$p' board.pcb)
+for c in 2 3 4; do printf '%s\en' "$b" |
+  sed "s/\e.ch1\eb/.ch$c/g; s/^# ch1 /# ch$c /"; done >> board.pcb
+.fi
+.IP 3. 3
+Write and run in the same call: append with a here-document
+(cat >> board.pcb <<'EOF'), then make: pcbplace and pcbroute into
+board.lock, then pcbcheck board.pcb < board.lock.
+.IP 4. 3
+Fix what the faults name, and run again.
+.IP 5. 3
+Stop when it checks clean: pcbcheck prints nothing and exits 0.
+.PD
+.SH EXAMPLE
+An op amp, its feedback resistor between amp.in- and amp.out (so
+main.filt.rf.2 is on the output) and a capacitor at its supply pin v+,
+the group filt on the schematic's page main:
+.PP
+.nf
+# filt begins
+block main.filt
+fix main.filt.amp at 20 18 rot 270
+place main.filt.rf left of main.filt.amp
+place main.filt.c down from main.filt.amp.v+
+ref main.filt.c below
+width main.filt.amp.out main.filt.rf.2 0.4
+.fi
+.PP
+A clean make prints nothing: no fault, no note.
+.SH STATEMENTS
+.nf
+fix PART at X Y [rot R] [bottom]      only where the mechanics put it
+place PART WAY of PART [GAP] [rot R]  next to it, GAP mm apart (0)
+place PART WAY from PIN [rot R]       its pad of the pin's net by the pin
+place PART|GROUP near THING [WAY] [GAP]  the nearest clear room by a
+                                      part, group, pin, cutout N or edge
+block GROUP                           laid out alone, then moved whole
+path NET PIN PIN...                   the net's pins wired in this order
+width NET W | width PIN PIN W         track width, net or one stretch
+via PIN WAY                           the way its plane via goes
+ref PART SIDE [start|end] [rot 90]    its designator, by its courtyard
+unplaced GROUP                        its parts off the board for now
+.fi
+.PP
+A pin is PART.PIN, the part named by its page and group path:
+.nf
+width outputs.ch1.gain.amp.out outputs.ch1.gain.rf.2 0.635
+path outputs.ch1.term.out outputs.ch1.term.r2.2 outputs.ch1.jack.j.1
+.fi
+NET is a net name of the netlist (grep '^net' out/board.nl).
+.SH DIRECTIONS
+The board is seen from the top, x to the right and y up:
+.B right
+is +x,
+.B up
++y,
+.B left
+\-x,
+.B down
+\-y.
+A ref SIDE is above, below, left or right.
+rot R turns a part R degrees (90, 180 or 270) counterclockwise, seen
+from the top: rot 90 turns its +x side to +y.
+Without rot, a place statement turns the part, of four ways, to bring
+its pads nearest their nets' pads already placed; a fixed part without
+rot stands unturned.
+.SH FAULTS
+A fault is a line FILE:LINE: or FILE:, then what is wrong; pcbcheck
+ends its line with the point, at X Y.
+Parts appear by name and designator, as outputs.ch1.gain.rf (R401); a
+pad as outputs.ch1.gain.rf.1 (R401).
+Faults name what is in the way: both courtyards that overlap, both
+pieces of copper too near and their distance, the part a fixed part is
+not clear of, what blocks a plane via.
+A net with no way names its two pads and the point where the search
+stopped; no room for a part WAY of its anchor means it ran off the
+board that way.
+Move or turn the part named, or edit the statement of the line, and
+run again.
+.SH SEE ALSO
+pcb(5), pcbplace(1), pcbroute(1), pcbcheck(1), pcbfp(5), netlist(5),
+sch(5)
