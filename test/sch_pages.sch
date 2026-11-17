@@ -8,11 +8,11 @@
 
 page upper
 title Upper half
-resistor r 10k
+resistor r 10K
 supply +5V at r.1
 port MID r.2
 
 page lower
-resistor r 4.7k
+resistor r 4.7K
 ground at r.2
 port MID r.1

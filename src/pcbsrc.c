@@ -9,6 +9,7 @@
 #define _POSIX_C_SOURCE 200809L // For open_memstream and fmemopen.
 
 #include "pcbsrc.h"
+#include "stroke.h"
 #include <math.h>
 #include <stdarg.h>
 #include <string.h>
@@ -1706,62 +1707,7 @@ int pcb_opening(const struct pcb *b, size_t q, size_t k, int bottom,
 	return 1;
 }
 
-// The strokes of the letters and digits, on a grid 4 wide and 6 high: a
-// string of x and y digits for each stroke, the strokes blank-separated.
-static const char *glyph(int c)
-{
-	static const char *const digit[] = {
-		"010516364541301001",
-		"15262620 1030",
-		"05163645440040",
-		"0516364544334241301001 1333",
-		"30360242",
-		"460603334241301001",
-		"4536160501103041423303",
-		"064610",
-		"13040516364544331302011030414233",
-		"4313040516364541301001",
-	};
-	static const char *const letter[] = {
-		"0004264440 0343",
-		"00063645443303 3342413000",
-		"4536160501103041",
-		"00062644422000",
-		"46060040 0333",
-		"460600 0333",
-		"45361605011030414323",
-		"0006 4640 0343",
-		"1636 2620 1030",
-		"4641301001",
-		"0006 4602 1340",
-		"060040",
-		"0006234640",
-		"00064046",
-		"010516364541301001",
-		"00063645443303",
-		"010516364541301001 2240",
-		"00063645443303 2340",
-		"453616050413334241301001",
-		"0646 2620",
-		"060110304146",
-		"062046",
-		"0610233046",
-		"0046 0640",
-		"0623 4623 2320",
-		"06460040",
-	};
-
-	if (c >= '0' && c <= '9') {
-		return digit[c - '0'];
-	}
-	if (c >= 'A' && c <= 'Z') {
-		return letter[c - 'A'];
-	}
-	return c == '-' ? "0343" : "";
-}
-
 #define SILK_H 0.8 // The height of a designator.
-#define SILK_W 0.12 // The width of its strokes.
 #define SILK_GAP 0.15 // From the courtyard to the designator.
 
 static int overlap(const double a[4], const double c[4])
@@ -1893,11 +1839,11 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 	for (size_t q = 0; q < b->npart; q++) {
 		const struct pcb_part *p = &b->part[q];
 		const char *ref = p->ref ? p->ref : "";
-		size_t len = strlen(ref);
 		const struct pcb_stmt *rs = ref_of(b, p->name);
-		double h = rs ? ref_size(rs) : SILK_H, u = h / 6;
-		double c[4], t[4], tw = (5 * (double)len - 1) * u;
-		double at[12][2], bw = tw, bh = h;
+		double h = rs ? ref_size(rs) : SILK_H, pen = STROKE_PEN * h;
+		double c[4], t[4], tw = stroke_width(ref, h);
+		double dn = stroke_descends(ref) ? h / 3 : 0; // The descender.
+		double at[12][2], bw = tw, bh = h + dn;
 		int pick = 0, rot = 0;
 
 		if (!p->placed || !p->fp) {
@@ -1928,8 +1874,8 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 		pcb_court(p, c);
 		if (rs) {
 			rot = ref_turned(rs);
-			bw = rot ? h : tw;
-			bh = rot ? tw : h;
+			bw = rot ? h + dn : tw;
+			bh = rot ? tw : h + dn;
 			ref_at(rs, c, bw, bh, at[0]);
 		}
 		for (int i = 0; !rs && i < 12; i++) {
@@ -1939,54 +1885,47 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 				   i % 4 == 2 ? c[0] - g - tw :
 						c[2] + g;
 			at[i][1] = i % 4 == 0 ? c[3] + g :
-				   i % 4 == 1 ? c[1] - g - SILK_H :
-						(c[1] + c[3] - SILK_H) / 2;
+				   i % 4 == 1 ? c[1] - g - bh :
+						(c[1] + c[3] - bh) / 2;
 		}
 		for (int i = 11; !rs && i >= 0; i--) {
-			t[0] = at[i][0] - SILK_W;
-			t[1] = at[i][1] - SILK_W;
-			t[2] = at[i][0] + tw + SILK_W;
-			t[3] = at[i][1] + h + SILK_W;
+			t[0] = at[i][0] - pen;
+			t[1] = at[i][1] - pen;
+			t[2] = at[i][0] + tw + pen;
+			t[3] = at[i][1] + bh + pen;
 			if (text_clear(b, q, t, done, side, ndone)) {
 				pick = i;
 			}
 		}
-		t[0] = at[pick][0] - SILK_W;
-		t[1] = at[pick][1] - SILK_W;
-		t[2] = at[pick][0] + bw + SILK_W;
-		t[3] = at[pick][1] + bh + SILK_W;
+		t[0] = at[pick][0] - pen;
+		t[1] = at[pick][1] - pen;
+		t[2] = at[pick][0] + bw + pen;
+		t[3] = at[pick][1] + bh + pen;
 		memcpy(done[ndone], t, sizeof t);
 		side[ndone++] = p->bottom;
-		for (size_t k = 0; ref[k]; k++) {
-			const char *g = glyph(ref[k]);
-			double x0 = at[pick][0] + 5 * u * (double)k;
+		{
+			double *sg;
+			size_t ns = stroke_text(ref, h, &sg);
 
-			for (; *g; g++) {
+			for (size_t k = 0; k < ns; k++) {
 				double xy[4];
 
-				if (*g == ' ' || g[1] == ' ' || !g[1] ||
-				    !g[2] || g[2] == ' ') {
-					continue;
-				}
-				xy[0] = x0 + (g[0] - '0') * u;
-				xy[1] = at[pick][1] + (g[1] - '0') * u;
-				xy[2] = x0 + (g[2] - '0') * u;
-				xy[3] = at[pick][1] + (g[3] - '0') * u;
-				// Turned, it reads upward in its box.
-				for (int e = 0; rot && e < 4; e += 2) {
-					double lx = xy[e] - at[pick][0];
-					double ly = xy[e + 1] - at[pick][1];
+				// From the box's lower left, the baseline a
+				// descender up.
+				for (size_t e = 0; e < 4; e += 2) {
+					double lx = sg[4 * k + e];
+					double ly = sg[4 * k + e + 1] + dn;
 
-					xy[e] = at[pick][0] + h - ly;
-					xy[e + 1] = at[pick][1] + lx;
+					// Turned, it reads upward in its box.
+					xy[e] = at[pick][0] + (rot ? bw - ly : lx);
+					xy[e + 1] = at[pick][1] + (rot ? lx : ly);
+					if (p->bottom) {
+						xy[e] = 2 * at[pick][0] + bw - xy[e];
+					}
 				}
-				if (p->bottom) {
-					xy[0] = 2 * at[pick][0] + bw - xy[0];
-					xy[2] = 2 * at[pick][0] + bw - xy[2];
-				}
-				stroke(s, &n, q, SILK_W, xy, 1);
-				g++;
+				stroke(s, &n, q, pen, xy, 1);
 			}
+			free(sg);
 		}
 	}
 	free(done);

@@ -4,4 +4,4 @@
 
 page bad
 sheet bad_noclear
-resistor r 1k
+resistor r 1K

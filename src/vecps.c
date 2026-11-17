@@ -13,7 +13,8 @@
 // with page records is drawn as those pages instead, each at its size and
 // scale 1: page k of each file, its records from its k-th page record to
 // the next (those before the first are of the first), on page k of the
-// PostScript.  Clear polarity is drawn white.  Text is set in Helvetica,
+// PostScript.  Clear polarity is drawn white.  Text in the stroke font
+// S is drawn stroke by stroke (stroke.h); other text is set in Helvetica,
 // or Helvetica-Oblique for the font I, in ISO Latin-1 (but - is the
 // hyphen, as in the fonts' own encoding).  With -n the
 // names of the boxes of the first file are written in them.  The
@@ -34,6 +35,7 @@
 
 #define _POSIX_C_SOURCE 200809L // For strtok_r.
 
+#include "stroke.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -153,7 +155,7 @@ static void extent(const char *path, double e[4])
 
 // A text record of a sheet, kept for the links of the flag after it.
 struct span {
-	char t[64];
+	char t[64], font;
 	double size, x, y;
 };
 
@@ -203,10 +205,15 @@ static void port_links(const struct span *sp, int n, double x, double y,
 			t[m++] = *c;
 		}
 		t[m] = 0;
-		snprintf(right, sizeof right,
-			 "/VecR findfont %.3f scalefont setfont (%.159s) "
-			 "stringwidth pop %.3f add",
-			 sp[i].size, t, sp[i].x);
+		if (sp[i].font == 'S') {
+			snprintf(right, sizeof right, "%.3f",
+				 sp[i].x + stroke_width(sp[i].t, sp[i].size));
+		} else {
+			snprintf(right, sizeof right,
+				 "/VecR findfont %.3f scalefont setfont "
+				 "(%.159s) stringwidth pop %.3f add",
+				 sp[i].size, t, sp[i].x);
+		}
 		link(sp[i].x, sp[i].y - 0.25 * sp[i].size, right,
 		     sp[i].y + 0.75 * sp[i].size, to);
 	}
@@ -246,10 +253,11 @@ static void draw(const char *path, const double rgb[3], int outline, int names,
 			continue;
 		}
 		// The texts before a flag of a port are its spans.
-		if (k && sscanf(buf, "text %*c %lf %*f %*d %lf %lf %n",
+		if (k && sscanf(buf, "text %c %lf %*f %*d %lf %lf %n",
+				&sp[nsp < 32 ? nsp : 31].font,
 				&sp[nsp < 32 ? nsp : 31].size,
 				&sp[nsp < 32 ? nsp : 31].x,
-				&sp[nsp < 32 ? nsp : 31].y, &sat) == 3 &&
+				&sp[nsp < 32 ? nsp : 31].y, &sat) == 4 &&
 		    sat) {
 			struct span *q = &sp[nsp < 32 ? nsp : 31];
 
@@ -327,7 +335,27 @@ static void draw(const char *path, const double rgb[3], int outline, int names,
 
 			if (sscanf(buf, "text %c %lf %lf %d %lf %lf %n", &font,
 				   &size, &angle, &align, &x, &y, &at) == 6 &&
-			    at > 0) {
+			    at > 0 && font == 'S') {
+				// The font of strokes, drawn stroke by stroke.
+				double *sg;
+				size_t n;
+
+				buf[strcspn(buf, "\n")] = 0;
+				n = stroke_text(buf + at, size, &sg);
+				printf("gsave %.3f %.3f translate %.3f rotate "
+				       "%.4f 0 translate %.4f setlinewidth "
+				       "newpath",
+				       x, y, angle,
+				       -stroke_width(buf + at, size) * align / 2,
+				       STROKE_PEN * size);
+				for (size_t j = 0; j < n; j++) {
+					printf(" %.4f %.4f moveto %.4f %.4f lineto",
+					       sg[4 * j], sg[4 * j + 1],
+					       sg[4 * j + 2], sg[4 * j + 3]);
+				}
+				printf(" stroke grestore\n");
+				free(sg);
+			} else if (at > 0) {
 				buf[strcspn(buf, "\n")] = 0;
 				printf("/%s findfont %.3f scalefont setfont "
 				       "%.3f %.3f moveto gsave %.3f rotate ",

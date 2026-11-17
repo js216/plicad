@@ -1,13 +1,13 @@
 # netlist of sch_filter.sch, from schnet
-part C101 capacitor value 100nF swap 1,2 name filter.vpos.c
-part C102 capacitor value 100nF swap 1,2 name filter.vneg.c
-part C103 capacitor value 10nF swap 1,2 name filter.lpf.c
-part C104 capacitor value 10nF swap 1,2 name filter.lpf.c2
+part C101 capacitor value 100N swap 1,2 name filter.vpos.c
+part C102 capacitor value 100N swap 1,2 name filter.vneg.c
+part C103 capacitor value 10N swap 1,2 name filter.lpf.c
+part C104 capacitor value 10N swap 1,2 name filter.lpf.c2
 part FB101 ferrite value 600R swap 1,2 name filter.vpos.fb
 part FB102 ferrite value 600R swap 1,2 name filter.vneg.fb
-part R101 resistor value 1k swap 1,2 name filter.buf.rf
-part R102 resistor value 1k swap 1,2 name filter.buf.rg
-part R103 resistor value 10k swap 1,2 name filter.lpf.r
+part R101 resistor value 1K swap 1,2 name filter.buf.rf
+part R102 resistor value 1K swap 1,2 name filter.buf.rg
+part R103 resistor value 10K swap 1,2 name filter.lpf.r
 part U101 ti/lmh6609 value LMH6609 pins in+:3,in-:2,out:6,v+:7,v-:4 name filter.buf.amp
 net +12V global FB101.2
 net -12V global FB102.2

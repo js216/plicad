@@ -59,11 +59,10 @@
 #define PI 3.14159265358979323846
 #define DOT_R 1.64 // The radius of a junction dot.
 #define TEXT SCH_TEXT
-#define SUB SCH_SUB
-#define SUB_DROP 1.6 // How far a subscript drops.
 #define LEAD SCH_LEAD
 #define DESCENT SCH_DESCENT
-#define PINNUM 5.0 // The pin numbers of an integrated circuit.
+#define PINNUM 3.25 // The pin numbers of an integrated circuit.
+#define HELV_CAP 0.72 // The capital height of a template's text, by its em.
 #define MARGIN 8 // Grid units round everything, for the router.
 #define SPREAD_MIN 2 // The least gap between blocks spread, in grid units.
 
@@ -80,12 +79,10 @@ enum {
 
 static const int DX[4] = { 1, 0, -1, 0 }, DY[4] = { 0, 1, 0, -1 };
 
-// A run of text in one font: italic or not, its size and how far it
-// drops below the baseline.
+// A run of text in the stroke font: its size, the capital height.
 struct run {
 	char *s;
-	int italic;
-	double size, drop;
+	double size;
 };
 
 // A block of text: lines of runs, placed by its box in points, and the
@@ -947,33 +944,12 @@ static int dot_at(int x, int y)
 }
 
 // Adds a run to line l of the label.
-static void add_run(struct label *b, int l, const char *s, int italic,
-		    double size, double drop)
+static void add_run(struct label *b, int l, const char *s, double size)
 {
 	struct run *r = &b->run[l][b->nrun[l]++];
 
 	r->s = sch_strdup(s);
-	r->italic = italic;
 	r->size = size;
-	r->drop = drop;
-}
-
-// The designator as a name with a subscript: R401 as R and 401.
-static void add_ref(struct label *b, int l, const char *ref)
-{
-	char head[64], tail[64];
-	size_t n = strcspn(ref, "0123456789");
-
-	if (n >= sizeof head || strlen(ref + n) >= sizeof tail) {
-		sch_die("%s: designator %s too long", S.file, ref);
-	}
-	memcpy(head, ref, n);
-	head[n] = 0;
-	strcpy(tail, ref + n);
-	add_run(b, l, head, 1, TEXT, 0);
-	if (*tail) {
-		add_run(b, l, tail, 0, SUB, SUB_DROP);
-	}
 }
 
 static void measure(struct label *b)
@@ -987,7 +963,7 @@ static void measure(struct label *b)
 		}
 		b->w = fmax(b->w, w);
 	}
-	b->h = DESCENT + TEXT * 0.72 + (b->nline - 1) * LEAD;
+	b->h = DESCENT + TEXT + (b->nline - 1) * LEAD;
 }
 
 // The box of the text of a flag, in points, and where its text goes:
@@ -1014,17 +990,17 @@ static int flag_box(const struct sch_part *q, double b[4], double *tx,
 	if (out == SCH_U || out == SCH_D) {
 		*align = 1;
 		*tx = px;
-		*ty = out == SCH_U ? py : py - TEXT * 0.72;
+		*ty = out == SCH_U ? py : py - TEXT;
 		b[0] = px - w / 2;
 	} else {
 		*align = out == SCH_L ? 2 : 0;
 		*tx = px;
-		*ty = py - TEXT * 0.36;
+		*ty = py - TEXT / 2;
 		b[0] = out == SCH_L ? px - w : px;
 	}
 	b[1] = *ty - DESCENT;
 	b[2] = b[0] + w;
-	b[3] = *ty + TEXT * 0.72;
+	b[3] = *ty + TEXT;
 	return 1;
 }
 
@@ -1046,7 +1022,7 @@ static int pin_number_at(const struct sch_part *q, size_t p, double *x,
 		*align = 1;
 	} else {
 		*x += 1.5;
-		*y -= PINNUM * 0.36;
+		*y -= PINNUM / 2;
 		*align = 0;
 	}
 	return 1;
@@ -1107,7 +1083,7 @@ static double clash(double x0, double y0, double x1, double y1, size_t self)
 				b[0] = tx - (al ? 3 : 0.5);
 				b[1] = ty - 0.5;
 				b[2] = tx + 3.5;
-				b[3] = ty + PINNUM * 0.75;
+				b[3] = ty + PINNUM;
 				c += cover(x0, y0, x1, y1, b);
 			}
 		}
@@ -1194,7 +1170,7 @@ static void labels_all(void)
 		if (q->dev->shape->flag) {
 			continue;
 		}
-		add_ref(b, b->nline++, q->ref);
+		add_run(b, b->nline++, q->ref, TEXT);
 		if ((q->value || q->rating) && !q->novalue) {
 			char v[512];
 
@@ -1202,7 +1178,7 @@ static void labels_all(void)
 				 q->value ? q->value : "",
 				 q->value && q->rating ? " " : "",
 				 q->rating ? q->rating : "");
-			add_run(b, b->nline++, v, 0, TEXT, 0);
+			add_run(b, b->nline++, v, TEXT);
 		}
 		measure(b);
 	}
@@ -1220,8 +1196,8 @@ static double OX, OY, SC;
 // Writes a text record of a run, from (x, y) of the drawing, flush left.
 static void text_run(const struct run *r, double x, double y)
 {
-	printf("text %c %.3f 0 0 %.3f %.3f %s\n", r->italic ? 'I' : 'R',
-	       r->size * SC, OX + x * SC, OY + (y - r->drop) * SC, r->s);
+	printf("text S %.3f 0 0 %.3f %.3f %s\n", r->size * SC, OX + x * SC,
+	       OY + y * SC, r->s);
 }
 
 // Writes runs from (x, y), aligned left (0), centered (1) or right (2).
@@ -1270,6 +1246,8 @@ static void sheet(double room[4], double paper[2], int print)
 	}
 	while (fgets(buf, sizeof buf, f)) {
 		const char *t;
+		double tsz, ta, tx, ty;
+		int tj, at = 0;
 
 		buf[strcspn(buf, "\n")] = 0;
 		if (sscanf(buf, "paper %lf %lf", &paper[0], &paper[1]) == 2) {
@@ -1282,14 +1260,19 @@ static void sheet(double room[4], double paper[2], int print)
 			   !print) {
 		} else if (!strncmp(buf, "line ", 5)) {
 			printf("line %.2f%s\n", LW, buf + 4);
-		} else if (!strncmp(buf, "text ", 5) &&
-			   (t = strchr(buf, '$')) != NULL) {
-			if (*field(t + 1)) {
-				printf("%.*s%s\n", (int)(t - buf), buf,
-				       field(t + 1));
+		} else if (sscanf(buf, "text %*c %lf %lf %d %lf %lf %n",
+				  &tsz, &ta, &tj, &tx, &ty, &at) == 5 &&
+			   at) {
+			// In the stroke font, its capitals as high as the
+			// template's at 0.9 of their size.
+			t = buf + at;
+			if (*t == '$') {
+				t = field(t + 1);
 			}
-		} else if (!strncmp(buf, "text ", 5)) {
-			printf("%s\n", buf);
+			if (*t) {
+				printf("text S %.3f %g %d %g %g %s\n",
+				       tsz * HELV_CAP * 0.9, ta, tj, tx, ty, t);
+			}
 		}
 	}
 	fclose(f);
@@ -1430,9 +1413,7 @@ static void flag_text(const struct sch_part *q)
 		return;
 	}
 	r[0].s = q->name;
-	r[0].italic = 0;
 	r[0].size = TEXT;
-	r[0].drop = 0;
 	if (t == q->text) {
 		r[0].s = q->text;
 		t = "";
@@ -1458,7 +1439,7 @@ static void pin_numbers(const struct sch_part *q)
 	for (size_t p = 0; p < q->dev->shape->npin; p++) {
 		double x, y;
 		int align;
-		struct run r = { q->dev->pnum[p], 0, PINNUM, 0 };
+		struct run r = { q->dev->pnum[p], PINNUM };
 
 		if (pin_number_at(q, p, &x, &y, &align)) {
 			text_runs(&r, 1, x, y, align);
@@ -1605,7 +1586,7 @@ static void write_vec(void)
 		// The lines align to the part: to the left of it flush right,
 		// above or below it centered, else flush left.
 		for (int l = 0; l < b->nline; l++) {
-			double y = b->y + b->h - TEXT * 0.72 - l * LEAD;
+			double y = b->y + b->h - TEXT - l * LEAD;
 
 			if (b->side == SCH_U || b->side == SCH_D) {
 				text_runs(b->run[l], b->nrun[l],

@@ -13,9 +13,10 @@
 enum { SCH_R, SCH_U, SCH_L, SCH_D }; // The four ways a pin can point.
 
 #define SCH_GRID 7.2 // Points to a unit of the grid at scale 1.
-#define SCH_TEXT 7.0 // The size of the text of the parts.
-#define SCH_SUB 6.0 // The size of the digits of a designator.
-#define SCH_LEAD 8.5 // From one line of a label to the next.
+// The text is in the stroke font (stroke.h), its size the capital
+// height.
+#define SCH_TEXT 4.5 // The size of the text of the parts.
+#define SCH_LEAD 7.6 // From one line of a label to the next.
 #define SCH_DESCENT 1.8 // Under the baseline of the last line of a label.
 #define SCH_LW 0.5 // The weight of every line but the bold ones.
 
@@ -168,7 +169,7 @@ void sch_pin_at(const struct sch_part *q, size_t p, int *x, int *y, int *dir);
 void sch_box(const struct sch_part *q, double b[4]);
 // The pin number of pin p of the device.
 const char *sch_pnum(const struct sch_device *d, size_t p);
-// The width in points of a text in Helvetica of the size.
+// The width in points of a text in the stroke font of the size.
 double sch_text_width(const char *s, double size);
 // The size in points of the label of a part: its designator over its
 // value and rating.  The designator is taken as its prefix and three

@@ -7,6 +7,7 @@
 #define GL_GLEXT_PROTOTYPES
 
 #include "vecgl.h"
+#include "stroke.h"
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <math.h>
@@ -273,7 +274,8 @@ static void run(void)
 {
 	if (state.dark == cur.dark && state.zone == cur.zone &&
 	    state.edge == cur.edge && state.via == cur.via &&
-	    state.part == cur.part && state.net == cur.net) {
+	    state.part == cur.part && state.net == cur.net &&
+	    state.text == cur.text && state.frame == cur.frame) {
 		return;
 	}
 	cur.count = (int)(npt / 2) - cur.first;
@@ -331,11 +333,33 @@ static void text(const char *line)
 	    !at) {
 		return;
 	}
+	c = cos(angle * PI / 180);
+	sn = sin(angle * PI / 180);
+	// The font of strokes: segments of its pen, its size the capital
+	// height.
+	if (font == 'S') {
+		double *sg;
+		size_t n = stroke_text(line + at, size, &sg);
+
+		w = stroke_width(line + at, size);
+		x -= c * w * align / 2;
+		y -= sn * w * align / 2;
+		run();
+		for (size_t k = 0; k < n; k++) {
+			double a[2], b[2];
+
+			a[0] = x + sg[4 * k] * c - sg[4 * k + 1] * sn;
+			a[1] = y + sg[4 * k] * sn + sg[4 * k + 1] * c;
+			b[0] = x + sg[4 * k + 2] * c - sg[4 * k + 3] * sn;
+			b[1] = y + sg[4 * k + 2] * sn + sg[4 * k + 3] * c;
+			segment(a, b, STROKE_PEN * size / 2);
+		}
+		free(sg);
+		return;
+	}
 	if (!nglyphs) {
 		read_fonts();
 	}
-	c = cos(angle * PI / 180);
-	sn = sin(angle * PI / 180);
 	for (s = (const unsigned char *)line + at; *s;) {
 		const struct glyph *g = glyph(font, utf8(&s));
 
@@ -415,6 +439,9 @@ double vg_text_width(char font, const char *s)
 {
 	double w = 0;
 
+	if (font == 'S') {
+		return stroke_width(s, 1);
+	}
 	if (!nglyphs) {
 		read_fonts();
 	}
@@ -453,6 +480,7 @@ void vg_load_stream(struct vg_file *f, FILE *in, double via)
 		line[strcspn(line, "\n")] = 0;
 		if (!strncmp(line, "page ", 5)) {
 			sheet = 1;
+			state.frame = 1;
 		} else if (!strcmp(line, "dark") || !strcmp(line, "clear")) {
 			state.dark = kind == 'd';
 		} else if (!strncmp(line, "zone ", 5) || !strcmp(line, "end")) {
@@ -463,12 +491,16 @@ void vg_load_stream(struct vg_file *f, FILE *in, double via)
 				line[5 + strcspn(line + 5, " ")] = 0;
 			}
 			state.part = line[4] ? vg_part(line + 5) : -1;
+			state.frame = 0;
 			open_elem = -1;
 		} else if (!strncmp(line, "net", 3) &&
 			   (!line[3] || line[3] == ' ')) {
 			state.net = line[3] ? vg_net(line + 4) : -1;
+			state.frame = 0;
 		} else if (!strncmp(line, "text ", 5)) {
+			state.text = 1;
 			text(line);
+			state.text = 0;
 			element('t');
 		}
 		if (strncmp(line, "disk ", 5) && strncmp(line, "line ", 5) &&

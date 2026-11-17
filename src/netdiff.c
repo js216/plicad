@@ -129,13 +129,14 @@ static uint64_t hash(const char *s)
 
 // A value in one form: the number in %g with its unit, so that 499R,
 // 499 and 499 with the ohm sign agree, 1.00K and 1k, 0.1uF (with u or
-// mu), 100nF and 100n; ohms, farads and henries go without saying.  A
+// mu) and 0.1U, 100nF, 100n and 100N, 120pF and 120P; ohms, farads and
+// henries go without saying.  A
 // text that is no number is kept, in lower case.
 static void norm_value(const char *s, char *out, size_t n)
 {
-	static const char pre[] = "pnumkKMG";
-	static const double mul[] = { 1e-12, 1e-9, 1e-6, 1e-3,
-				      1e3,   1e3,  1e6,	 1e9 };
+	static const char pre[] = "pnumkKMGPNU";
+	static const double mul[] = { 1e-12, 1e-9, 1e-6, 1e-3, 1e3,  1e3,
+				      1e6,   1e9,  1e-12, 1e-9, 1e-6 };
 	char num[64];
 	size_t k = 0;
 	double m = 1;

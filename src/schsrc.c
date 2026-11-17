@@ -8,6 +8,7 @@
 #define _POSIX_C_SOURCE 200809L // For opendir.
 
 #include "schsrc.h"
+#include "stroke.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <math.h>
@@ -465,30 +466,9 @@ void sch_box(const struct sch_part *q, double b[4])
 	}
 }
 
-// The widths of Helvetica (and of its oblique), in thousandths of the
-// size, from the space to the tilde.
-static const short HELV[95] = {
-	278, 278, 355, 556, 556,  889, 667, 191, 333, 333, 389, 584, 278, 333,
-	278, 278, 556, 556, 556,  556, 556, 556, 556, 556, 556, 556, 278, 278,
-	584, 584, 584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278,
-	500, 667, 556, 833, 722,  778, 667, 778, 722, 667, 611, 722, 667, 944,
-	667, 667, 611, 278, 278,  278, 469, 556, 333, 556, 556, 500, 556, 556,
-	278, 556, 556, 222, 222,  500, 222, 833, 556, 556, 556, 556, 333, 500,
-	278, 556, 500, 722, 500,  500, 500, 334, 260, 334, 584
-};
-
 double sch_text_width(const char *s, double size)
 {
-	double w = 0;
-
-	for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
-		if (*p >= 32 && *p < 127) {
-			w += HELV[*p - 32];
-		} else if (*p >= 0xC0) {
-			w += 556; // A letter of Latin-1 or Greek, as UTF-8.
-		}
-	}
-	return w * size / 1000;
+	return stroke_width(s, size);
 }
 
 void sch_label_size(const struct sch_part *q, double *w, double *h)
@@ -498,14 +478,14 @@ void sch_label_size(const struct sch_part *q, double *w, double *h)
 
 	*w = sch_text_width(q->dev->prefix, SCH_TEXT) +
 	     sch_text_width(q->ref ? q->ref + strlen(q->dev->prefix) : "400",
-			    SCH_SUB);
+			    SCH_TEXT);
 	if ((q->value || q->rating) && !q->novalue) {
 		v = (q->value ? sch_text_width(q->value, SCH_TEXT) : 0) +
 		    (q->rating ? sch_text_width(q->rating, SCH_TEXT) + 2 : 0);
 		lines = 2;
 	}
 	*w = *w > v ? *w : v;
-	*h = SCH_DESCENT + SCH_TEXT * 0.72 + (lines - 1) * SCH_LEAD;
+	*h = SCH_DESCENT + SCH_TEXT + (lines - 1) * SCH_LEAD;
 }
 
 // The statements are read first and carried out after: names are
@@ -1864,6 +1844,22 @@ static void place_all(void)
 // Reads a part statement: KIND NAME [VALUE] [rating R] [mpn M]
 // [side WAY] [flip] [WAY from PIN | beside PART [WAY] | WAY of PART |
 // between PIN and PIN WAY].
+// Whether a value is as sch(5) has it for the kind: a resistor's, a
+// capacitor's or an inductor's a number with its capital unit letter
+// right after it (100R, 10.0K, 120P, 1.5U); any other kind's anything.
+static int value_ok(const char *kind, const char *v)
+{
+	const char *units = !strcmp(kind, "resistor")  ? "RKM" :
+			    !strcmp(kind, "capacitor") ? "PNU" :
+			    !strcmp(kind, "inductor")  ? "NU" :
+							 NULL;
+	size_t n = strspn(v, "0123456789.");
+
+	return !units || (n && strspn(v, "0123456789") && v[n] &&
+			  strchr(units, v[n]) && !v[n + 1] &&
+			  strchr(v, '.') == strrchr(v, '.'));
+}
+
 static void read_part(struct sch_shape *sh, char **w, int n)
 {
 	struct sch_part q;
@@ -1942,6 +1938,14 @@ static void read_part(struct sch_shape *sh, char **w, int n)
 			fault("%s: what is %s?", where, w[i]);
 			return;
 		}
+	}
+	if (value && !value_ok(sh->name, value)) {
+		fault("%s: a %s's value is a number and its unit letter, %s",
+		      where, sh->name,
+		      !strcmp(sh->name, "resistor")  ? "R, K or M: 100R" :
+		      !strcmp(sh->name, "capacitor") ? "P, N or U: 120P" :
+						       "N or U: 1.5U");
+		return;
 	}
 	if (value) {
 		q.value = sch_strdup(value);

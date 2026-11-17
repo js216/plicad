@@ -3,6 +3,6 @@
 # Copyright (c) 2026 Jakob Kastelic
 
 page a
-resistor r 1k
+resistor r 1K
 page 2
-resistor r 1k
+resistor r 1K

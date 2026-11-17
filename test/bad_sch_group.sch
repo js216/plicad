@@ -4,4 +4,4 @@
 
 page bad
 group a
-  resistor r 1k
+  resistor r 1K

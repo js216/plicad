@@ -11,11 +11,11 @@ page feedback
 title Inverting amplifier
 
 opamp u LMH6609 flip
-resistor rin 1k left from u.in-
-resistor rfb 10k between u.in- and u.out up
+resistor rin 1K left from u.in-
+resistor rfb 10K between u.in- and u.out up
 ground at u.in+
 bnc out BNC right from u.out
-capacitor bulk 10uF down of out
+capacitor bulk 10U down of out
 supply +5V at bulk.1
 ground at bulk.2
 supply +5V at u.v+

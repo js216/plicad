@@ -10,9 +10,10 @@ schview \- show the pages of a schematic
 .SH DESCRIPTION
 .I Schview
 shows the pages of a schematic in a window, one at a time, smoothed,
-khaki (#BBBB99) on black.
-A page runs from its page record (page W H N) to the next; with more
-than one, the top left names the page shown, and a part newly
+on black: the text and the sheet's frame and title block (the records
+from a page record to its first part or net) khaki (#BBBB99), the rest
+of the drawing a whiter gray (#D4D4D0).
+A page runs from its page record (page W H N) to the next; a part newly
 selected, from stdin or by a click, shows its page; PgDn and PgUp turn
 the pages with a part selected too.
 The window's title is the absolute path of the file.
@@ -20,8 +21,9 @@ The sheet comes as
 .IR vec (5)
 from
 .IR schdraw (1);
-its text is drawn from the glyph table lib/fonts/nimbussans.txt, and
-everything is drawn by OpenGL, smoothed by multisampling and its lines
+its text is in the stroke font of
+.IR vec (5),
+no stroke thinner than a pixel, and everything is drawn by OpenGL, smoothed by multisampling and its lines
 shaded by their distance, in linear light.
 .PP
 It opens fitted to the sheet, as Space fits it; the wheel zooms round
@@ -47,6 +49,7 @@ number, a bracket or a comma, nothing.
 The selected part, its symbol, pins and labels, is drawn light cyan
 (#A0FFFF): its relative luminance, 0.86, is 1.8 times the khaki's, 0.48,
 so the change shows without color too.
+While g and a page number are typed, the top left shows "go to: N".
 The keys:
 .PP
 .RS

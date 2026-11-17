@@ -4,4 +4,4 @@
 
 page bad
 opamp u LMH6609
-resistor r 1k down from u.in3
+resistor r 1K down from u.in3

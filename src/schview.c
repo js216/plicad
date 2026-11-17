@@ -9,7 +9,8 @@
 // number and Enter goes to it, a click on a sheet port's circle or name
 // goes to the first other page it lists, on a number of its list to
 // that page), in an X11 window by OpenGL,
-// khaki on black (vecgl.h).  It opens fitted to the sheet, as Space
+// on black, its text and its frame khaki, the rest a whiter gray
+// (vecgl.h).  It opens fitted to the sheet, as Space
 // fits it; the wheel zooms round the pointer and the left button drags
 // the view.  A click within 3 pixels of the box of an element of a part
 // (its symbol's body, a text of it) selects the part, of the smallest
@@ -96,13 +97,16 @@ static struct hit *hits;
 static size_t nhits;
 static int sel_net = -1; // The net selected, or -1.
 
-// Khaki (#BBBB99), light cyan (#A0FFFF) for the part or the net
-// selected (its wires, dots and flags), or black
-// for what clears; their relative luminances are 0.48 and 0.86.
+// The text and the sheet's frame and title block khaki (#BBBB99), the
+// rest of the drawing a whiter gray (#D4D4D0), light cyan (#A0FFFF) for
+// the part or the net selected (its wires, dots and flags), or black
+// for what clears.
 static void color(const struct vg_run *r)
 {
 	static const double khaki[3] = { 0xbb / 255.0, 0xbb / 255.0,
 					 0x99 / 255.0 };
+	static const double gray[3] = { 0xd4 / 255.0, 0xd4 / 255.0,
+					0xd0 / 255.0 };
 	static const double cyan[3] = { 0xa0 / 255.0, 1, 1 };
 	static const double black[3] = { 0, 0, 0 };
 
@@ -110,7 +114,8 @@ static void color(const struct vg_run *r)
 		 (r->part >= 0 && r->part == vg_sel) ||
 				 (r->net >= 0 && r->net == sel_net) ?
 							    cyan :
-							    khaki,
+		 r->text || r->frame ? khaki :
+				       gray,
 		 1);
 }
 
@@ -153,14 +158,14 @@ static void draw(void)
 	vg_draw(pages[now], all, color);
 }
 
-// The number of the page, at the top left: N / of all.
+// The page number being typed after g, at the top left, and the name of
+// the net selected at the top right.
 static void overlay(void)
 {
 	char t[64];
 
-	if (npages > 1) {
-		snprintf(t, sizeof t, "page %d (%zu of %zu)%s", numbers[now],
-			 now + 1, npages, typing >= 0 ? "  go to:" : "");
+	if (typing >= 0) {
+		snprintf(t, sizeof t, "go to:");
 		if (typing > 0) {
 			snprintf(t + strlen(t), sizeof t - strlen(t), " %d",
 				 typing);
@@ -357,10 +362,10 @@ static int pick(double x, double y, double tol)
 
 static const char *path;
 
-// The width of a text record's text, at its size.
-static double width_of(const char *t, double size)
+// The width of a text record's text, in its font at its size.
+static double width_of(char font, const char *t, double size)
 {
-	return vg_text_width('R', t) * size;
+	return vg_text_width(font, t) * size;
 }
 
 // Reads what a click finds on page pg of the text buf: the flags and
@@ -377,7 +382,7 @@ static void read_page(const char *buf, size_t len, size_t pg)
 	for (const char *l = buf; l && l < buf + len;) {
 		const char *e = memchr(l, '\n', (size_t)(buf + len - l));
 		size_t n = e ? (size_t)(e - l) : (size_t)(buf + len - l);
-		char line[4096], kind[16] = "", t[64];
+		char line[4096], kind[16] = "", t[64], font = 'R';
 		double v[8], sz, x, y;
 		int al, at = 0;
 
@@ -385,13 +390,13 @@ static void read_page(const char *buf, size_t len, size_t pg)
 		memcpy(line, l, n);
 		line[n] = 0;
 		l = e ? e + 1 : NULL;
-		if (sscanf(line, "text %*c %lf %*f %d %lf %lf %n", &sz, &al, &x,
-			   &y, &at) == 4 &&
+		if (sscanf(line, "text %c %lf %*f %d %lf %lf %n", &font, &sz, &al,
+			   &x, &y, &at) == 5 &&
 		    at && nsp < 32) {
 			double w;
 
 			snprintf(t, sizeof t, "%s", line + at);
-			w = width_of(t, sz);
+			w = width_of(font, t, sz);
 			x -= w * al / 2;
 			snprintf(sp[nsp].t, sizeof sp[nsp].t, "%s", t);
 			sp[nsp].b[0] = x;

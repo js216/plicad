@@ -79,9 +79,9 @@ check sh -c 'grep -qx "part filter.buf.rf R101" "$1/good.vec" &&
 # uses most go without their value alone.
 name="the common ferrites keep their designators, not their values"
 check awk '$1 == "part" && NF == 3 { p = $2 } $1 == "part" && NF == 1 { p = "" }
-	p ~ /^filter\.v(pos|neg)\.fb$/ && $1 == "text" && $NF == "FB" { fb[p] = 1 }
+	p ~ /^filter\.v(pos|neg)\.fb$/ && $1 == "text" && $NF ~ /^FB[0-9]+$/ { fb[p] = 1 }
 	p ~ /^filter\.v(pos|neg)\.fb$/ && $1 == "text" && $NF == "600R" { bad = 1 }
-	p == "filter.buf.rf" && $1 == "text" && $NF == "1k" { rf = 1 }
+	p == "filter.buf.rf" && $1 == "text" && $NF == "1K" { rf = 1 }
 	END { exit !(fb["filter.vpos.fb"] && fb["filter.vneg.fb"] && !bad && rf) }' \
 	"$tmp/good.vec"
 

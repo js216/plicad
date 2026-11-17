@@ -3,8 +3,8 @@ PROGS := smfold smflat tostep measure place interfere numdiff param \
 	view schdraw schnet schcheck netdiff pcbplace pcbroute pcbcheck \
 	pcbgerber pcbvec gbrvec vecps schview pcbview
 
-LIB := util font geom expr fold brep bsolid contact shape stream integ isect \
-	split merge mesh obj scene moves clash bvh coat insert asm sview \
+LIB := util font stroke geom expr fold brep bsolid contact shape stream integ \
+	isect split merge mesh obj scene moves clash bvh coat insert asm sview \
 	schsrc pcbsrc pcbplot vgview vecgl
 
 CFLAGS := -std=c99 -pedantic-errors -Werror -Wall -Wextra \

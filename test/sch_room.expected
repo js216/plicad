@@ -1,10 +1,10 @@
 # netlist of sch_room.sch, from schnet
-part C101 capacitor value 100n swap 1,2 name room.cn
-part C102 capacitor value 100n swap 1,2 name room.cp
+part C101 capacitor value 100N swap 1,2 name room.cn
+part C102 capacitor value 100N swap 1,2 name room.cp
 part FB101 ferrite value 742863160 swap 1,2 name room.fbn
 part FB102 ferrite value 742863160 swap 1,2 name room.fbp
-part R101 resistor value 1k swap 1,2 name room.rf
-part R102 resistor value 1k swap 1,2 name room.rg
+part R101 resistor value 1K swap 1,2 name room.rf
+part R102 resistor value 1K swap 1,2 name room.rg
 part U101 ti/lmh6609 value LMH6609 pins in+:3,in-:2,out:6,v+:7,v-:4 name room.amp
 net +5V global FB102.2
 net -5V global FB101.2

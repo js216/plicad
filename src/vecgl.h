@@ -20,11 +20,12 @@
 #include <stdio.h>
 
 // A run: its triangles and segments in the buffers; dark or clear, of a
-// zone's fill, the outline of a zone, a via's hole, the part (-1 none)
-// and the net (-1 none, vg_net).
+// zone's fill, the outline of a zone, a via's hole, the part (-1 none),
+// the net (-1 none, vg_net), of a text record, and of a sheet's frame
+// (the records from a page record to its first part or net).
 struct vg_run {
 	int first, count, sfirst, scount;
-	int dark, zone, edge, via, part, net;
+	int dark, zone, edge, via, part, net, text, frame;
 };
 
 // An element of a part, for picking: the box of what it draws (a body,
@@ -90,7 +91,7 @@ void vg_free(struct vg_file *f);
 // Reads a vec stream into f, as vg_load reads a file.
 void vg_load_stream(struct vg_file *f, FILE *in, double via);
 // The width of a text in the font (R or I) of the glyph table, at a size
-// of 1 (its em).
+// of 1 (its em), or in the font of strokes S at a capital height of 1.
 double vg_text_width(char font, const char *s);
 // The name of the layer a file draws, from its layer record (before any
 // drawing, vec(5)), into name; "" if it has none.

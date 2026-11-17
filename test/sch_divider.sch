@@ -8,9 +8,9 @@
 page divider
 title Divider
 
-resistor top 10k
-resistor bottom 4.7k down from top.2
-capacitor c 1uF right from top.2
+resistor top 10K
+resistor bottom 4.7K down from top.2
+capacitor c 1U right from top.2
 diode clamp right from top.2
 ground at bottom.2
 ground at c.2

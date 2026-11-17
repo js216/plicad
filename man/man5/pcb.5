@@ -59,7 +59,10 @@ A ref statement puts a part's designator on a SIDE of its courtyard
 (above, below, left or right, at the gap the placer leaves), at the
 start (the left or top end), middle (the default) or end of that side,
 turned to read upward with rot 90, and H mm tall (0.5 to 0.8, 0.8 by
-default); a part without one has its designator where the placer finds
+default), in the stroke font of
+.IR vec (5),
+its pen 0.15 of H wide (0.12 mm at 0.8), its box grown by the
+descender for a text that has one; a part without one has its designator where the placer finds
 room.
 .PP
 An unplaced statement leaves a group's parts (every part whose name

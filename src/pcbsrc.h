@@ -265,7 +265,7 @@ struct pcb_stroke {
 	int ref; // A stroke of the designator, not of the footprint.
 };
 // The silkscreen of the board: the lines of each placed part's footprint
-// and its designator.  A designator stands by its part's courtyard, at
+// and its designator, in the stroke font (stroke.h).  A designator stands by its part's courtyard, at
 // the first of above, below, left and right that is clear of the mask
 // openings, of the courtyards of other parts and of the designators
 // before it on its side, and inside the board; else above.  On the

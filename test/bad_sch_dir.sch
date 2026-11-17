@@ -3,5 +3,5 @@
 # Copyright (c) 2026 Jakob Kastelic
 
 page bad
-resistor a 1k
-resistor b 1k up from a.2
+resistor a 1K
+resistor b 1K up from a.2

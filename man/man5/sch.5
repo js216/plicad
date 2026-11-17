@@ -103,8 +103,12 @@ Notes never name designators.
 A part statement starts with its kind, the name of a symbol (resistor,
 capacitor, inductor, ferrite, diode, tvs, opamp, bnc, ...), and the
 name of the part.
-The value is the first other word: 499, 0.1\[mc]F, 14V, or the part
-number of an integrated circuit, whose pin table the library holds.
+The value is the first other word: of a resistor, a capacitor or an
+inductor, a number with its capital unit letter right after it, R, K
+or M for a resistor (100R, 49.9R, 10.0K), P, N or U for a capacitor
+(120P, 100N, 1.5U), N or U for an inductor (1.5U); of any other kind
+anything, as 14V or the part number of an integrated circuit, whose pin
+table the library holds.
 .B rating
 is a second value (0.5W),
 .B mpn
@@ -181,14 +185,14 @@ port IN amp.in
 group amp
   note inverting, gain of 10
   opamp u LMH6609 flip
-  resistor rin 1k left from u.in-
-  resistor rf 10k between u.in- and u.out up
+  resistor rin 1K left from u.in-
+  resistor rf 10K between u.in- and u.out up
   ground at u.in+
   port in rin.2
 end
 
 page back
-resistor load 50
+resistor load 50R
 port IN load.1
 ground at load.2
 .fi
