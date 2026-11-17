@@ -10,6 +10,7 @@
 #define GL_GLEXT_PROTOTYPES
 
 #include "vecgl.h"
+#include "stroke.h"
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <GL/glx.h>
@@ -50,14 +51,31 @@ void vg_text(int x, int y, const char *s)
 	glCallLists((GLsizei)strlen(s), GL_UNSIGNED_BYTE, s);
 }
 
+void vg_stroke(double x, double y, const char *s)
+{
+	double *seg = NULL;
+	size_t n = stroke_text(s, VG_CAP, &seg);
+
+	glLineWidth((float)(VG_CAP * VG_PEN));
+	glBegin(GL_LINES);
+	for (size_t i = 0; i < n; i++) {
+		glVertex2d(x + seg[4 * i], y + seg[4 * i + 1]);
+		glVertex2d(x + seg[4 * i + 2], y + seg[4 * i + 3]);
+	}
+	glEnd();
+	glLineWidth(1);
+	free(seg);
+}
+
 void vg_corner(const char *s)
 {
-	int w = (int)strlen(s) * vg_font_w + 8, h = vg_font_h + 4;
+	// Room for the descenders, a third of the capitals, and a margin.
+	double w = stroke_width(s, VG_CAP) + 16, h = VG_CAP * 4 / 3 + 12;
 
 	glColor3d(0, 0, 0);
-	glRecti(vg_w - w - 4, vg_h, vg_w, vg_h - h);
+	glRectd(vg_w - w, vg_h, vg_w, vg_h - h);
 	glColor3d(1, 1, 1);
-	vg_text(vg_w - w, vg_h - h + 4, s);
+	vg_stroke(vg_w - w + 8, vg_h - 6 - VG_CAP, s);
 }
 
 void vg_title(Display *dp, Window w, const char *path, int dir)
@@ -359,6 +377,7 @@ static void event(XEvent *e)
 	static int down, moved, lx, ly;
 	KeySym k = 0, kp;
 	char ch;
+	int asked = draw; // A frame asked by an earlier event of the batch.
 
 	// The key as typed, Shift and all; a digit of the keypad as a digit,
 	// Num Lock or not.
@@ -395,9 +414,10 @@ static void event(XEvent *e)
 			click(e->xbutton.x, e->xbutton.y);
 		}
 	} else if (e->type == MotionNotify || e->type == LeaveNotify) {
-		draw = V->move &&
-		       V->move(e->type == LeaveNotify ? -1 : e->xmotion.x,
-			       e->type == LeaveNotify ? -1 : e->xmotion.y);
+		draw = (V->move &&
+			V->move(e->type == LeaveNotify ? -1 : e->xmotion.x,
+				e->type == LeaveNotify ? -1 : e->xmotion.y)) ||
+		       asked;
 	} else if (k == XK_q) {
 		exit(0);
 	} else if (k == XK_F5 && V->reload) {

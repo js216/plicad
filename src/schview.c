@@ -19,9 +19,10 @@
 // wire, a dot or a pin's end out of any part, or on a global's mark or
 // name, selects the net, drawn light cyan with its flags, its name in
 // the upper right corner.  A note is a khaki box with an N; the pointer
-// over it shows its text, wrapped, and lights its group's parts in
-// magenta.  The selected
-// part is drawn in light cyan, and its page shows when it is newly
+// over it opens it: its text shows, wrapped, at the upper left, and its
+// badge and its group's parts are lit magenta.  The texts over the
+// drawing are in the stroke font, at one size whatever the zoom; the
+// help in the font fixed.  The selected part is drawn in light cyan, and its page shows when it is newly
 // selected; c centers it (again: zooms in two times), C zooms out two
 // times, F5 reads the file again (Loading... in the upper right
 // meanwhile), ? shows or hides a help of the keys, and q quits.  The
@@ -33,6 +34,7 @@
 
 #define _POSIX_C_SOURCE 200809L // For fmemopen, open_memstream, strdup.
 
+#include "stroke.h"
 #include "vecgl.h"
 #include <GL/gl.h>
 #include <X11/keysym.h>
@@ -112,7 +114,6 @@ static struct note *notes;
 static size_t nnotes;
 static struct vg_file **note_files;
 static long hover = -1;
-static int px_at, py_at; // The pointer, in pixels.
 
 // Whether part k is of the group of the note under the pointer: its
 // name the group, or the group and a dot before the rest.
@@ -189,6 +190,58 @@ static void note_color(const struct vg_run *r)
 		 1);
 }
 
+// The badge of the note open, magenta as the parts it lights.
+static void open_color(const struct vg_run *r)
+{
+	(void)r;
+	vg_color((const double[3]){ 1, 0x80 / 255.0, 1 }, 1);
+}
+
+static void badge(FILE *out, const struct note *nt);
+
+// The badge of the note under the pointer (of note badge_of), made anew
+// when it changes.
+static struct vg_file *open_file;
+static long badge_of = -1;
+
+static void open_badge(void)
+{
+	struct vg_file *f = open_file;
+	char *text = NULL;
+	size_t len = 0;
+	FILE *out, *in;
+
+	if (hover != badge_of || !f) {
+		if (f) {
+			vg_free(f);
+			free(f);
+			f = open_file = NULL;
+		}
+		badge_of = hover;
+		if (hover < 0) {
+			return;
+		}
+		out = open_memstream(&text, &len);
+		if (!out) {
+			exit(2);
+		}
+		badge(out, &notes[hover]);
+		fclose(out);
+		in = fmemopen(text, len, "r");
+		f = calloc(1, sizeof *f);
+		if (!in || !f) {
+			exit(2);
+		}
+		vg_load_stream(f, in, 0);
+		fclose(in);
+		free(text);
+		open_file = f;
+	}
+	if (hover >= 0) {
+		vg_draw(f, all, open_color);
+	}
+}
+
 static void draw(void)
 {
 	static int shown = -1; // The selection last turned to.
@@ -203,17 +256,21 @@ static void draw(void)
 	if (note_files[now]) {
 		vg_draw(note_files[now], all, note_color);
 	}
+	open_badge();
 }
 
-// The text of the note under the pointer, in a black box by the pointer,
-// wrapped at about 60 characters, inside the window.
-static void tooltip(const char *t)
+// The text of the note open, in the stroke font in a black box at the
+// upper left of the window, under the bar, wrapped at about 60
+// characters and inside the window.
+static void note_text(const char *t)
 {
 	char line[16][80];
-	int n = 0, w = 0, x, y, lh = vg_font_h + 2;
+	int n = 0;
+	double w = 0, lh = VG_CAP * 5 / 3, room = vg_w - 24, y;
 
 	while (*t && n < 16) {
 		size_t len = strlen(t), cut = len;
+		char *sp;
 
 		if (len > 60) {
 			cut = 60;
@@ -225,23 +282,23 @@ static void tooltip(const char *t)
 			}
 		}
 		snprintf(line[n], sizeof line[n], "%.*s", (int)cut, t);
-		w = (int)strlen(line[n]) > w ? (int)strlen(line[n]) : w;
+		// Shorter, at a space, while wider than the window.
+		while (stroke_width(line[n], VG_CAP) > room &&
+		       (sp = strrchr(line[n], ' '))) {
+			*sp = 0;
+		}
+		cut = strlen(line[n]);
+		w = fmax(w, stroke_width(line[n], VG_CAP));
 		n++;
 		t += cut;
 		t += strspn(t, " ");
 	}
-	w = w * vg_font_w + 12;
-	x = px_at + 16;
-	y = vg_h - py_at - 16; // The top of the box, from the bottom.
-	x = x + w > vg_w ? vg_w - w : x;
-	x = x < 0 ? 0 : x;
-	y = y - n * lh - 8 < 0 ? n * lh + 8 : y;
-	y = y > vg_h ? vg_h : y;
+	y = vg_h - vg_top;
 	glColor3d(0, 0, 0);
-	glRecti(x, y, x + w, y - n * lh - 8);
+	glRectd(0, y, w + 16, y - n * lh - 12);
 	glColor3d(1, 1, 1);
 	for (int k = 0; k < n; k++) {
-		vg_text(x + 6, y - 4 - (k + 1) * lh + 2, line[k]);
+		vg_stroke(8, y - 6 - VG_CAP - k * lh, line[k]);
 	}
 }
 
@@ -264,7 +321,7 @@ static void overlay(void)
 		vg_corner(vg_net_name(sel_net));
 	}
 	if (hover >= 0) {
-		tooltip(notes[hover].text);
+		note_text(notes[hover].text);
 	}
 }
 
@@ -387,8 +444,6 @@ static int move(int px, int py)
 	double x = vg_x + (px - vg_w / 2) / vg_zoom;
 	double y = vg_y - (py - vg_h / 2) / vg_zoom;
 
-	px_at = px;
-	py_at = py;
 	hover = -1;
 	for (size_t i = 0; px >= 0 && i < nnotes; i++) {
 		if (notes[i].page == now &&
@@ -638,6 +693,20 @@ static void read_page(const char *buf, size_t len, size_t pg)
 	}
 }
 
+// The badge of a note: its box with an N in it.
+static void badge(FILE *out, const struct note *nt)
+{
+	double h = NOTE_BOX / 2;
+
+	fprintf(out,
+		"line 0.6 %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f "
+		"%.3f %.3f\n",
+		nt->x - h, nt->y - h, nt->x + h, nt->y - h, nt->x + h,
+		nt->y + h, nt->x - h, nt->y + h, nt->x - h, nt->y - h);
+	fprintf(out, "text S %.3f 0 1 %.3f %.3f N\n", NOTE_BOX / 2, nt->x,
+		nt->y - NOTE_BOX / 4);
+}
+
 // The boxes of the notes of page pg, each with an N in it, into a file of
 // their own.
 static void note_boxes(size_t pg)
@@ -645,7 +714,6 @@ static void note_boxes(size_t pg)
 	char *text = NULL;
 	size_t len = 0;
 	FILE *out = open_memstream(&text, &len), *in;
-	double h = NOTE_BOX / 2;
 
 	note_files = realloc(note_files, (pg + 1) * sizeof *note_files);
 	if (!note_files || !out) {
@@ -655,16 +723,9 @@ static void note_boxes(size_t pg)
 	for (size_t i = 0; i < nnotes; i++) {
 		const struct note *nt = &notes[i];
 
-		if (nt->page != pg) {
-			continue;
+		if (nt->page == pg) {
+			badge(out, nt);
 		}
-		fprintf(out,
-			"line 0.6 %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f "
-			"%.3f %.3f\n",
-			nt->x - h, nt->y - h, nt->x + h, nt->y - h, nt->x + h,
-			nt->y + h, nt->x - h, nt->y + h, nt->x - h, nt->y - h);
-		fprintf(out, "text S %.3f 0 1 %.3f %.3f N\n", NOTE_BOX / 2,
-			nt->x, nt->y - NOTE_BOX / 4);
 	}
 	fclose(out);
 	in = len ? fmemopen(text, len, "r") : NULL;
@@ -772,6 +833,7 @@ static void reload(void)
 			free(note_files[p]);
 		}
 	}
+	badge_of = -2; // The notes are new: the badge open is made anew.
 	load();
 }
 

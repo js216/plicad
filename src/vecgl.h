@@ -123,7 +123,16 @@ int vg_net(const char *s);
 const char *vg_net_name(int i);
 // Sets the color, in sRGB and opacity; the frame blends in linear light.
 void vg_color(const double c[3], double a);
-// Draws text in a black box in the upper right corner of the window.
+// The text the viewers write over the drawing, in pixels: in the stroke
+// font (stroke.h), its capitals VG_CAP high, its pen VG_PEN of them
+// wide, whatever the zoom.
+#define VG_CAP 14.0
+#define VG_PEN 0.11
+// Draws text in the stroke font from pixel (x, y) of the window, the
+// left end of its baseline, from its lower left, in the color of glColor.
+void vg_stroke(double x, double y, const char *s);
+// Draws text in the stroke font in a black box in the upper right
+// corner of the window.
 void vg_corner(const char *s);
 // Titles window w by the absolute path of path (WM_NAME and
 // _NET_WM_NAME), or with dir by its directory, a slash at the end.
