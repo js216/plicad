@@ -2,10 +2,9 @@
 // vecgl.h -- Vector files on the GPU, and the viewer round them (vgview.c)
 // Copyright (c) 2026 Jakob Kastelic
 
-// A vec(5) file is read once: a polygon or a text is cut into triangles
-// (by its ears, the holes of the glyphs clear), a line or a disk into
-// segments that a shader shades by their distance (a disk is a segment
-// of no length).  Both go to the GPU in the order of the file, as runs
+// A vec(5) file is read once: a polygon is cut into triangles (by its
+// ears), a line, a disk or the strokes of a text into segments that a
+// shader shades by their distance (a disk is a segment of no length).  Both go to the GPU in the order of the file, as runs
 // of records alike, so a frame is a few calls and zooming or panning
 // only changes the matrix.  The viewer round them (vg_start, vg_loop)
 // is what schview and pcbview share: the window, the view, the mouse,
@@ -90,9 +89,6 @@ void vg_load(struct vg_file *f, const char *path, double via);
 void vg_free(struct vg_file *f);
 // Reads a vec stream into f, as vg_load reads a file.
 void vg_load_stream(struct vg_file *f, FILE *in, double via);
-// The width of a text in the font (R or I) of the glyph table, at a size
-// of 1 (its em), or in the font of strokes S at a capital height of 1.
-double vg_text_width(char font, const char *s);
 // The name of the layer a file draws, from its layer record (before any
 // drawing, vec(5)), into name; "" if it has none.
 void vg_layer(const char *path, char *name, size_t size);
@@ -109,9 +105,8 @@ void vg_draw(const struct vg_file *f, int (*want)(const struct vg_run *),
 // its distance).
 void vg_pick(const struct vg_file *f, double x, double y, double tol, int *best,
 	     double *area);
-// Finds the glyph table, ../lib/fonts/nimbussans.txt from the program,
-// and makes the shader of the segments (in a context of OpenGL).
-void vg_init(const char *argv0);
+// Makes the shader of the segments (in a context of OpenGL).
+void vg_init(void);
 // The box of the elements of a part in all the files read.
 void vg_part_box(int part, double b[4]);
 // The index of the part of the name, added if new; its name.

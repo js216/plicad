@@ -272,7 +272,7 @@ int vg_start(int argc, char **argv, const struct vg_viewer *v)
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glEnableClientState(GL_VERTEX_ARRAY);
-	vg_init(argv[0]);
+	vg_init();
 	return 1;
 }
 

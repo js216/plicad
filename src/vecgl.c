@@ -19,7 +19,7 @@
 
 // The names of the parts and of the nets, and the class of each net
 // (NULL for none).
-static char *font_file, **parts, **nets, **classes;
+static char **parts, **nets, **classes;
 static size_t nparts, nnets, nclasses;
 
 static void *more(void *p, size_t n)
@@ -94,113 +94,6 @@ int vg_net_record(char *s)
 const char *vg_net_class(int i)
 {
 	return i >= 0 && (size_t)i < nclasses ? classes[i] : NULL;
-}
-
-// The glyphs of lib/fonts/nimbussans.txt: by font and code point, the
-// advance and the contours cut into lines, outlines and holes.
-struct glyph {
-	char font;
-	long code;
-	double adv, units, **ct;
-	int *nct, *hole, n;
-};
-
-static struct glyph *glyphs;
-static size_t nglyphs;
-
-static void read_fonts(void)
-{
-	FILE *in = fopen(font_file, "r");
-	char *line = NULL, font = 'R';
-	size_t cap = 0;
-	double units = 1000;
-
-	if (!in) {
-		fprintf(stderr, "%s: cannot read\n", font_file);
-		exit(2);
-	}
-	while (getline(&line, &cap, in) > 0) {
-		struct glyph *g = nglyphs ? &glyphs[nglyphs - 1] : NULL;
-		char *s = line + 1, *end;
-		double a, x = 0, y = 0, v[6];
-		long code;
-		int k;
-
-		if (sscanf(line, "font %c %lf", &font, &units) == 2) {
-			continue;
-		}
-		if (sscanf(line, "glyph %ld %lf", &code, &a) == 2) {
-			glyphs = more(glyphs, (nglyphs + 1) * sizeof *glyphs);
-			memset(&glyphs[nglyphs], 0, sizeof *glyphs);
-			glyphs[nglyphs].font = font;
-			glyphs[nglyphs].code = code;
-			glyphs[nglyphs].units = units;
-			glyphs[nglyphs++].adv = a;
-			continue;
-		}
-		if (!g || (line[0] != '+' && line[0] != '-')) {
-			continue;
-		}
-		k = g->n++;
-		g->ct = more(g->ct, (size_t)g->n * sizeof *g->ct);
-		g->nct = more(g->nct, (size_t)g->n * sizeof *g->nct);
-		g->hole = more(g->hole, (size_t)g->n * sizeof *g->hole);
-		g->ct[k] = more(NULL, 2 * 16 * strlen(line) * sizeof **g->ct);
-		g->nct[k] = 0;
-		g->hole[k] = line[0] == '-';
-		for (char op; (op = *(s += strspn(s, " "))) == 'M' ||
-			      op == 'L' || op == 'C';) {
-			s++;
-			for (int i = 0; i < (op == 'C' ? 6 : 2); i++) {
-				v[i] = strtod(s, &end);
-				s = end;
-			}
-			// A cubic is cut into 16 lines.
-			for (int i = 1; i <= (op == 'C' ? 16 : 1); i++) {
-				double t = op == 'C' ? i / 16.0 : 1, m = 1 - t;
-				double *p = &g->ct[k][2 * g->nct[k]++];
-
-				p[0] = op != 'C' ?
-					       v[0] :
-					       m * m * m * x +
-						       3 * m * m * t * v[0] +
-						       3 * m * t * t * v[2] +
-						       t * t * t * v[4];
-				p[1] = op != 'C' ?
-					       v[1] :
-					       m * m * m * y +
-						       3 * m * m * t * v[1] +
-						       3 * m * t * t * v[3] +
-						       t * t * t * v[5];
-			}
-			x = op == 'C' ? v[4] : v[0];
-			y = op == 'C' ? v[5] : v[1];
-		}
-	}
-	free(line);
-	fclose(in);
-}
-
-static const struct glyph *glyph(char font, long code)
-{
-	for (size_t i = 0; i < nglyphs; i++) {
-		if (glyphs[i].font == font && glyphs[i].code == code) {
-			return &glyphs[i];
-		}
-	}
-	return code == '?' ? NULL : glyph(font, '?');
-}
-
-static long utf8(const unsigned char **s)
-{
-	long c = *(*s)++;
-	int n = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
-
-	c &= n ? 0x3F >> n : 0x7F;
-	while (n-- && (**s & 0xC0) == 0x80) {
-		c = (c << 6) | (*(*s)++ & 0x3F);
-	}
-	return c;
 }
 
 // The file being read: its triangles' points, its segments (six points
@@ -350,83 +243,36 @@ static void element(char kind)
 	}
 }
 
-// A text record: the outlines of its glyphs dark and their holes clear.
+// A text record: segments of the pen of the stroke font, its size the
+// capital height.
 static void text(const char *line)
 {
-	char font;
-	double size, angle, x, y, w = 0, c, sn;
-	int align, at = 0, dark = state.dark;
-	const unsigned char *s;
+	double size, angle, x, y, w, c, sn, *sg;
+	int align, at = 0;
+	size_t n;
 
-	if (sscanf(line, "text %c %lf %lf %d %lf %lf %n", &font, &size, &angle,
-		   &align, &x, &y, &at) != 6 ||
+	if (sscanf(line, "text %lf %lf %d %lf %lf %n", &size, &angle, &align,
+		   &x, &y, &at) != 5 ||
 	    !at) {
 		return;
 	}
 	c = cos(angle * PI / 180);
 	sn = sin(angle * PI / 180);
-	// The font of strokes: segments of its pen, its size the capital
-	// height.
-	if (font == 'S') {
-		double *sg;
-		size_t n = stroke_text(line + at, size, &sg);
-
-		w = stroke_width(line + at, size);
-		x -= c * w * align / 2;
-		y -= sn * w * align / 2;
-		run();
-		for (size_t k = 0; k < n; k++) {
-			double a[2], b[2];
-
-			a[0] = x + sg[4 * k] * c - sg[4 * k + 1] * sn;
-			a[1] = y + sg[4 * k] * sn + sg[4 * k + 1] * c;
-			b[0] = x + sg[4 * k + 2] * c - sg[4 * k + 3] * sn;
-			b[1] = y + sg[4 * k + 2] * sn + sg[4 * k + 3] * c;
-			segment(a, b, STROKE_PEN * size / 2);
-		}
-		free(sg);
-		return;
-	}
-	if (!nglyphs) {
-		read_fonts();
-	}
-	for (s = (const unsigned char *)line + at; *s;) {
-		const struct glyph *g = glyph(font, utf8(&s));
-
-		w += g ? g->adv * size / g->units : 0;
-	}
+	n = stroke_text(line + at, size, &sg);
+	w = stroke_width(line + at, size);
 	x -= c * w * align / 2;
 	y -= sn * w * align / 2;
-	for (s = (const unsigned char *)line + at; *s;) {
-		const struct glyph *g = glyph(font, utf8(&s));
-		double sc = g ? size / g->units : 0;
+	run();
+	for (size_t k = 0; k < n; k++) {
+		double a[2], b[2];
 
-		for (int k = 0; g && k < 2 * g->n; k++) {
-			const double *q = g->ct[k % g->n];
-			double *p;
-
-			if (g->hole[k % g->n] != k / g->n) {
-				continue;
-			}
-			state.dark = k < g->n ? dark : !dark;
-			run();
-			p = more(NULL,
-				 (size_t)g->nct[k % g->n] * 2 * sizeof *p);
-			for (int i = 0; i < g->nct[k % g->n]; i++) {
-				p[2 * i] =
-					x +
-					(q[2 * i] * c - q[2 * i + 1] * sn) * sc;
-				p[2 * i + 1] =
-					y +
-					(q[2 * i] * sn + q[2 * i + 1] * c) * sc;
-			}
-			polygon(p, g->nct[k % g->n]);
-			free(p);
-		}
-		x += g ? c * g->adv * sc : 0;
-		y += g ? sn * g->adv * sc : 0;
+		a[0] = x + sg[4 * k] * c - sg[4 * k + 1] * sn;
+		a[1] = y + sg[4 * k] * sn + sg[4 * k + 1] * c;
+		b[0] = x + sg[4 * k + 2] * c - sg[4 * k + 3] * sn;
+		b[1] = y + sg[4 * k + 2] * sn + sg[4 * k + 3] * c;
+		segment(a, b, STROKE_PEN * size / 2);
 	}
-	state.dark = dark;
+	free(sg);
 }
 
 static void upload(unsigned *buf, const float *p, size_t n)
@@ -463,24 +309,6 @@ void vg_free(struct vg_file *f)
 			files[i--] = files[--nfiles];
 		}
 	}
-}
-
-double vg_text_width(char font, const char *s)
-{
-	double w = 0;
-
-	if (font == 'S') {
-		return stroke_width(s, 1);
-	}
-	if (!nglyphs) {
-		read_fonts();
-	}
-	for (const unsigned char *p = (const unsigned char *)s; *p;) {
-		const struct glyph *g = glyph(font, utf8(&p));
-
-		w += g ? g->adv / g->units : 0;
-	}
-	return w;
 }
 
 void vg_load_stream(struct vg_file *f, FILE *in, double via)
@@ -756,14 +584,8 @@ void vg_part_box(int part, double b[4])
 	}
 }
 
-void vg_init(const char *argv0)
+void vg_init(void)
 {
-	const char *slash = strrchr(argv0, '/');
-	size_t len = slash ? (size_t)(slash - argv0) : 1;
-
-	font_file = more(NULL, len + 32);
-	memcpy(font_file, slash ? argv0 : ".", len);
-	strcpy(font_file + len, "/../lib/fonts/nimbussans.txt");
 	prog = glCreateProgram();
 	shader(GL_VERTEX_SHADER, vs);
 	shader(GL_FRAGMENT_SHADER, fs);

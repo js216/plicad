@@ -3,14 +3,15 @@
 // Copyright (c) 2026 Jakob Kastelic
 
 // The one font of strokes every program draws text in: the silkscreen
-// of a board (pcbsrc), the text of a sheet (schdraw) and the font S of
-// vec(5), which the viewers and the printer draw.  Each printable ASCII
-// character is drawn on a grid 4 units wide, the capitals and digits 6
-// high on the baseline, the lowercase letters 4 (their ascenders 6),
-// the descenders 2 under the baseline, each character's strokes drawn
-// at 0.88 of the grid's width about its middle; each character advances
-// 5 units.  A text's size is the height of its capitals, a unit is a
-// sixth of it, and the pen is STROKE_PEN of it wide, round at its ends.
+// of a board (pcbsrc), the text of a sheet (schdraw) and every text
+// record of vec(5), which the viewers and the printer draw.  Each
+// printable ASCII character is drawn on a grid 4 units wide, the
+// capitals and digits 6 high on the baseline, the lowercase letters 4
+// (their ascenders 6), the descenders 2 under the baseline, each
+// character's strokes drawn at 0.88 of the grid's width about its
+// middle; each character advances 5 units.  A text's size is the height
+// of its capitals, a unit is a sixth of it, and the pen is STROKE_PEN of
+// it wide, round at its ends.
 
 #ifndef STROKE_H
 #define STROKE_H

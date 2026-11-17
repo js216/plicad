@@ -62,7 +62,6 @@
 #define LEAD SCH_LEAD
 #define DESCENT SCH_DESCENT
 #define PINNUM 3.25 // The pin numbers of an integrated circuit.
-#define HELV_CAP 0.72 // The capital height of a template's text, by its em.
 #define NOTE_BOX 10.0 // The side of the box of a note, in points of the page.
 #define MARGIN 8 // Grid units round everything, for the router.
 #define SPREAD_MIN 2 // The least gap between blocks spread, in grid units.
@@ -1198,7 +1197,7 @@ static double OX, OY, SC;
 // Writes a text record of a run, from (x, y) of the drawing, flush left.
 static void text_run(const struct run *r, double x, double y)
 {
-	printf("text S %.3f 0 0 %.3f %.3f %s\n", r->size * SC, OX + x * SC,
+	printf("text %.3f 0 0 %.3f %.3f %s\n", r->size * SC, OX + x * SC,
 	       OY + y * SC, r->s);
 }
 
@@ -1262,18 +1261,16 @@ static void sheet(double room[4], double paper[2], int print)
 			   !print) {
 		} else if (!strncmp(buf, "line ", 5)) {
 			printf("line %.2f%s\n", LW, buf + 4);
-		} else if (sscanf(buf, "text %*c %lf %lf %d %lf %lf %n", &tsz,
-				  &ta, &tj, &tx, &ty, &at) == 5 &&
+		} else if (sscanf(buf, "text %lf %lf %d %lf %lf %n", &tsz, &ta,
+				  &tj, &tx, &ty, &at) == 5 &&
 			   at) {
-			// In the stroke font, its capitals as high as the
-			// template's at 0.9 of their size.
 			t = buf + at;
 			if (*t == '$') {
 				t = field(t + 1);
 			}
 			if (*t) {
-				printf("text S %.3f %g %d %g %g %s\n",
-				       tsz * HELV_CAP * 0.9, ta, tj, tx, ty, t);
+				printf("text %.3f %g %d %g %g %s\n", tsz, ta,
+				       tj, tx, ty, t);
 			}
 		}
 	}

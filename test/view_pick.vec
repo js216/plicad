@@ -8,7 +8,7 @@ net
 part a
 name a 95 95 115 185
 line 1 100 100 110 120 100 140 110 160 100 180
-text R 10 0 0 150 140 R1
+text 7.2 0 0 150 140 R1
 part
 part b
 name b 300 100 340 140

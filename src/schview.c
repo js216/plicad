@@ -539,12 +539,6 @@ static int pick(double x, double y, double tol)
 
 static const char *path;
 
-// The width of a text record's text, in its font at its size.
-static double width_of(char font, const char *t, double size)
-{
-	return vg_text_width(font, t) * size;
-}
-
 // Reads what a click finds on page pg of the text buf: the flags and
 // their texts' spans (the text records just before a flag record are
 // its), and the wires, dots and pin ends of the nets, a pin by the wire
@@ -559,7 +553,7 @@ static void read_page(const char *buf, size_t len, size_t pg)
 	for (const char *l = buf; l && l < buf + len;) {
 		const char *e = memchr(l, '\n', (size_t)(buf + len - l));
 		size_t n = e ? (size_t)(e - l) : (size_t)(buf + len - l);
-		char line[4096], kind[16] = "", t[64], font = 'R';
+		char line[4096], kind[16] = "", t[64];
 		double v[8], sz, x, y;
 		int al, at = 0;
 
@@ -567,13 +561,13 @@ static void read_page(const char *buf, size_t len, size_t pg)
 		memcpy(line, l, n);
 		line[n] = 0;
 		l = e ? e + 1 : NULL;
-		if (sscanf(line, "text %c %lf %*f %d %lf %lf %n", &font, &sz,
-			   &al, &x, &y, &at) == 5 &&
+		if (sscanf(line, "text %lf %*f %d %lf %lf %n", &sz, &al, &x, &y,
+			   &at) == 4 &&
 		    at && nsp < 32) {
 			double w;
 
 			snprintf(t, sizeof t, "%s", line + at);
-			w = width_of(font, t, sz);
+			w = stroke_width(t, sz);
 			x -= w * al / 2;
 			snprintf(sp[nsp].t, sizeof sp[nsp].t, "%s", t);
 			sp[nsp].b[0] = x;
@@ -714,7 +708,7 @@ static void badge(FILE *out, const struct note *nt)
 		"%.3f %.3f\n",
 		nt->x - h, nt->y - h, nt->x + h, nt->y - h, nt->x + h,
 		nt->y + h, nt->x - h, nt->y + h, nt->x - h, nt->y - h);
-	fprintf(out, "text S %.3f 0 1 %.3f %.3f N\n", NOTE_BOX / 2, nt->x,
+	fprintf(out, "text %.3f 0 1 %.3f %.3f N\n", NOTE_BOX / 2, nt->x,
 		nt->y - NOTE_BOX / 4);
 }
 

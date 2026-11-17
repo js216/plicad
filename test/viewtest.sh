@@ -7,15 +7,14 @@
 # The programs are those in DIR, with xkey (test/xkey.c), built there by
 # make.  The viewers run on a display of their own (Xvfb), driven as a
 # user drives them: the keys and the mouse by XTest, through xkey, and
-# the commands of their stdin (select, layer, shot, ...).  The holes of
-# the letters and digits must show the ground; a click on a part's
-# label, between the strokes of its body, or on its body selects it, and
-# a click on nothing prints nothing; in pcbview a click on a part
-# selects it; and the median time of a frame while zooming, dragging and
-# clicking, measured from outside (from each input to the window's next
-# picture), must keep within its budget in test/view.budget.  It prints
-# ok or FAIL for each, or skip without Xvfb, and exits non-zero if any
-# fails.
+# the commands of their stdin (select, layer, shot, ...).  A click on a
+# part's label, between the strokes of its body, or on its body selects
+# it, and a click on nothing prints nothing; in pcbview a click on a
+# part selects it; and the median time of a frame while zooming,
+# dragging and clicking, measured from outside (from each input to the
+# window's next picture), must keep within its budget in
+# test/view.budget.  It prints ok or FAIL for each, or skip without
+# Xvfb, and exits non-zero if any fails.
 
 cd "$(dirname "$0")/.." || exit 1
 P=${1:?usage: test/viewtest.sh DIR}
@@ -87,60 +86,15 @@ view() {
 	wait "$v" 2> /dev/null
 }
 
-# The holes of the glyphs: the middle of the points of each hole of the
-# text of view_glyphs.vec, by the glyph table, in pixels of the window
-# as the viewer fits the sheet (its box 0 to 1000 by 0 to 700, as two
-# disks give it, grown by their radius).
-holes() {
-	awk -v text="0 4 6 8 9 B O R p" '
-	$1 == "font" { font = $2 }
-	font == "R" && $1 == "glyph" { code = $2; adv[code] = $3; n[code] = 0 }
-	font == "R" && $1 == "-" {
-		k = ++n[code]; sx = 0; sy = 0; m = 0
-		for (i = 2; i <= NF; i++) {
-			if ($i ~ /^[0-9.-]+$/ && $(i + 1) ~ /^[0-9.-]+$/) {
-				sx += $i; sy += $(i + 1); m++; i++
-			}
-		}
-		hx[code, k] = sx / m; hy[code, k] = sy / m
-	}
-	END {
-		z = 1000 / 1001 < 700 / 701 ? 1000 / 1001 : 700 / 701
-		z *= 0.95; x = 40
-		for (i = 1; i <= length(text); i++) {
-			c = substr(text, i, 1)
-			d = index("0123456789", c)
-			code = d ? 47 + d : \
-			    c == " " ? 32 : c == "B" ? 66 : c == "O" ? 79 : \
-			    c == "R" ? 82 : 112
-			for (k = 1; k <= n[code]; k++) {
-				wx = x + hx[code, k] * 0.08
-				wy = 300 + hy[code, k] * 0.08
-				printf "%s %d %d\n", c, 500 + (wx - 500) * z, \
-				    350 - (wy - 350) * z
-			}
-			x += adv[code] * 0.08
-		}
-	}' lib/fonts/nimbussans.txt
-}
-
-name="schview holes of letters"
-echo "" | view "$P/schview" test/view_glyphs.vec
-holes > "$tmp/holes"
-check sh -c 'test -s "$1/holes" &&
-	while read -r c x y; do
-		at=$((16 + (y * 1000 + x) * 3))
-		set -- $(od -An -tu1 -v -j $at -N 3 "$0/shot.ppm")
-		test "$1" -lt 40 || { echo "$c at $x $y is lit"; exit 1; }
-	done < "$1/holes"' "$tmp" "$tmp"
-
 # The sheets of the tests, drawn.
 mkdir "$tmp/sheets"
 for f in test/sch_*.sch; do
 	"$P/schdraw" -L lib "$f" > "$tmp/sheets/$(basename "$f" .sch).vec"
 done
 
-# Clicks on view_pick.vec, by the same fit: its box 0 to 400 by 0 to 300.
+# Clicks on view_pick.vec, in pixels of the window as the viewer fits
+# the sheet: its box 0 to 400 by 0 to 300, as two disks give it, grown
+# by their radius.
 px() {
 	awk -v x="$1" -v y="$2" 'BEGIN {
 		z = 1000 / 401 < 700 / 301 ? 1000 / 401 : 700 / 301; z *= 0.95
@@ -171,7 +125,7 @@ grid() {
 	done
 	echo
 }
-for f in test/view_pick.vec test/view_glyphs.vec $tmp/sheets/*.vec; do
+for f in test/view_pick.vec $tmp/sheets/*.vec; do
 	name="schview lives through clicks all over $(basename "$f")"
 	grid schview | view "$P/schview" "$f"
 	check test -s "$tmp/shot.ppm"

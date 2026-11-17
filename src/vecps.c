@@ -14,10 +14,8 @@
 // scale 1: page k of each file, its records from its k-th page record to
 // the next (those before the first are of the first), on page k of the
 // PostScript.  Clear polarity erases what its file drew before and
-// nothing of the other files (vec(5)).  Text in the stroke font
-// S is drawn stroke by stroke (stroke.h); other text is set in Helvetica,
-// or Helvetica-Oblique for the font I, in ISO Latin-1 (but - is the
-// hyphen, as in the fonts' own encoding).  With -n the
+// nothing of the other files (vec(5)).  Text, and every name it writes,
+// is drawn stroke by stroke in the stroke font (stroke.h).  With -n the
 // names of the boxes of the first file are written in them.  The
 // window by default holds all the files, their lines' widths and
 // disks' radii counted.  Each port of the sheet of the first file links
@@ -56,36 +54,24 @@ static void copy_prefix(char *dst, size_t size, const char *src, size_t n)
 // analyzer.
 #define die(f, msg) (fprintf(stderr, "%s: %s\n", f, msg), exit(2))
 
-// Writes s as a PostScript string in ISO Latin-1, from UTF-8.
-static void ps_string(const char *s)
+// Writes text in the stroke font, its capitals size high, turned a
+// degrees counterclockwise about (x, y), from which it runs flush left
+// (align 0), centered (1) or flush right (2).
+static void strokes(const char *t, double size, double a, int align, double x,
+		    double y)
 {
-	putchar('(');
-	for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
-		unsigned c = *p;
+	double *sg;
+	size_t n = stroke_text(t, size, &sg);
 
-		if (c == 0xCE && p[1] == 0xBC) {
-			c = 0xB5; // Greek mu, as the micro sign.
-			p++;
-		} else if ((c == 0xC2 || c == 0xC3) && p[1] >= 0x80 &&
-			   p[1] < 0xC0) {
-			c = ((c & 3) << 6) | (p[1] & 0x3F);
-			p++;
-		} else if (c >= 0x80) {
-			while (p[1] >= 0x80 && p[1] < 0xC0) {
-				p++;
-			}
-			c = '?';
-		}
-		if (c == '(' || c == ')' || c == '\\') {
-			putchar('\\');
-			putchar((int)c);
-		} else if (c < 32 || c >= 127) {
-			printf("\\%03o", c);
-		} else {
-			putchar((int)c);
-		}
+	printf("gsave %.3f %.3f translate %.3f rotate %.4f 0 translate "
+	       "%.4f setlinewidth newpath",
+	       x, y, a, -stroke_width(t, size) * align / 2, STROKE_PEN * size);
+	for (size_t j = 0; j < n; j++) {
+		printf(" %.4f %.4f moveto %.4f %.4f lineto", sg[4 * j],
+		       sg[4 * j + 1], sg[4 * j + 2], sg[4 * j + 3]);
 	}
-	putchar(')');
+	printf(" stroke grestore\n");
+	free(sg);
 }
 
 // The number of page records of a file, and the size of its page k
@@ -156,15 +142,14 @@ static void extent(const char *path, double e[4])
 
 // A text record of a sheet, kept for the links of the flag after it.
 struct span {
-	char t[64], font;
+	char t[64];
 	double size, x, y;
 };
 
-// Writes a link of a box to page n of the PDF, as pdfmark: x1 is the
-// PostScript that puts the box's right on the stack.
-static void link(double x0, double y0, const char *x1, double y1, int n)
+// Writes a link of a box to page n of the PDF, as pdfmark.
+static void link(double x0, double y0, double x1, double y1, int n)
 {
-	printf("[ /Rect [ %.3f %.3f %s %.3f ] /Border [ 0 0 0 ] /Page %d "
+	printf("[ /Rect [ %.3f %.3f %.3f %.3f ] /Border [ 0 0 0 ] /Page %d "
 	       "/View [ /Fit ] /Subtype /Link /ANN pdfmark\n",
 	       x0, y0, x1, y1, n);
 }
@@ -173,11 +158,10 @@ static void link(double x0, double y0, const char *x1, double y1, int n)
 // clicks: its circle and name to the first page it lists other than k,
 // each number of its list but k to that page; its spans are the text
 // records before its flag record (vec(5)), the right of each measured
-// by the font.
+// in the stroke font.
 static void port_links(const struct span *sp, int n, double x, double y, int k)
 {
 	int first = 0;
-	char right[1024], t[160];
 
 	for (int i = 1; i < n && !first; i++) {
 		if (sp[i].t[0] >= '0' && sp[i].t[0] <= '9' &&
@@ -192,37 +176,16 @@ static void port_links(const struct span *sp, int n, double x, double y, int k)
 			      atoi(sp[i].t) :
 			      0;
 
-		size_t m = 0;
-
-		if (!to) {
-			continue;
+		if (to) {
+			link(sp[i].x, sp[i].y - 0.25 * sp[i].size,
+			     sp[i].x + stroke_width(sp[i].t, sp[i].size),
+			     sp[i].y + 0.75 * sp[i].size, to);
 		}
-		// The text as a PostScript string, its brackets escaped.
-		for (const char *c = sp[i].t; *c && m + 2 < sizeof t; c++) {
-			if (*c == '(' || *c == ')' || *c == '\\') {
-				t[m++] = '\\';
-			}
-			t[m++] = *c;
-		}
-		t[m] = 0;
-		if (sp[i].font == 'S') {
-			snprintf(right, sizeof right, "%.3f",
-				 sp[i].x + stroke_width(sp[i].t, sp[i].size));
-		} else {
-			snprintf(right, sizeof right,
-				 "/VecR findfont %.3f scalefont setfont "
-				 "(%.159s) stringwidth pop %.3f add",
-				 sp[i].size, t, sp[i].x);
-		}
-		link(sp[i].x, sp[i].y - 0.25 * sp[i].size, right,
-		     sp[i].y + 0.75 * sp[i].size, to);
 	}
 	if (first && n) {
-		char cx[64];
 		double r = sp[0].size / 4;
 
-		snprintf(cx, sizeof cx, "%.3f", x + r);
-		link(x - r, y - r, cx, y + r, first);
+		link(x - r, y - r, x + r, y + r, first);
 	}
 }
 
@@ -233,8 +196,9 @@ struct pen {
 };
 
 // Draws a record of a file in the color, filled or outlined, of its
-// page k (from 1), or of all of it for k 0.
-static void record(char *buf, const double rgb[3], int outline, int names,
+// page k (from 1), or of all of it for k 0; a name record's name, its
+// capitals names high (0: none).
+static void record(char *buf, const double rgb[3], int outline, double names,
 		   int k, int links, struct pen *pn)
 {
 	char *s = buf + strcspn(buf, " \n"), *end;
@@ -244,11 +208,10 @@ static void record(char *buf, const double rgb[3], int outline, int names,
 
 	// The texts before a flag of a port are its spans.
 	if (k &&
-	    sscanf(buf, "text %c %lf %*f %*d %lf %lf %n",
-		   &pn->sp[pn->nsp < 32 ? pn->nsp : 31].font,
+	    sscanf(buf, "text %lf %*f %*d %lf %lf %n",
 		   &pn->sp[pn->nsp < 32 ? pn->nsp : 31].size,
 		   &pn->sp[pn->nsp < 32 ? pn->nsp : 31].x,
-		   &pn->sp[pn->nsp < 32 ? pn->nsp : 31].y, &sat) == 4 &&
+		   &pn->sp[pn->nsp < 32 ? pn->nsp : 31].y, &sat) == 3 &&
 	    sat) {
 		struct span *q = &pn->sp[pn->nsp < 32 ? pn->nsp : 31];
 
@@ -318,53 +281,26 @@ static void record(char *buf, const double rgb[3], int outline, int names,
 		}
 		printf(" closepath %s\n", outline ? "stroke" : "fill");
 	} else if (!strncmp(buf, "text ", 5)) {
-		char font;
 		double size, angle, x, y;
 		int align, at = 0;
 
-		if (sscanf(buf, "text %c %lf %lf %d %lf %lf %n", &font, &size,
-			   &angle, &align, &x, &y, &at) == 6 &&
-		    at > 0 && font == 'S') {
-			// The font of strokes, drawn stroke by stroke.
-			double *sg;
-			size_t n;
-
+		if (sscanf(buf, "text %lf %lf %d %lf %lf %n", &size, &angle,
+			   &align, &x, &y, &at) == 5 &&
+		    at > 0) {
 			buf[strcspn(buf, "\n")] = 0;
-			n = stroke_text(buf + at, size, &sg);
-			printf("gsave %.3f %.3f translate %.3f rotate "
-			       "%.4f 0 translate %.4f setlinewidth "
-			       "newpath",
-			       x, y, angle,
-			       -stroke_width(buf + at, size) * align / 2,
-			       STROKE_PEN * size);
-			for (size_t j = 0; j < n; j++) {
-				printf(" %.4f %.4f moveto %.4f %.4f lineto",
-				       sg[4 * j], sg[4 * j + 1], sg[4 * j + 2],
-				       sg[4 * j + 3]);
-			}
-			printf(" stroke grestore\n");
-			free(sg);
-		} else if (at > 0) {
-			buf[strcspn(buf, "\n")] = 0;
-			printf("/%s findfont %.3f scalefont setfont "
-			       "%.3f %.3f moveto gsave %.3f rotate ",
-			       font == 'I' ? "VecI" : "VecR", size, x, y,
-			       angle);
-			ps_string(buf + at);
-			printf(" dup stringwidth pop %d mul -2 div 0 "
-			       "rmoveto show grestore\n",
-			       align);
+			strokes(buf + at, size, angle, align, x, y);
 		}
-	} else if (!strncmp(buf, "name", 4) && names) {
+	} else if (!strncmp(buf, "name", 4) && names > 0) {
 		char name[512];
 		double b[4];
 
 		if (sscanf(buf, "name %511s %lf %lf %lf %lf", name, &b[0],
 			   &b[1], &b[2], &b[3]) == 5 &&
 		    b[2] - b[0] < 50) {
-			printf("gsave 0 setgray (%s) dup stringwidth pop 2 div neg "
-			       "%.4f add %.4f moveto show grestore\n",
-			       name, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2);
+			printf("gsave 0 setgray\n");
+			strokes(name, names, 0, 1, (b[0] + b[2]) / 2,
+				(b[1] + b[3]) / 2 - names / 2);
+			printf("grestore\n");
 		}
 	}
 }
@@ -429,11 +365,12 @@ static void clip_off(char *buf)
 }
 
 // Draws a file in the color, filled or outlined: its page k (from 1),
-// or all of it for k 0.  What it clears (vec(5)) erases what it drew
-// before and nothing of the other files: each run of its dark records
-// is drawn clipped off every clear record after it.
-static void draw(const char *path, const double rgb[3], int outline, int names,
-		 int k, int links)
+// or all of it for k 0, its names as record draws them.  What it clears
+// (vec(5)) erases what it drew before and nothing of the other files:
+// each run of its dark records is drawn clipped off every clear record
+// after it.
+static void draw(const char *path, const double rgb[3], int outline,
+		 double names, int k, int links)
 {
 	FILE *f = fopen(path, "r");
 	char *buf = malloc(LINE), **line = NULL;
@@ -564,28 +501,21 @@ static void read_parts(const char *path)
 	fclose(f);
 }
 
-// Writes a label: text of the size (in the units of the files), its
-// middle at (x, y), turned a degrees, upright.
+// Writes a label: text, its capitals size high (in the units of the
+// files), their middle at (x, y), turned a degrees, upright.
 static void label(const char *text, double x, double y, double a, double size,
 		  double gray)
 {
+	double r;
+
 	a = fmod(a + 360, 360);
 	if (a > 90 && a <= 270) {
 		a -= 180; // Upright.
 	}
-	printf("gsave %.3f setgray /VecR findfont %.4f scalefont setfont "
-	       "%.4f %.4f translate %.3f rotate 0 %.4f moveto ",
-	       gray, size, x, y, a, -size * 0.35);
-	ps_string(text);
-	printf(" dup stringwidth pop -2 div 0 rmoveto show grestore\n");
-}
-
-// The number of characters of a text, as a length.
-static double chars(const char *s)
-{
-	size_t n = strlen(s);
-
-	return (double)n;
+	r = a * 3.14159265358979323846 / 180;
+	printf("gsave %.3f setgray\n", gray);
+	strokes(text, size, a, 1, x + size / 2 * sin(r), y - size / 2 * cos(r));
+	printf("grestore\n");
 }
 
 static int inside(const double w[4], double x, double y)
@@ -593,12 +523,12 @@ static int inside(const double w[4], double x, double y)
 	return x >= w[0] && x <= w[2] && y >= w[1] && y <= w[3];
 }
 
-// The size of a label on the page: fitted to what it names (fit, in the
-// units of the files), but no smaller than 3 points and no larger than
-// 7, so it is read on the page.
+// The capital height of a label on the page: fitted to what it names
+// (fit, in the units of the files), but no smaller than 2 points and no
+// larger than 5, so it is read on the page.
 static double fitted(double fit, double scale)
 {
-	return fmin(fmax(fit * scale, 3), 7) / scale;
+	return fmin(fmax(fit * scale, 2), 5) / scale;
 }
 
 // Names what lies in the window: each part's designator in its box, and
@@ -657,10 +587,10 @@ static void names_in(const char *path, const double w[4], double scale)
 				double a = atan2(v[best + 3] - v[best + 1],
 						 v[best + 2] - v[best]) *
 					   180 / 3.14159265358979323846;
-				double size = fitted(v[0] * 0.7, scale);
+				double size = fitted(v[0] * 0.5, scale);
 
 				if (inside(w, x, y) &&
-				    len > size * 0.6 * chars(net)) {
+				    len > stroke_width(net, size)) {
 					label(net, x, y, a, size, 0.15);
 				}
 			}
@@ -683,10 +613,9 @@ static void names_in(const char *path, const double w[4], double scale)
 			if (inside(w, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2)) {
 				double bw = b[2] - b[0], bh = b[3] - b[1];
 				double lo = fmin(bw, bh), hi = fmax(bw, bh);
-				double size = fitted(
-					fmin(lo * 0.6,
-					     hi / (0.6 * chars(net) + 0.5)),
-					scale);
+				double tw = stroke_width(net, 1) + 0.85;
+				double size =
+					fitted(fmin(lo * 0.43, hi / tw), scale);
 
 				label(net, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2,
 				      bh > bw ? 90 : 0, size, 0.15);
@@ -795,13 +724,7 @@ int main(int argc, char **argv)
 	printf("%%!PS-Adobe-3.0\n%%%%BoundingBox: 0 0 %.0f %.0f\n%%%%Pages: %d\n"
 	       "%%%%EndComments\n",
 	       pw, ph, page ? page : 1);
-	printf("/VecFont { findfont dup length dict begin\n"
-	       "  { 1 index /FID ne { def } { pop pop } ifelse } forall\n"
-	       "  /Encoding ISOLatin1Encoding 256 array copy dup 45 /hyphen "
-	       "put def currentdict end definefont "
-	       "pop } def\n"
-	       "/VecR /Helvetica VecFont /VecI /Helvetica-Oblique VecFont\n"
-	       "/pdfmark where { pop } { userdict /pdfmark /cleartomark load "
+	printf("/pdfmark where { pop } { userdict /pdfmark /cleartomark load "
 	       "put } ifelse\n");
 	// A sheet is drawn page by page, each at its size and scale 1.
 	for (int pg = 1; pg <= (page ? page : 1); pg++) {
@@ -830,8 +753,6 @@ int main(int argc, char **argv)
 		       "translate\n",
 		       pw / 2, ph / 2, scale, -(win[0] + win[2]) / 2,
 		       -(win[1] + win[3]) / 2);
-		printf("/Helvetica findfont %.4f scalefont setfont\n",
-		       7 / scale);
 		for (int k = a0; k < argc; k++) {
 			char path[4096], *eq = strchr(argv[k], '=');
 			double rgb[3] = { 0, 0, 0 };
@@ -845,8 +766,9 @@ int main(int argc, char **argv)
 				die(argv[k], "FILE[=R,G,B[,line]]");
 			}
 			outline = eq && strstr(eq, ",line") != NULL;
-			draw(path, rgb, outline, names && k == a0,
-			     page ? pg : 0, k == a0);
+			draw(path, rgb, outline,
+			     names && k == a0 ? 5 / scale : 0, page ? pg : 0,
+			     k == a0);
 		}
 		for (int k = a0; region && k < argc; k++) {
 			char path[4096];
@@ -863,11 +785,10 @@ int main(int argc, char **argv)
 			if (q->boxed && *q->ref && inside(win, x, y)) {
 				double bw = q->b[2] - q->b[0];
 				double bh = q->b[3] - q->b[1];
-				double size = fitted(
-					fmin(fmin(bw, bh) * 0.3,
-					     fmax(bw, bh) /
-						     (0.7 * chars(q->ref) + 1)),
-					scale);
+				double tw = 1.2 * stroke_width(q->ref, 1) + 1.6;
+				double size = fitted(fmin(fmin(bw, bh) * 0.22,
+							  fmax(bw, bh) / tw),
+						     scale);
 
 				label(q->ref, x, y, bh > 1.5 * bw ? 90 : 0,
 				      size, 0);

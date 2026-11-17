@@ -1,5 +1,0 @@
-# view_glyphs.vec -- Letters and digits with holes, for the viewers' test
-page 1000 700
-disk 0 0 0.5
-disk 1000 700 0.5
-text R 80 0 0 40 300 0 4 6 8 9 B O R p

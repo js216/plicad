@@ -34,6 +34,7 @@
 
 #define _POSIX_C_SOURCE 200809L // For getline, open_memstream, fmemopen.
 
+#include "stroke.h"
 #include "vecgl.h"
 #include <GL/gl.h>
 #include <X11/keysym.h>
@@ -73,7 +74,7 @@ static const char *const help[] = {
 // size twice as large as the one before (NAMES of them, from 1/256 mm),
 // so a frame draws only those large enough, and they go to the GPU once.
 #define NAMES 14
-#define READ 7.0 // The size of text, in pixels, that can be read.
+#define READ 5.0 // The capital height, in pixels, of text that can be read.
 
 // A track of a copper layer, as its file draws it: a line of a net out
 // of any part, its points, width and the group of the tracks joined to
@@ -247,19 +248,9 @@ static void draw_layer(const struct layer *l, double depth)
 	}
 }
 
-// The names: their holes into the stencil, then the text where the
-// stencil is not set, then the stencil cleared again; at the depth of
-// their layer, so the copper above hides them.
-static int dark_run(const struct vg_run *r)
-{
-	return r->dark;
-}
-
-static int clear_run(const struct vg_run *r)
-{
-	return !r->dark;
-}
-
+// The names, at the depth of their layer, so the copper above hides
+// them; each pixel takes their ink once, where the stencil is not yet
+// set, so the strokes that overlap make their union.
 static const double *name_color;
 
 static void name_ink(const struct vg_run *r)
@@ -270,18 +261,8 @@ static void name_ink(const struct vg_run *r)
 
 static void draw_names(const struct vg_file *f)
 {
-	glColorMask(0, 0, 0, 0);
-	glStencilFunc(GL_ALWAYS, 1, 1);
-	vg_draw(f, clear_run, name_ink);
-	glColorMask(1, 1, 1, 1);
 	glStencilFunc(GL_NOTEQUAL, 1, 1);
-	glStencilMask(0); // The ink leaves the stencil as it is.
-	vg_draw(f, dark_run, name_ink);
-	glStencilMask(~0U);
-	glColorMask(0, 0, 0, 0);
-	glStencilFunc(GL_ALWAYS, 0, 1);
-	vg_draw(f, clear_run, name_ink);
-	glColorMask(1, 1, 1, 1);
+	vg_draw(f, dark, name_ink);
 }
 
 // KiCad's colors of the names: of pads, white at 90%; of tracks, white
@@ -506,9 +487,9 @@ static void name(FILE **out, char **buf, size_t *len, const char *text,
 			return;
 		}
 	}
-	// The middle of the em on (x, y): the baseline 0.35 em under it.
-	fprintf(out[b], "text R %.5f %.3f 1 %.5f %.5f %s\n", s, a,
-		x + 0.35 * s * sin(r), y - 0.35 * s * cos(r), text);
+	// The middle of the capitals on (x, y).
+	fprintf(out[b], "text %.5f %.3f 1 %.5f %.5f %s\n", s, a,
+		x + 0.5 * s * sin(r), y - 0.5 * s * cos(r), text);
 }
 
 // The names of a pad as KiCad lays them out: its number over its net,
@@ -520,11 +501,11 @@ static void pad_names(FILE **out, char **buf, size_t *len, const struct pad *p)
 	int up = h > 1.2 * w;
 	double along = up ? h : w, across = up ? w : h, a = up ? 90 : 0;
 	double ux = up ? -1 : 0, uy = up ? 0 : 1; // Across, the upper side.
-	double tn = vg_text_width('R', p->num), tw = vg_text_width('R', p->net);
+	double tn = stroke_width(p->num, 1), tw = stroke_width(p->net, 1);
 
 	if (*p->num && *p->net) {
-		double sn = fmin(across * 0.4, 0.85 * along / fmax(tn, 0.1));
-		double sw = fmin(across * 0.3, 0.85 * along / fmax(tw, 0.1));
+		double sn = fmin(across * 0.29, 0.85 * along / fmax(tn, 0.1));
+		double sw = fmin(across * 0.22, 0.85 * along / fmax(tw, 0.1));
 
 		name(out, buf, len, p->num, x + ux * across * 0.22,
 		     y + uy * across * 0.22, a, sn);
@@ -535,16 +516,16 @@ static void pad_names(FILE **out, char **buf, size_t *len, const struct pad *p)
 		double tt = *p->num ? tn : tw;
 
 		name(out, buf, len, t, x, y, a,
-		     fmin(across * 0.6, 0.85 * along / fmax(tt, 0.1)));
+		     fmin(across * 0.43, 0.85 * along / fmax(tt, 0.1)));
 	}
 }
 
 // The names of a track: its net along each of its segments long enough
-// for it, its text 0.7 of its width, upright.
+// for it, its capitals half its width high, upright.
 static void track_names(FILE **out, char **buf, size_t *len, const char *net,
 			const double *v, int n)
 {
-	double s = v[0] * 0.7, tw = vg_text_width('R', net) * s;
+	double s = v[0] * 0.5, tw = stroke_width(net, s);
 
 	for (int k = 1; k + 3 < n; k += 2) {
 		double dx = v[k + 2] - v[k], dy = v[k + 3] - v[k + 1];

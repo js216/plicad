@@ -27,7 +27,7 @@ disk X Y R              a filled circle
 line W X Y X Y ...      a stroke of width W, round at its ends;
                         of width 0, an outline, a hairline
 poly X Y X Y ...        a filled polygon
-text F S A J X Y TEXT   text, to the end of the line
+text S A J X Y TEXT     text, to the end of the line
 page W H [N]            a page of a sheet: its size and number
 name NAME X0 Y0 X1 Y1   a named box: a part, for picking
 zone NET                the fill of a zone of copper begins
@@ -69,20 +69,16 @@ for the holes; it is what a viewer shows the file as, whatever its
 name.
 Clear polarity erases what the file drew before, and nothing of other
 files.
-A text is in the font F (S, the stroke font; R, Nimbus Sans or
-Helvetica; I, its italic), S high (for S, its capital height; else the
-size of its em), turned A degrees counterclockwise about (X, Y), from
-which it runs flush left (J 0), centered (1) or flush right (2); the
-text is UTF-8.
+A text is in the stroke font, its capitals S high, turned A degrees
+counterclockwise about (X, Y), from which it runs flush left (J 0),
+centered (1) or flush right (2); the text is UTF-8.
 The stroke font is the silkscreen's and the schematics': each printable
 ASCII character on a grid 4 units wide, a unit a sixth of the capital
 height, the capitals and digits 6 high, the lowercase 4 (ascenders 6),
 the descenders 2 under the baseline, drawn at 0.88 of the grid's width
 about its middle, each advancing 5 units, by a pen 0.15 of the capital
-height wide, round at its ends (another character is drawn as ?).
-The viewers draw R and I from the glyph table
-lib/fonts/nimbussans.txt, the printer in the PostScript fonts; S both
-draw stroke by stroke.
+height wide, round at its ends (another character is drawn as ?); the
+viewers and the printer draw it stroke by stroke.
 The records between
 .B zone
 and

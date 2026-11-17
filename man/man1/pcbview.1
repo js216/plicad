@@ -109,12 +109,13 @@ q           quit
 .fi
 .RE
 .PP
-Zoomed in, the copper shows its names as KiCad does: on each pad its
-number over its net, along its longer side, each as large as fits, in
-white at 90%; along each track segment long enough its net, 0.7 of its
-width high, upright, in white at 70%; each name only once it is at
-least 7 pixels high, so a fitted board shows none, and under the copper
-of the layers above.
+Zoomed in, the copper shows its names as KiCad does, in the stroke font
+.RI ( vec (5)):
+on each pad its number over its net, along its longer side, each as
+large as fits, in white at 90%; along each track segment long enough
+its net, its capitals half its width high, upright, in white at 70%;
+each name only once its capitals are at least 5 pixels high, so a
+fitted board shows none, and under the copper of the layers above.
 The names are made when the files are read, from the pads and tracks
 of the files of copper (a pad's number from its pin record), as text
 of a file for each size twice the one before, and a frame draws only
