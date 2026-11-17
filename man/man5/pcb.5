@@ -54,6 +54,25 @@ note TEXT                            for the readers
 .fi
 .RE
 .PP
+The axes are x right and y up, and right, up, left and down (above
+and below) are those board directions in every statement alike:
+place, via and ref.
+Rot R (a multiple of 90; any other leaves the part unturned) turns a
+part counterclockwise by R about its origin, so its pad at footprint
+(x, y) stands at (x cos R \- y sin R, x sin R + y cos R) from the
+part's place, its W and H swapped at 90 and 270: a pad on the
+footprint's right side faces up at rot 90, left at 180 and down at
+270.
+The pad lines of the lock (a net's pads, once routed) give each pad's
+center on the board, so the side a pin landed on can be read there.
+Without rot,
+.B place
+.I PART WAY
+.B from
+.I PIN
+chooses, of the four turns, the one that brings its pad of the pin's
+net nearest the pin.
+.PP
 The width of the copper between two pins of a net is the width of a
 statement naming them, else the net's, else the rule's.
 The rules, in mm: clearance between copper of two nets (0.2); track,
