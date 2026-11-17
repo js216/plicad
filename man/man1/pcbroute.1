@@ -52,6 +52,16 @@ by the cheapest path over a grid of 0.05 mm in eight ways laid through
 the first pad's center, keeping the clearance from all copper of other
 nets and the edge rule from the outline and the cutouts, their round
 corners round.
+The search keeps to one window of 256 by 256 cells (12.8 mm), laid
+about the middle of what it joins, allocated once and never grown, the
+obstacles marked only inside it; so a board of any size routes in a
+few megabytes.
+A connection whose ends lie more than 7.4 mm apart along x or y (what
+fits the window with room round its ends and for the slide) is routed
+in sections along the straight line between its pads, as few as keep
+each that short, each in the window laid about it, each joint a point of the line
+on the grid, or slid across the line by up to 1.5 mm off copper and out
+of cutouts; the sections make one track.
 A track leaves and enters a pad along its longer side (any way for a
 round or square pad) and turns only outside it; pads in line are joined
 by one straight track through their centers.
@@ -84,5 +94,7 @@ a block in it is its lock's, moved with its parts and kept.
 .SH SEE ALSO
 pcb(5), pcbplace(1), pcbcheck(1), pcbgerber(1)
 .SH DIAGNOSTICS
-FILE: net NAME: and what failed, with what is in the way; exit status
-1.
+FILE: net NAME: and what failed: no way from PAD to PAD, stuck at X Y
+(the point of the search nearest the target, or the joint that found no
+clear place), or no room for the via of PAD, with what is in the way;
+exit status 1.

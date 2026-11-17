@@ -11,8 +11,8 @@
 // pads and its width are as the lock says they were made from, and its
 // copper is clear of the pads as they now stand; any other is made anew,
 // among the copper kept, which nothing moves.  So an edit makes anew
-// only the connections it touches.  When a net finds no way, the pad it
-// cannot reach is named.
+// only the connections it touches.  When a net finds no way, its pads
+// and where it got stuck are named.
 //
 // The statements:
 //   width NET W            its tracks W mm wide (rule track by default)
@@ -32,9 +32,12 @@
 // from the edge; a bend costs a little more than its length.  So pads in
 // line are joined by one straight track through their centers, and a
 // long pad (twice as long as wide or more) at its end nearest the other
-// pad.  The nets are routed with the fewest and nearest pads first; a
-// net that finds no way is put first and all that was made anew is made
-// again.
+// pad.  The search keeps to one fixed window of 256 by 256 cells (12.8
+// mm) laid about the middle of what it joins; a connection whose ends do
+// not fit is routed in sections along the line between its pads, each in
+// the window, each joint slid sideways off copper if need be.  The nets
+// are routed with the fewest and nearest pads first; a net that finds no
+// way is put first and all that was made anew is made again.
 // With -v each connection and via is told on stderr.
 //
 // A run routes every group of a block statement alone, the deepest
@@ -54,23 +57,33 @@
 
 #define CELL 0.05 // The grid of the router.
 #define BEND 0.5 // The cost of a turn of 45 degrees, in cells.
-#define ROOM 3.0 // Round the parts, the extent of the grid.
+#define WIN 256 // The side of the window of the router, in cells: 12.8 mm.
+#define MARGIN 24 // Cells between a section's ends and the window's sides.
+#define SLIDE 30 // How far a section's end slides sideways, in cells.
+#define NS (WIN * WIN * 8) // The states: a cell and the way it is entered.
 #define TRIES 20
 #define PI 3.14159265358979323846
 
 static struct pcb B;
 static int verbose;
 static int **padnet; // The net of each pad of each part, worked out once.
-// The grid: cell (i, j) is at ((X0 + i) CELL + OX, (Y0 + j) CELL + OY),
-// laid through the center of the pad a connection leaves.
-static int X0, Y0, W, H;
+// The window: cell (i, j) is at ((X0 + i) CELL + OX, (Y0 + j) CELL + OY),
+// the grid laid through the center of the pad a connection leaves, the
+// window about the middle of the section routed; it is allocated once,
+// and every search stays inside it.
+static int X0, Y0;
 static double OX, OY;
-static unsigned char *bad; // Cells the net now routed may not take.
-static double *cost, *prio; // The cost of a state, and with the estimate.
-static int tb[4]; // The target's cell, twice, for the estimate.
-static int *from, *heap;
-static unsigned char *inp, *inq; // The cells in the pads left and entered.
-static size_t nheap, capheap;
+static unsigned char bad[WIN * WIN]; // Cells the net now routed may not take.
+static unsigned char inp[WIN * WIN], inq[WIN * WIN]; // In the pads at the ends.
+// Of each state: its cost, the way the state before it was entered, its
+// place in the heap (-1 once taken off), valid while its stamp is the
+// search's.
+static float cost[NS];
+static unsigned char back[NS];
+static int place[NS], heap[NS], nheap;
+static unsigned char stamp[NS], search; // Set anew when search wraps.
+static int tb[2]; // The target's cell, for the estimate.
+static char stuck[2600]; // Where the last connection found no way.
 static int *kept; // Of each connection: read from the lock and kept.
 static size_t nkept;
 static const char *scope; // The group routed alone, or NULL.
@@ -249,20 +262,20 @@ static void mark_box(double x0, double y0, double x1, double y1, int round,
 	    j1 = up_int((y1 + d - OY) / CELL) - Y0;
 	double mx = (x0 + x1) / 2, my = (y0 + y1) / 2, r = (x1 - x0) / 2;
 
-	for (int j = j0 < 0 ? 0 : j0; j <= j1 && j < H; j++) {
-		for (int i = i0 < 0 ? 0 : i0; i <= i1 && i < W; i++) {
+	for (int j = j0 < 0 ? 0 : j0; j <= j1 && j < WIN; j++) {
+		for (int i = i0 < 0 ? 0 : i0; i <= i1 && i < WIN; i++) {
 			double x = cx(i), y = cy(j), dx, dy;
 
 			if (round) {
 				if (hypot(x - mx, y - my) < r + d) {
-					bad[j * W + i] = 1;
+					bad[j * WIN + i] = 1;
 				}
 				continue;
 			}
 			dx = fmax(fmax(x0 - x, x - x1), 0);
 			dy = fmax(fmax(y0 - y, y - y1), 0);
 			if (hypot(dx, dy) < d) {
-				bad[j * W + i] = 1;
+				bad[j * WIN + i] = 1;
 			}
 		}
 	}
@@ -275,51 +288,28 @@ static void mark_seg(double ax, double ay, double bx, double by, double d)
 	int j0 = down_int((fmin(ay, by) - d - OY) / CELL) - Y0;
 	int j1 = up_int((fmax(ay, by) + d - OY) / CELL) - Y0;
 
-	for (int j = j0 < 0 ? 0 : j0; j <= j1 && j < H; j++) {
-		for (int i = i0 < 0 ? 0 : i0; i <= i1 && i < W; i++) {
+	for (int j = j0 < 0 ? 0 : j0; j <= j1 && j < WIN; j++) {
+		for (int i = i0 < 0 ? 0 : i0; i <= i1 && i < WIN; i++) {
 			if (pcb_seg_dist(cx(i), cy(j), ax, ay, bx, by) < d) {
-				bad[j * W + i] = 1;
+				bad[j * WIN + i] = 1;
 			}
 		}
 	}
 }
 
-// Sets up the grid round the placed parts for net n of width w, through
-// (ox, oy): the cells its track may not take, each obstacle marked in
-// the cells round it.
-static void grid(int n, double w, double ox, double oy)
+// Sets up the window for net n of width w about (mx, my), its grid
+// through (ox, oy): the cells its track may not take, each obstacle in
+// the window marked in the cells round it.
+static void window(int n, double w, double mx, double my, double ox,
+		   double oy)
 {
-	double x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9,
-	       d = w / 2 + B.clearance;
+	double d = w / 2 + B.clearance, r = WIN * CELL / 2 + d + 1;
 
-	for (size_t q = 0; q < B.npart; q++) {
-		double c[4];
-
-		if (!B.part[q].placed || !B.part[q].fp) {
-			continue;
-		}
-		pcb_court(&B.part[q], c);
-		if (c[2] - c[0] > 50) {
-			continue; // A board-wide part, as a block, spans nothing here.
-		}
-		x0 = fmin(x0, c[0]);
-		y0 = fmin(y0, c[1]);
-		x1 = fmax(x1, c[2]);
-		y1 = fmax(y1, c[3]);
-	}
-	// Round the parts, but never past the board (a group has none).
-	x0 = scope ? x0 - ROOM : fmax(x0 - ROOM, B.board[0]);
-	y0 = scope ? y0 - ROOM : fmax(y0 - ROOM, B.board[1]);
-	x1 = scope ? x1 + ROOM : fmin(x1 + ROOM, B.board[2]);
-	y1 = scope ? y1 + ROOM : fmin(y1 + ROOM, B.board[3]);
 	OX = fmod(ox, CELL);
 	OY = fmod(oy, CELL);
-	X0 = down_int((x0 - OX) / CELL);
-	Y0 = down_int((y0 - OY) / CELL);
-	W = up_int((x1 - x0) / CELL) + 1;
-	H = up_int((y1 - y0) / CELL) + 1;
-	free(bad);
-	bad = pcb_alloc((size_t)W * (size_t)H);
+	X0 = (int)lround((mx - OX) / CELL) - WIN / 2;
+	Y0 = (int)lround((my - OY) / CELL) - WIN / 2;
+	memset(bad, 0, sizeof bad);
 	for (size_t q = 0; q < B.npart; q++) {
 		const struct pcb_part *p = &B.part[q];
 
@@ -327,7 +317,9 @@ static void grid(int n, double w, double ox, double oy)
 			struct pcb_spot sp;
 
 			pcb_spot(&B, p, k, &sp);
-			if ((padnet[q][k] == n && n >= 0) || sp.layer > 0) {
+			if ((padnet[q][k] == n && n >= 0) || sp.layer > 0 ||
+			    fabs(sp.x - mx) > r + sp.w / 2 ||
+			    fabs(sp.y - my) > r + sp.h / 2) {
 				continue;
 			}
 			mark_box(sp.x - sp.w / 2, sp.y - sp.h / 2,
@@ -342,72 +334,41 @@ static void grid(int n, double w, double ox, double oy)
 			continue;
 		}
 		for (size_t j = 1; j < t->n; j++) {
-			mark_seg(t->xy[2 * j - 2], t->xy[2 * j - 1],
-				 t->xy[2 * j], t->xy[2 * j + 1], d + t->w / 2);
+			const double *e = &t->xy[2 * j - 2];
+
+			if (fmin(e[0], e[2]) > mx + r || fmax(e[0], e[2]) < mx - r ||
+			    fmin(e[1], e[3]) > my + r || fmax(e[1], e[3]) < my - r) {
+				continue;
+			}
+			mark_seg(e[0], e[1], e[2], e[3], d + t->w / 2);
 		}
 	}
 	for (size_t i = 0; i < B.nvia; i++) {
 		const struct pcb_via *v = &B.via[i];
 
-		if (v->net != n) {
+		if (v->net != n && fabs(v->x - mx) < r + v->dia &&
+		    fabs(v->y - my) < r + v->dia) {
 			mark_box(v->x - v->dia / 2, v->y - v->dia / 2,
 				 v->x + v->dia / 2, v->y + v->dia / 2, 1, d);
 		}
 	}
-	for (int j = 0; !scope && j < H; j++) {
-		for (int i = 0; i < W; i++) {
+	// The edge, cell by cell, where the window comes near it.
+	if (!scope &&
+	    pcb_edge_dist(&B, 1,
+			  (const double[4]){ cx(0), cy(0), cx(WIN - 1),
+					     cy(WIN - 1) },
+			  0, NULL) > B.edge + w) {
+		return;
+	}
+	for (int j = 0; !scope && j < WIN; j++) {
+		for (int i = 0; i < WIN; i++) {
 			double x = cx(i), y = cy(j);
 
 			if (pcb_edge_dist(&B, 0, (const double[4]){ x, y, x, y },
 					  w / 2, NULL) < B.edge) {
-				bad[j * W + i] = 1;
+				bad[j * WIN + i] = 1;
 			}
 		}
-	}
-}
-
-static void push(int s)
-{
-	size_t i;
-
-	if (nheap == capheap) {
-		capheap = capheap ? 2 * capheap : 1 << 16;
-		heap = pcb_grow(heap, capheap - 1, sizeof *heap);
-	}
-	i = nheap++;
-	heap[i] = s;
-	while (i > 0 && prio[heap[(i - 1) / 2]] > prio[heap[i]]) {
-		int t = heap[(i - 1) / 2];
-
-		heap[(i - 1) / 2] = heap[i];
-		heap[i] = t;
-		i = (i - 1) / 2;
-	}
-}
-
-static int pop(void)
-{
-	int top = heap[0];
-	size_t i = 0;
-
-	heap[0] = heap[--nheap];
-	for (;;) {
-		size_t l = 2 * i + 1, r = l + 1, m = i;
-		int t;
-
-		if (l < nheap && prio[heap[l]] < prio[heap[m]]) {
-			m = l;
-		}
-		if (r < nheap && prio[heap[r]] < prio[heap[m]]) {
-			m = r;
-		}
-		if (m == i) {
-			return top;
-		}
-		t = heap[m];
-		heap[m] = heap[i];
-		heap[i] = t;
-		i = m;
 	}
 }
 
@@ -427,20 +388,90 @@ static unsigned axis(const struct pcb_spot *s)
 // distance to its cell (A*).
 static double estimate(int c)
 {
-	int i = c % W, j = c / W;
+	int i = c % WIN, j = c / WIN;
 	int dx = abs(tb[0] - i), dy = abs(tb[1] - j);
 	int lo = dx < dy ? dx : dy, hi = dx < dy ? dy : dx;
 
 	return hi - lo + lo * 1.41421356;
 }
 
-// The cell nearest (x, y), or -1 off the grid.
+// The order of the heap: the cost and the estimate.
+static double key(int s)
+{
+	return cost[s] + estimate(s / 8);
+}
+
+static void swap_at(int i, int j)
+{
+	int t = heap[i];
+
+	heap[i] = heap[j];
+	heap[j] = t;
+	place[heap[i]] = i;
+	place[heap[j]] = j;
+}
+
+static void sift_up(int i)
+{
+	while (i > 0 && key(heap[(i - 1) / 2]) > key(heap[i])) {
+		swap_at(i, (i - 1) / 2);
+		i = (i - 1) / 2;
+	}
+}
+
+// Takes the state of least key off the heap.
+static int pop(void)
+{
+	int top = heap[0], i = 0;
+
+	place[top] = -1;
+	if (--nheap > 0) {
+		heap[0] = heap[nheap];
+		place[heap[0]] = 0;
+	}
+	for (;;) {
+		int l = 2 * i + 1, r = l + 1, m = i;
+
+		if (l < nheap && key(heap[l]) < key(heap[m])) {
+			m = l;
+		}
+		if (r < nheap && key(heap[r]) < key(heap[m])) {
+			m = r;
+		}
+		if (m == i) {
+			return top;
+		}
+		swap_at(i, m);
+		i = m;
+	}
+}
+
+// Reaches state s at cost c from a state entered the way d: new, or
+// cheaper than it was and not yet taken off the heap.
+static void reach(int s, double c, int d)
+{
+	if (stamp[s] != search) {
+		stamp[s] = search;
+		cost[s] = (float)c;
+		back[s] = (unsigned char)d;
+		place[s] = nheap;
+		heap[nheap++] = s;
+		sift_up(place[s]);
+	} else if (place[s] >= 0 && c < cost[s]) {
+		cost[s] = (float)c;
+		back[s] = (unsigned char)d;
+		sift_up(place[s]);
+	}
+}
+
+// The cell nearest (x, y), or -1 off the window.
 static int cell_at(double x, double y)
 {
 	long i = lround((x - OX) / CELL) - X0, j = lround((y - OY) / CELL) - Y0;
 
-	return i < 0 || j < 0 || i >= W || j >= H ? -1 : (int)(j * W + i);
+	return i < 0 || j < 0 || i >= WIN || j >= WIN ? -1 : (int)(j * WIN + i);
 }
+
 
 // The connections of the -v trace, and of the messages: PART.PAD (REF).
 static const char *pad_label(const struct pcb_end *e)
@@ -509,105 +540,111 @@ static void pad_point(int n, const struct pcb_spot *s, double x, double y,
 	p[1] = e[k][1];
 }
 
-// Joins pad a of net n to pad b: a connection of width w from the center
-// of a to the center of b (of a long pad, from its end nearest the
-// other), leaving and entering each along its longer side.  Returns 0
-// if there is no way.
-static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
-		   double w)
+// Marks the cells of the window in pad s (NULL: none).
+static void mark_pad(unsigned char *in, const struct pcb_spot *s)
 {
-	struct pcb_spot sa, sb;
-	double pa[2], pb[2];
-	unsigned ma, mb;
-	int ns, goal = -1, ca, cb, l;
-	char *ka, *kb;
+	int i0, i1, j0, j1;
 
-	pcb_spot(&B, &B.part[a->part], a->pad, &sa);
-	pcb_spot(&B, &B.part[b->part], b->pad, &sb);
-	ma = axis(&sa);
-	mb = axis(&sb);
-	pad_point(n, &sa, sb.x, sb.y, pa);
-	pad_point(n, &sb, pa[0], pa[1], pb);
-	pad_point(n, &sa, pb[0], pb[1], pa);
-	grid(n, w, pa[0], pa[1]);
-	ns = W * H * 8;
-	free(cost);
-	free(prio);
-	free(from);
-	free(inp);
-	free(inq);
-	cost = pcb_alloc((size_t)ns * sizeof *cost);
-	prio = pcb_alloc((size_t)ns * sizeof *prio);
-	from = pcb_alloc((size_t)ns * sizeof *from);
-	inp = pcb_alloc((size_t)W * (size_t)H);
-	inq = pcb_alloc((size_t)W * (size_t)H);
-	ca = cell_at(pa[0], pa[1]);
-	cb = cell_at(pb[0], pb[1]);
+	if (!s) {
+		return;
+	}
+	i0 = down_int((s->x - s->w / 2 - OX) / CELL) - X0;
+	i1 = up_int((s->x + s->w / 2 - OX) / CELL) - X0;
+	j0 = down_int((s->y - s->h / 2 - OY) / CELL) - Y0;
+	j1 = up_int((s->y + s->h / 2 - OY) / CELL) - Y0;
+	for (int j = j0 < 0 ? 0 : j0; j <= j1 && j < WIN; j++) {
+		for (int i = i0 < 0 ? 0 : i0; i <= i1 && i < WIN; i++) {
+			in[j * WIN + i] = (unsigned char)inside_spot(s, cx(i),
+								     cy(j), 0);
+		}
+	}
+}
+
+// Routes a section of net n of width w from point a to point b, both in
+// the window laid about their middle: out of a the ways of mask ma, into
+// b the ways of mb, straight while in the pad of either (sa, sb, or
+// NULL for a point between).  Its corners, from a to b, go to *xy (their
+// number to *n); returns 0 if there is no way, and where it got nearest
+// goes to near.
+static int section(int n, double w, const double *a, unsigned ma,
+		   const struct pcb_spot *sa, const double *b, unsigned mb,
+		   const struct pcb_spot *sb, double **xy, size_t *np,
+		   double near[2])
+{
+	int ca, cb, goal = -1, best;
+	size_t m = 0;
+
+	window(n, w, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, a[0], a[1]);
+	ca = cell_at(a[0], a[1]);
+	cb = cell_at(b[0], b[1]);
+	near[0] = a[0];
+	near[1] = a[1];
 	if (ca < 0 || cb < 0) {
 		return 0;
 	}
-	for (int s = 0; s < ns; s++) {
-		cost[s] = 1e300;
-		from[s] = -1;
+	memset(inp, 0, sizeof inp);
+	memset(inq, 0, sizeof inq);
+	mark_pad(inp, sa);
+	mark_pad(inq, sb);
+	inp[ca] = 1;
+	tb[0] = cb % WIN;
+	tb[1] = cb / WIN;
+	if (++search == 0) {
+		memset(stamp, 0, sizeof stamp);
+		search = 1;
 	}
-	for (int c = 0; c < W * H; c++) {
-		inp[c] = (unsigned char)inside_spot(&sa, cx(c % W), cy(c / W),
-						    0);
-		inq[c] = (unsigned char)inside_spot(&sb, cx(c % W), cy(c / W),
-						    0);
-	}
-	tb[0] = cb % W;
-	tb[1] = cb / W;
 	nheap = 0;
-	// Pads in line: one straight track through their centers, if clear.
-	if (fabs(pa[0] - pb[0]) < 1e-6 || fabs(pa[1] - pb[1]) < 1e-6) {
-		int di = (cb % W > ca % W) - (cb % W < ca % W);
-		int dj = (cb / W > ca / W) - (cb / W < ca / W), d;
+	best = ca;
+	// In line: one straight track, if clear.
+	if (fabs(a[0] - b[0]) < 1e-6 || fabs(a[1] - b[1]) < 1e-6) {
+		int di = (cb % WIN > ca % WIN) - (cb % WIN < ca % WIN);
+		int dj = (cb / WIN > ca / WIN) - (cb / WIN < ca / WIN), d;
 		int clear = 1;
 
-		for (int c = ca; clear && c != cb; c += dj * W + di) {
+		for (int c = ca; clear && c != cb; c += dj * WIN + di) {
 			clear = !bad[c] || inp[c] || inq[c];
 		}
 		for (d = 0; d < 8 && (DI[d] != di || DJ[d] != dj); d++) {
 		}
 		if (clear && d < 8) {
-			cost[cb * 8 + d] = 1;
-			from[cb * 8 + d] = ca * 8 + d;
-			cost[ca * 8 + d] = 0;
-			goal = cb * 8 + d;
+			*xy = pcb_alloc(4 * sizeof **xy);
+			memcpy(*xy, a, 2 * sizeof **xy);
+			memcpy(*xy + 2, b, 2 * sizeof **xy);
+			*np = 2;
+			return 1;
 		}
 	}
-	for (int d = 0; goal < 0 && d < 8; d++) {
+	for (int d = 0; d < 8; d++) {
 		if (ma >> d & 1) {
-			cost[ca * 8 + d] = 0;
-			prio[ca * 8 + d] = estimate(ca);
-			push(ca * 8 + d);
+			reach(ca * 8 + d, 0, 8);
 		}
 	}
-	while (goal < 0 && nheap) {
-		int s = pop(), c = s / 8, d = s % 8, i = c % W, j = c / W;
+	while (nheap) {
+		int s = pop(), c = s / 8, d = s % 8, i = c % WIN, j = c / WIN;
 
 		if (c == cb && cost[s] > 0) {
 			goal = s;
 			break;
 		}
+		if (estimate(c) < estimate(best)) {
+			best = c;
+		}
 		for (int nd = 0; nd < 8; nd++) {
 			int ni = i + DI[nd], nj = j + DJ[nd], nc, turn;
-			double step;
 
 			// Straight while in a pad: out of the first along its
 			// side, into the second along its side.
 			if ((inp[c] || inq[c]) && nd != d) {
 				continue;
 			}
-			if (ni < 0 || nj < 0 || ni >= W || nj >= H) {
+			if (ni < 0 || nj < 0 || ni >= WIN || nj >= WIN) {
 				continue;
 			}
-			nc = nj * W + ni;
-			if (inq[nc] && !(mb >> nd & 1)) {
+			nc = nj * WIN + ni;
+			if ((inq[nc] || nc == cb) && !(mb >> nd & 1)) {
 				continue;
 			}
-			if (bad[nc] && !inq[nc] && !inp[nc]) {
+			if (bad[nc] && !inq[nc] && !inp[nc] && nc != cb) {
 				continue;
 			}
 			turn = abs(nd - d);
@@ -615,17 +652,150 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 			if (turn > 2) {
 				continue; // No sharp turns.
 			}
-			step = (nd % 2 ? 1.41421356 : 1) + turn * BEND;
-			if (cost[s] + step < cost[nc * 8 + nd]) {
-				cost[nc * 8 + nd] = cost[s] + step;
-				prio[nc * 8 + nd] =
-					cost[s] + step + estimate(nc);
-				from[nc * 8 + nd] = s;
-				push(nc * 8 + nd);
-			}
+			reach(nc * 8 + nd,
+			      cost[s] + (nd % 2 ? 1.41421356 : 1) + turn * BEND, d);
 		}
 	}
 	if (goal < 0) {
+		near[0] = cx(best % WIN);
+		near[1] = cy(best / WIN);
+		return 0;
+	}
+	// The corners, from b back to a, then turned round.
+	*xy = pcb_alloc(2 * 16 * sizeof **xy);
+	for (int st = goal, last = -1, cap = 16;;) {
+		int d = st % 8, c = st / 8, pd = back[st];
+
+		if (m + 1 >= (size_t)cap) {
+			cap *= 2;
+			*xy = realloc(*xy, 2 * (size_t)cap * sizeof **xy);
+			if (!*xy) {
+				pcb_die("out of memory");
+			}
+		}
+		if (last < 0 || d != last || pd == 8) {
+			(*xy)[2 * m] = cx(c % WIN);
+			(*xy)[2 * m + 1] = cy(c / WIN);
+			m++;
+		}
+		if (pd == 8) {
+			break;
+		}
+		last = d;
+		st = (c - DJ[d] * WIN - DI[d]) * 8 + pd;
+	}
+	// The corner before b on b's line; the ends exact.
+	if (m >= 3) {
+		if (goal % 8 == 0 || goal % 8 == 4) {
+			(*xy)[3] = b[1];
+		} else {
+			(*xy)[2] = b[0];
+		}
+	}
+	(*xy)[0] = b[0];
+	(*xy)[1] = b[1];
+	(*xy)[2 * m - 2] = a[0];
+	(*xy)[2 * m - 1] = a[1];
+	for (size_t i = 0; i < m / 2; i++) {
+		for (int k = 0; k < 2; k++) {
+			double t = (*xy)[2 * i + (size_t)k];
+
+			(*xy)[2 * i + (size_t)k] = (*xy)[2 * (m - 1 - i) + (size_t)k];
+			(*xy)[2 * (m - 1 - i) + (size_t)k] = t;
+		}
+	}
+	*np = m;
+	return 1;
+}
+
+// A point between the sections of a connection of net n, width w: on
+// the grid of the first pad, the straight line's point p, or slid
+// sideways (u the way across) off copper and out of cutouts, as near as
+// it is clear; returns 0 if none is.
+static int midpoint(int n, double w, const double *p, const double *u,
+		    double q[2])
+{
+	const char *who;
+
+	for (int k = 0; k <= 2 * SLIDE; k++) {
+		double t = (k % 2 ? 1 : -1) * (double)((k + 1) / 2) * CELL;
+
+		q[0] = OX + (double)lround((p[0] + u[0] * t - OX) / CELL) * CELL;
+		q[1] = OY + (double)lround((p[1] + u[1] * t - OY) / CELL) * CELL;
+		if (free_at(q[0], q[1], w / 2, 0, n, &who)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// Joins pad a of net n to pad b: a connection of width w from the center
+// of a to the center of b (of a long pad, from its end nearest the
+// other), leaving and entering each along its longer side, in sections
+// along the straight line between them, each within the window.
+// Returns 0 if there is no way, and stuck says where.
+static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
+		   double w)
+{
+	struct pcb_spot sa, sb;
+	double pa[2], pb[2], len, u[2], *all = NULL, near[2] = { 0, 0 };
+	double span = (WIN - 2 * MARGIN - 2 * SLIDE) * CELL;
+	size_t nall = 0;
+	int k, ok = 1, l;
+	char *ka, *kb;
+
+	pcb_spot(&B, &B.part[a->part], a->pad, &sa);
+	pcb_spot(&B, &B.part[b->part], b->pad, &sb);
+	pad_point(n, &sa, sb.x, sb.y, pa);
+	pad_point(n, &sb, pa[0], pa[1], pb);
+	pad_point(n, &sa, pb[0], pb[1], pa);
+	len = hypot(pb[0] - pa[0], pb[1] - pa[1]);
+	u[0] = len > 0 ? -(pb[1] - pa[1]) / len : 0;
+	u[1] = len > 0 ? (pb[0] - pa[0]) / len : 1;
+	k = (int)ceil(fmax(fabs(pb[0] - pa[0]), fabs(pb[1] - pa[1])) / span);
+	k = k < 1 ? 1 : k;
+	OX = fmod(pa[0], CELL);
+	OY = fmod(pa[1], CELL);
+	for (int i = 0; ok && i < k; i++) {
+		double from[2], to[2], *xy = NULL;
+		size_t m = 0;
+
+		if (!i) {
+			memcpy(from, pa, sizeof from);
+		} else {
+			memcpy(from, all + 2 * nall - 2, sizeof from);
+		}
+		if (i == k - 1) {
+			memcpy(to, pb, sizeof to);
+		} else {
+			const double p[2] = {
+				pa[0] + (pb[0] - pa[0]) * (i + 1) / k,
+				pa[1] + (pb[1] - pa[1]) * (i + 1) / k
+			};
+
+			if (!midpoint(n, w, p, u, to)) {
+				near[0] = p[0];
+				near[1] = p[1];
+				ok = 0;
+				break;
+			}
+		}
+		ok = section(n, w, from, i ? 0xFFu : axis(&sa), i ? NULL : &sa,
+			     to, i == k - 1 ? axis(&sb) : 0xFFu,
+			     i == k - 1 ? &sb : NULL, &xy, &m, near);
+		// The sections end to end, each joint once.
+		for (size_t j = nall ? 1 : 0; ok && j < m; j++) {
+			all = pcb_grow(all, 2 * nall + 1, sizeof *all);
+			all[2 * nall] = xy[2 * j];
+			all[2 * nall + 1] = xy[2 * j + 1];
+			nall++;
+		}
+		free(xy);
+	}
+	if (!ok) {
+		snprintf(stuck, sizeof stuck, "%s to %s, stuck at %.3f %.3f",
+			 pad_label(a), pad_label(b), near[0], near[1]);
+		free(all);
 		return 0;
 	}
 	ka = pcb_pad_key(&B, a->part, a->pad);
@@ -634,56 +804,24 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 	free(ka);
 	free(kb);
 	{
-		// The path, as a polyline of its corners, from b back to a;
-		// its ends at the pads' centers, its last run on b's line.
 		struct pcb_track t;
-		size_t cap = 16;
-		int last = -1, fd = goal % 8;
 
 		t.net = n;
 		t.layer = 0;
 		t.link = l;
 		t.w = w;
-		t.n = 0;
-		t.xy = pcb_alloc(2 * cap * sizeof *t.xy);
-		for (int s = goal; s >= 0; s = from[s]) {
-			int d = s % 8;
-
-			if (t.n + 1 >= cap) {
-				cap *= 2;
-				t.xy = realloc(t.xy, 2 * cap * sizeof *t.xy);
-				if (!t.xy) {
-					pcb_die("out of memory");
-				}
-			}
-			if (last < 0 || d != last || from[s] < 0) {
-				t.xy[2 * t.n] = cx(s / 8 % W);
-				t.xy[2 * t.n + 1] = cy(s / 8 / W);
-				t.n++;
-			}
-			last = d;
-		}
-		if (t.n >= 3) {
-			// The corner before b on b's line.
-			if (fd == 0 || fd == 4) {
-				t.xy[3] = pb[1];
-			} else {
-				t.xy[2] = pb[0];
-			}
-		}
-		t.xy[0] = pb[0];
-		t.xy[1] = pb[1];
-		t.xy[2 * t.n - 2] = pa[0];
-		t.xy[2 * t.n - 1] = pa[1];
+		t.n = nall;
+		t.xy = all;
 		B.track_ = pcb_grow(B.track_, B.ntrack, sizeof *B.track_);
 		B.track_[B.ntrack++] = t;
 	}
 	if (verbose) {
-		fprintf(stderr, "%s: %s to %s, %.3f wide\n", B.net[n].name,
-			pad_label(a), pad_label(b), w);
+		fprintf(stderr, "%s: %s to %s, %.3f wide, %d sections\n",
+			B.net[n].name, pad_label(a), pad_label(b), w, k);
 	}
 	return 1;
 }
+
 
 // The ends of net n to route on the top: its pads on the top.
 static size_t top_ends(int n, struct pcb_end **ends)
@@ -783,8 +921,8 @@ static int join(int n, const struct pcb_end *ends, size_t m, size_t *g,
 
 // Routes signal net n: joins its groups of pads by connections, those
 // its paths and widths name first, then the nearest pad not joined to
-// the nearest joined.  Returns 0 if a pad finds no way, and names it in
-// *who.
+// the nearest joined.  Returns 0 if a pad finds no way, and *who says
+// which, from which, and where it got stuck.
 static int route_net(int n, const char **who)
 {
 	struct pcb_end *ends;
@@ -808,7 +946,7 @@ static int route_net(int n, const char **who)
 					continue;
 				}
 				ok = join(n, ends, m, g, a, b);
-				*who = ok ? *who : pad_label(&ends[b]);
+				*who = ok ? *who : stuck;
 			}
 		} else if (!strcmp(st->w[0], "width") && st->n == 4) {
 			size_t a = end_of(st->w[1], ends, m);
@@ -816,7 +954,7 @@ static int route_net(int n, const char **who)
 
 			if (a < m && b < m) {
 				ok = join(n, ends, m, g, a, b);
-				*who = ok ? *who : pad_label(&ends[b]);
+				*who = ok ? *who : stuck;
 			}
 		}
 	}
@@ -853,7 +991,7 @@ static int route_net(int n, const char **who)
 		}
 		ok = join(n, ends, m, g, bi, bj);
 		if (!ok) {
-			*who = pad_label(&ends[bi]);
+			*who = stuck;
 		}
 	}
 	free(ends);
@@ -1479,7 +1617,7 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 			break;
 		}
 		if (tries == TRIES - 1) {
-			pcb_error(&B, 0, "net %s: no way to %s",
+			pcb_error(&B, 0, "net %s: no way from %s",
 				  B.net[failed].name, who);
 			break;
 		}
