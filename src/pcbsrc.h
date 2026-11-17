@@ -196,8 +196,13 @@ void pcb_spot(const struct pcb *b, const struct pcb_part *q, size_t k,
 	      struct pcb_spot *s);
 // The courtyard of a placed part, on the board.
 void pcb_court(const struct pcb_part *q, double c[4]);
-// Whether the box (x0 y0 x1 y1) comes within d of a cutout.
-int pcb_in_cut(const struct pcb *b, const double box[4], double d);
+// The distance from a piece of copper to the edge, the outline and the
+// cutouts with their round corners: from the segment s (x0 y0 x1 y1)
+// grown by r, or with box set from the box s; 0 where it crosses into a
+// cutout, less than 0 off the outline or into a round corner.  The
+// point of the piece nearest the edge goes to at, unless NULL.
+double pcb_edge_dist(const struct pcb *b, int box, const double s[4], double r,
+		     double at[2]);
 // The keep-out of pad k of part q, a hole a screw goes through: its
 // center and radius on the board; returns 0 if it has none.
 int pcb_keepout(const struct pcb *b, const struct pcb_part *q, size_t k,
@@ -272,6 +277,10 @@ int pcb_opening(const struct pcb *b, size_t q, size_t k, int bottom,
 		double box[4]);
 // The distance from (x, y) to the copper of a pad, 0 inside it.
 double pcb_spot_dist(const struct pcb_spot *s, double x, double y);
+// The points of a pad a track joins it at: its center; but for a pad at
+// least twice as long as wide (a long pad) its two ends, each a half
+// width in from the end.  Returns their number, 1 or 2.
+int pcb_pad_ends(const struct pcb_spot *s, double p[2][2]);
 // Whether pad k of part q is soldered: a pad with paste, or a plated
 // hole; a contact pad (nopaste) is not.  The via gap keeps vias off the
 // pads soldered, against solder wicking down them.

@@ -185,7 +185,7 @@ name="pcbcheck tells a track ending off a pad's center"
 awk '$1 == "track" && $3 == "top" && !done { $5 += 0.3; done = 1 } { print }' \
 	"$tmp/a" > "$tmp/offcenter"
 check sh -c '! "$1/pcbcheck" "$2" < "$3/offcenter" > "$3/out" &&
-	grep -q "ends off a pad.s center and off a via" "$3/out"' \
+	grep -q "ends off a pad.s center or end and off a via" "$3/out"' \
 	- "$P" "$B" "$tmp"
 mkdir "$tmp/i"
 cp -r test/footprints test/sch_filter.expected "$tmp/i"

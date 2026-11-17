@@ -75,6 +75,9 @@ struct sch_part {
 	struct sch_device *dev;
 	int x, y, rot, mirror, flip, side, line, novalue, placed;
 	char *text; // The text of a flag: the name of its net.
+	// Of each pin, whether an nc statement leaves it unconnected on
+	// purpose; NULL for none.
+	unsigned char *nc;
 };
 
 // A pin of a net: a part and the index of its pin, and the flag it has,

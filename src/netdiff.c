@@ -367,6 +367,8 @@ static void load(struct list *l, const char *file)
 			}
 			nn[nnets] = n - 1;
 			nline[nnets++] = ln;
+		} else if (!strcmp(w[0], "pin") && n == 3) {
+			// A pin on no net: schcheck's, no difference here.
 		} else {
 			die("bad record", file, ln);
 		}

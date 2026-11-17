@@ -12,8 +12,10 @@
 //   each net must be one piece of copper, and no piece may hold pads of
 //   two nets (a short);
 //   copper of two nets keeps the clearance apart, and the edge rule from
-//   the outline (but for the parts it excepts);
-//   each track ends at the center of a pad of its net or at a via;
+//   the outline and the cutouts, measured from the copper itself to the
+//   round corners (but for the parts it excepts);
+//   each track ends at the center of a pad of its net (or an end of a
+//   long pad) or at a via;
 //   the copper between two pins of a width statement, and each
 //   connection, is no narrower than its width;
 //   every via keeps the via gap from the pads of its net, so a neck
@@ -31,8 +33,8 @@
 //   statements for its pads where they stand; the lock tells these in
 //   plain words, so the fault says what changed.
 // Each fault is one line, in the names of the source, with the place it
-// is at; nothing is printed when all is well.  With -l each net's track
-// length and vias are printed too, one net a line.
+// is at, and printed once; nothing is printed when all is well.  With
+// -l each net's track length and vias are printed too, one net a line.
 
 #define _POSIX_C_SOURCE 200809L // For strtok_r.
 
@@ -233,12 +235,25 @@ static int is_except(const char *name)
 }
 
 static int faults;
+static char **told; // The faults printed, each once.
+static size_t ntold;
 
-// Prints a fault, made by the caller, and the place it is at.
+// Prints a fault, made by the caller, and the place it is at; but not a
+// second time word for word.
 static void fault(const char *what, double x, double y)
 {
-	printf("%s: %s at %.3f %.3f\n", B.file, what, x, y);
+	char line[2200];
+
+	snprintf(line, sizeof line, "%s: %s at %.3f %.3f", B.file, what, x, y);
 	faults = 1;
+	for (size_t i = 0; i < ntold; i++) {
+		if (!strcmp(told[i], line)) {
+			return;
+		}
+	}
+	told = pcb_grow(told, ntold, sizeof *told);
+	told[ntold++] = pcb_strdup(line);
+	printf("%s\n", line);
 }
 
 // Whether a stroke runs into the box, by points along it 0.05 mm apart.
@@ -419,24 +434,25 @@ static void check_copper(void)
 				up[find(i)] = find(base + l);
 			}
 		}
-		// The edge.
-		if (a->layer >= 0 || a->r > 0) {
-			double e = B.edge, x0, y0, x1, y1;
+		// The edge: the outline and the cutouts, but for the parts
+		// it excepts.
+		if ((a->layer >= 0 || a->r > 0) &&
+		    !(a->part >= 0 && is_except(B.part[a->part].name))) {
+			double at[2];
+			double d = pcb_edge_dist(
+				&B, a->rect,
+				(const double[4]){ a->ax, a->ay, a->bx, a->by },
+				a->rect ? 0 : a->r, at);
 
-			x0 = a->rect ? a->ax : fmin(a->ax, a->bx) - a->r;
-			y0 = a->rect ? a->ay : fmin(a->ay, a->by) - a->r;
-			x1 = a->rect ? a->bx : fmax(a->ax, a->bx) + a->r;
-			y1 = a->rect ? a->by : fmax(a->ay, a->by) + a->r;
-			if ((x0 < B.board[0] + e || y0 < B.board[1] + e ||
-			     x1 > B.board[2] - e || y1 > B.board[3] - e ||
-			     pcb_in_cut(&B, (const double[4]){ x0, y0, x1, y1 },
-					e)) &&
-			    !(a->part >= 0 &&
-			      is_except(B.part[a->part].name))) {
+			if (d < -1e-6) {
+				snprintf(msg, sizeof msg,
+					 "%s runs past the edge", a->what);
+				fault(msg, at[0], at[1]);
+			} else if (d < B.edge - 1e-6) {
 				snprintf(msg, sizeof msg,
 					 "%s is nearer the edge than %.3f mm",
-					 a->what, e);
-				fault(msg, (x0 + x1) / 2, (y0 + y1) / 2);
+					 a->what, B.edge);
+				fault(msg, at[0], at[1]);
 			}
 		}
 	}
@@ -767,19 +783,31 @@ static void check_ends(void)
 				     k < B.part[q].fp->npad;
 				     k++) {
 					struct pcb_spot s;
+					double p[2][2];
+					int np;
 
 					pcb_spot(&B, &B.part[q], k, &s);
+					np = pcb_pad_ends(&s, p);
 					ok = pcb_net_of(&B, q, k) == t->net &&
 					     (s.layer < 0 ||
 					      s.layer == t->layer) &&
 					     hypot(s.x - x, s.y - y) < 1e-3;
+					for (int e2 = 0; e2 < np && !ok &&
+							 pcb_net_of(&B, q, k) ==
+								 t->net &&
+							 (s.layer < 0 ||
+							  s.layer == t->layer);
+					     e2++) {
+						ok = hypot(p[e2][0] - x,
+							   p[e2][1] - y) < 1e-3;
+					}
 				}
 			}
 			if (!ok) {
 				snprintf(
 					msg, sizeof msg,
 					"a track of %s ends off a pad's center "
-					"and off a via",
+					"or end and off a via",
 					B.net[t->net].name);
 				fault(msg, x, y);
 			}
@@ -1367,5 +1395,9 @@ int main(int argc, char **argv)
 		free(labels[k]);
 	}
 	free(labels);
+	for (size_t k = 0; k < ntold; k++) {
+		free(told[k]);
+	}
+	free(told);
 	return faults || B.failed;
 }

@@ -1,7 +1,7 @@
 PROGS := smfold smflat tostep measure place interfere numdiff param \
 	family assemble extrude bool fillet mold smview smdim smsheet tomesh \
-	view schdraw schnet netdiff pcbplace pcbroute pcbcheck pcbgerber \
-	pcbvec gbrvec vecps schview pcbview
+	view schdraw schnet schcheck netdiff pcbplace pcbroute pcbcheck \
+	pcbgerber pcbvec gbrvec vecps schview pcbview
 
 LIB := util font geom expr fold brep bsolid contact shape stream integ isect \
 	split merge mesh obj scene moves clash bvh coat insert asm sview \

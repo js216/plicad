@@ -13,6 +13,7 @@ One record per line, words separated by blanks; # starts a comment.
 .nf
 part REF TYPE [KEY VALUE]...
 net NAME [global] REF.PIN...
+pin REF.PIN nc|\-
 .fi
 .RE
 .PP
@@ -37,6 +38,10 @@ A global net is a rail or a port, the same net wherever its name is
 used.
 Parts come before the nets that use them; a pin is on one net at
 most.
+A pin record, after the nets, is a pin on no net: nc if the source
+leaves it unconnected on purpose,
+.B \-
+if not.
 .SH EXAMPLES
 .nf
 part R401 resistor value 249 swap 1,2 name ch1.gain.rg

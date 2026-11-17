@@ -621,17 +621,128 @@ int pcb_in_keepout(const struct pcb *b, double x, double y, double rad,
 	return 0;
 }
 
-int pcb_in_cut(const struct pcb *b, const double box[4], double d)
+// The distance from (x, y) to the segment a-b; its point nearest goes
+// to at.
+static double seg_near(double x, double y, const double *a, const double *b,
+		       double at[2])
 {
-	for (size_t i = 0; i < b->ncut; i++) {
-		const double *c = b->cut[i];
+	double dx = b[0] - a[0], dy = b[1] - a[1], l = dx * dx + dy * dy, t;
 
-		if (box[0] < c[2] + d && box[2] > c[0] - d &&
-		    box[1] < c[3] + d && box[3] > c[1] - d) {
-			return 1;
+	t = l > 0 ? ((x - a[0]) * dx + (y - a[1]) * dy) / l : 0;
+	t = t < 0 ? 0 : t > 1 ? 1 : t;
+	at[0] = a[0] + t * dx;
+	at[1] = a[1] + t * dy;
+	return hypot(x - at[0], y - at[1]);
+}
+
+// A shape: a segment of its two ends, or a box of its four corners in
+// turn (filled).  The distance from (x, y) to it, 0 inside; its point
+// nearest goes to at.
+static double shape_near(const double *v, int n, double x, double y,
+			 double at[2])
+{
+	if (n == 4) {
+		at[0] = fmin(fmax(x, fmin(v[0], v[4])), fmax(v[0], v[4]));
+		at[1] = fmin(fmax(y, fmin(v[1], v[5])), fmax(v[1], v[5]));
+		return hypot(x - at[0], y - at[1]);
+	}
+	return seg_near(x, y, v, v + 2, at);
+}
+
+// Whether segments a-b and c-d cross.
+static int crosses(const double *a, const double *b, const double *c,
+		   const double *d)
+{
+	double d1 = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+	double d2 = (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]);
+	double d3 = (d[0] - c[0]) * (a[1] - c[1]) - (d[1] - c[1]) * (a[0] - c[0]);
+	double d4 = (d[0] - c[0]) * (b[1] - c[1]) - (d[1] - c[1]) * (b[0] - c[0]);
+
+	return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
+// The distance between shapes s (n corners) and t (m corners), 0 where
+// they meet: the least from a corner of one to the other, as both are
+// convex; the point of s nearest t goes to at.
+static double shapes_dist(const double *s, int n, const double *t, int m,
+			  double at[2])
+{
+	double best = HUGE_VAL, p[2];
+
+	for (int i = 0; i < n; i++) {
+		double d = shape_near(t, m, s[2 * i], s[2 * i + 1], p);
+
+		if (d < best) {
+			best = d;
+			at[0] = s[2 * i];
+			at[1] = s[2 * i + 1];
 		}
 	}
-	return 0;
+	for (int j = 0; j < m; j++) {
+		double d = shape_near(s, n, t[2 * j], t[2 * j + 1], p);
+
+		if (d < best) {
+			best = d;
+			at[0] = p[0];
+			at[1] = p[1];
+		}
+	}
+	for (int i = 0; i < (n == 4 ? 4 : 1); i++) {
+		for (int j = 0; j < (m == 4 ? 4 : 1); j++) {
+			if (crosses(s + 2 * i, s + 2 * ((i + 1) % n), t + 2 * j,
+				    t + 2 * ((j + 1) % m))) {
+				return 0;
+			}
+		}
+	}
+	return best;
+}
+
+double pcb_edge_dist(const struct pcb *b, int box, const double s[4], double r,
+		     double at[2])
+{
+	double v[8], p[2], here[2], best = HUGE_VAL;
+	int n = box ? 4 : 2;
+
+	at = at ? at : here;
+	if (box) {
+		const double c[8] = { s[0], s[1], s[2], s[1],
+				      s[2], s[3], s[0], s[3] };
+
+		memcpy(v, c, sizeof c);
+	} else {
+		memcpy(v, s, 4 * sizeof *v);
+	}
+	// The outline, a rectangle round the copper: from its side nearest a
+	// corner or end.
+	for (int i = 0; i < n; i++) {
+		double x = v[2 * i], y = v[2 * i + 1];
+		double d = fmin(fmin(x - b->board[0], b->board[2] - x),
+				fmin(y - b->board[1], b->board[3] - y)) -
+			   r;
+
+		if (d < best) {
+			best = d;
+			at[0] = x;
+			at[1] = y;
+		}
+	}
+	// A cutout: the box of its corners' centers, grown by their radius.
+	for (size_t k = 0; k < b->ncut; k++) {
+		const double *c = b->cut[k];
+		double cr = b->cutr[k], d;
+		const double in[8] = { c[0] + cr, c[1] + cr, c[2] - cr,
+				       c[1] + cr, c[2] - cr, c[3] - cr,
+				       c[0] + cr, c[3] - cr };
+
+		d = shapes_dist(v, n, in, 4, p) - r - cr;
+		if (d < best) {
+			best = d;
+			at[0] = p[0];
+			at[1] = p[1];
+		}
+	}
+	return best;
 }
 
 void pcb_court(const struct pcb_part *q, double c[4])
@@ -783,6 +894,22 @@ double pcb_spot_dist(const struct pcb_spot *s, double x, double y)
 	}
 	return hypot(fmax(fabs(x - s->x) - s->w / 2, 0),
 		     fmax(fabs(y - s->y) - s->h / 2, 0));
+}
+
+int pcb_pad_ends(const struct pcb_spot *s, double p[2][2])
+{
+	double lo = fmin(s->w, s->h), hi = fmax(s->w, s->h), u = (hi - lo) / 2;
+
+	if (s->shape == PAD_CIRCLE || hi < 2 * lo) {
+		p[0][0] = s->x;
+		p[0][1] = s->y;
+		return 1;
+	}
+	p[0][0] = s->x - (s->w > s->h ? u : 0);
+	p[0][1] = s->y - (s->w > s->h ? 0 : u);
+	p[1][0] = s->x + (s->w > s->h ? u : 0);
+	p[1][1] = s->y + (s->w > s->h ? 0 : u);
+	return 2;
 }
 
 int pcb_soldered(const struct pcb_part *q, size_t k)
@@ -1185,7 +1312,9 @@ int pcb_passes(const char *file, char **lib, size_t nlib, const char *group,
 			groups[ng++] = src.stmt[i].w[1];
 		}
 	}
-	qsort(groups, ng, sizeof *groups, deeper_first);
+	if (ng) {
+		qsort(groups, ng, sizeof *groups, deeper_first);
+	}
 	for (size_t i = 0; i <= ng; i++) {
 		char *next = NULL;
 		size_t nlen = 0;

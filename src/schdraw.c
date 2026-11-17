@@ -1547,6 +1547,22 @@ static void write_vec(void)
 		symbol(q);
 		pin_numbers(q);
 		pin_ends(q);
+		// A pin left unconnected on purpose: a small cross at its end.
+		for (size_t p = 0; q->nc && p < q->dev->shape->npin; p++) {
+			int x, y, d;
+			double cx, cy, r = 1.8;
+
+			if (!q->nc[p]) {
+				continue;
+			}
+			sch_pin_at(q, p, &x, &y, &d);
+			cx = OX + x * GRID * SC;
+			cy = OY + y * GRID * SC;
+			printf("line %.3f %.3f %.3f %.3f %.3f\n", LW * SC,
+			       cx - r * SC, cy - r * SC, cx + r * SC, cy + r * SC);
+			printf("line %.3f %.3f %.3f %.3f %.3f\n", LW * SC,
+			       cx - r * SC, cy + r * SC, cx + r * SC, cy - r * SC);
+		}
 		// The lines align to the part: to the left of it flush right,
 		// above or below it centered, else flush left.
 		for (int l = 0; l < b->nline; l++) {

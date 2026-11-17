@@ -26,7 +26,10 @@ its groups and its own name, the page's first, as
 and a net record for each net, with its pins by their numbers.
 A net named by a flag or by a port of the sheet is marked global, and
 is one net over all the pages it is on.
-Flags are not parts; a pin on no net is left out.
+Flags are not parts; each pin on no net is a pin record after the
+nets, nc if an nc statement leaves it unconnected on purpose, \- if not,
+for
+.IR schcheck (1).
 The output of a source is always the same: the parts and the pins of a
 net are sorted by designator and pin, the nets by name.
 .PP
@@ -38,7 +41,7 @@ column.
 schnet sheet.sch > sheet.nl && netdiff sheet.nl before.nl
 .fi
 .SH SEE ALSO
-sch(5), netlist(5), netdiff(1), schdraw(1)
+sch(5), netlist(5), netdiff(1), schcheck(1), schdraw(1)
 .SH DIAGNOSTICS
 FILE:LINE: and the fault, one a line; the netlist leaves out what a
 fault touches.

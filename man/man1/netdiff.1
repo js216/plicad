@@ -36,6 +36,9 @@ Where the circuits differ, labels made with fewer passes, which see
 less far, pair the parts near the difference; parts still unmatched
 pair by their values where their nets agree best, or are reported.
 Each pass is linear in the pins.
+The pin records of pins on no net are
+.IR schcheck (1)'s
+and make no difference.
 .SH EXAMPLES
 netdiff ours.nl theirs.nl
 .br

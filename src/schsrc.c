@@ -543,7 +543,7 @@ struct later {
 	char *ref[2], *scope, *name;
 };
 
-enum { WIRE, FLAG };
+enum { WIRE, FLAG, NC };
 
 static struct sch *R;
 static struct pinrec *pins;
@@ -2042,6 +2042,19 @@ static void read_statement(char **w, int n)
 		}
 		aliases = grow(aliases, naliases, sizeof *aliases);
 		aliases[naliases++] = al;
+	} else if (!strcmp(w[0], "nc") && n == 2) {
+		// A pin left unconnected on purpose.
+		struct later l;
+
+		l.kind = NC;
+		l.side = -1;
+		l.ref[0] = sch_strdup(w[1]);
+		l.ref[1] = NULL;
+		l.name = NULL;
+		l.scope = sch_strdup(group_path);
+		l.line = line_no;
+		laters = grow(laters, nlaters, sizeof *laters);
+		laters[nlaters++] = l;
 	} else if (!strcmp(w[0], "wire") && (n == 4 || n == 5) &&
 		   !strcmp(w[2], "to")) {
 		struct later l;
@@ -2242,6 +2255,13 @@ static void resolve_all(void)
 			h.side = l->side;
 			R->hint = grow(R->hint, R->nhint, sizeof *R->hint);
 			R->hint[R->nhint++] = h;
+		} else if (l->kind == NC) {
+			struct sch_part *q = &R->part[pins[a].part];
+
+			if (!q->nc) {
+				q->nc = sch_alloc(q->dev->shape->npin + 1);
+			}
+			q->nc[pins[a].pin] = 1;
 		} else {
 			flag_pin((size_t)a, l->ref[1], l->name);
 		}

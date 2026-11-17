@@ -32,6 +32,7 @@ wire PIN to PIN [WAY]
 ground at PIN
 chassis at PIN
 supply NAME at PIN
+nc PIN
 .fi
 .RE
 .PP
@@ -154,6 +155,9 @@ put a flag on a pin, which joins it to the global net of the flag: GND,
 CHASSIS, or the name of the supply.
 A ground hangs under its pin; a supply or a port stands at the end of
 its line, past the branches.
+.B nc
+marks a pin left unconnected on purpose: it is drawn with a small cross
+at its end, and the netlist lists it as nc, not as a pin forgotten.
 .SS Library
 The symbols are looked up in the directory
 .B symbols

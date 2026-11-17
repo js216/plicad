@@ -30,9 +30,11 @@
 // leaves and enters each pad along its longer side and turns only
 // outside it, keeping its clearance from all copper of other nets and
 // from the edge; a bend costs a little more than its length.  So pads in
-// line are joined by one straight track through their centers.  The
-// nets are routed with the fewest and nearest pads first; a net that
-// finds no way is put first and all that was made anew is made again.
+// line are joined by one straight track through their centers, and a
+// long pad (twice as long as wide or more) at its end nearest the other
+// pad.  The nets are routed with the fewest and nearest pads first; a
+// net that finds no way is put first and all that was made anew is made
+// again.
 // With -v each connection and via is told on stderr.
 //
 // A run routes every group of a block statement alone, the deepest
@@ -203,11 +205,8 @@ static int free_at(double x, double y, double r, int layer, int n,
 			return 0;
 		}
 	}
-	if (!scope &&
-	    (x - r < B.board[0] + B.edge || x + r > B.board[2] - B.edge ||
-	     y - r < B.board[1] + B.edge || y + r > B.board[3] - B.edge ||
-	     pcb_in_cut(&B, (const double[4]){ x - r, y - r, x + r, y + r },
-			B.edge))) {
+	if (!scope && pcb_edge_dist(&B, 0, (const double[4]){ x, y, x, y }, r,
+				    NULL) < B.edge - 1e-9) {
 		*who = "the edge";
 		return 0;
 	}
@@ -357,12 +356,10 @@ static void grid(int n, double w, double ox, double oy)
 	}
 	for (int j = 0; !scope && j < H; j++) {
 		for (int i = 0; i < W; i++) {
-			double x = cx(i), y = cy(j), e = B.edge + w / 2;
+			double x = cx(i), y = cy(j);
 
-			if (x < B.board[0] + e || x > B.board[2] - e ||
-			    y < B.board[1] + e || y > B.board[3] - e ||
-			    pcb_in_cut(&B, (const double[4]){ x, y, x, y },
-				       e)) {
+			if (pcb_edge_dist(&B, 0, (const double[4]){ x, y, x, y },
+					  w / 2, NULL) < B.edge) {
 				bad[j * W + i] = 1;
 			}
 		}
@@ -458,13 +455,69 @@ static const char *pad_label(const struct pcb_end *e)
 	return s;
 }
 
+// Whether a track of net n ends at (x, y).
+static int track_ends_at(int n, double x, double y)
+{
+	for (size_t i = 0; i < B.ntrack; i++) {
+		const struct pcb_track *t = &B.track_[i];
+
+		for (size_t e = 0; t->net == n && t->n && e < 2; e++) {
+			const double *q = &t->xy[e ? 2 * t->n - 2 : 0];
+
+			if (hypot(q[0] - x, q[1] - y) < 1e-6) {
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+// The point of pad s of net n a track joins it at, toward (x, y): its
+// center, or of a long pad its end nearest; of two ends as near, the one
+// a track of the net ends at already, else the one farther from the
+// edge, else the upper or right one, so a pad met from its side is not
+// joined at its end by the edge.
+static void pad_point(int n, const struct pcb_spot *s, double x, double y,
+		      double p[2])
+{
+	double e[2][2], d0, d1;
+	int k = 0;
+
+	if (pcb_pad_ends(s, e) == 2) {
+		d0 = hypot(e[0][0] - x, e[0][1] - y);
+		d1 = hypot(e[1][0] - x, e[1][1] - y);
+		k = d1 < d0 - 1e-6 ? 1 : d0 < d1 - 1e-6 ? 0 : -1;
+		if (k < 0 && (track_ends_at(n, e[0][0], e[0][1]) ||
+			      track_ends_at(n, e[1][0], e[1][1]))) {
+			k = !track_ends_at(n, e[0][0], e[0][1]);
+		}
+		if (k < 0 && !scope) {
+			double g0 = pcb_edge_dist(&B, 0,
+						  (const double[4]){ e[0][0], e[0][1],
+								     e[0][0], e[0][1] },
+						  0, NULL);
+			double g1 = pcb_edge_dist(&B, 0,
+						  (const double[4]){ e[1][0], e[1][1],
+								     e[1][0], e[1][1] },
+						  0, NULL);
+
+			k = g0 > g1 + 1e-6 ? 0 : g1 > g0 + 1e-6 ? 1 : -1;
+		}
+		k = k < 0 ? 1 : k;
+	}
+	p[0] = e[k][0];
+	p[1] = e[k][1];
+}
+
 // Joins pad a of net n to pad b: a connection of width w from the center
-// of a to the center of b, leaving and entering each along its longer
-// side.  Returns 0 if there is no way.
+// of a to the center of b (of a long pad, from its end nearest the
+// other), leaving and entering each along its longer side.  Returns 0
+// if there is no way.
 static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 		   double w)
 {
 	struct pcb_spot sa, sb;
+	double pa[2], pb[2];
 	unsigned ma, mb;
 	int ns, goal = -1, ca, cb, l;
 	char *ka, *kb;
@@ -473,7 +526,10 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 	pcb_spot(&B, &B.part[b->part], b->pad, &sb);
 	ma = axis(&sa);
 	mb = axis(&sb);
-	grid(n, w, sa.x, sa.y);
+	pad_point(n, &sa, sb.x, sb.y, pa);
+	pad_point(n, &sb, pa[0], pa[1], pb);
+	pad_point(n, &sa, pb[0], pb[1], pa);
+	grid(n, w, pa[0], pa[1]);
 	ns = W * H * 8;
 	free(cost);
 	free(prio);
@@ -485,8 +541,8 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 	from = pcb_alloc((size_t)ns * sizeof *from);
 	inp = pcb_alloc((size_t)W * (size_t)H);
 	inq = pcb_alloc((size_t)W * (size_t)H);
-	ca = cell_at(sa.x, sa.y);
-	cb = cell_at(sb.x, sb.y);
+	ca = cell_at(pa[0], pa[1]);
+	cb = cell_at(pb[0], pb[1]);
 	if (ca < 0 || cb < 0) {
 		return 0;
 	}
@@ -504,7 +560,7 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 	tb[1] = cb / W;
 	nheap = 0;
 	// Pads in line: one straight track through their centers, if clear.
-	if (fabs(sa.x - sb.x) < 1e-6 || fabs(sa.y - sb.y) < 1e-6) {
+	if (fabs(pa[0] - pb[0]) < 1e-6 || fabs(pa[1] - pb[1]) < 1e-6) {
 		int di = (cb % W > ca % W) - (cb % W < ca % W);
 		int dj = (cb / W > ca / W) - (cb / W < ca / W), d;
 		int clear = 1;
@@ -610,15 +666,15 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 		if (t.n >= 3) {
 			// The corner before b on b's line.
 			if (fd == 0 || fd == 4) {
-				t.xy[3] = sb.y;
+				t.xy[3] = pb[1];
 			} else {
-				t.xy[2] = sb.x;
+				t.xy[2] = pb[0];
 			}
 		}
-		t.xy[0] = sb.x;
-		t.xy[1] = sb.y;
-		t.xy[2 * t.n - 2] = sa.x;
-		t.xy[2 * t.n - 1] = sa.y;
+		t.xy[0] = pb[0];
+		t.xy[1] = pb[1];
+		t.xy[2 * t.n - 2] = pa[0];
+		t.xy[2 * t.n - 1] = pa[1];
 		B.track_ = pcb_grow(B.track_, B.ntrack, sizeof *B.track_);
 		B.track_[B.ntrack++] = t;
 	}

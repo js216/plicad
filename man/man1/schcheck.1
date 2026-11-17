@@ -1,0 +1,43 @@
+.\" SPDX-License-Identifier: GPL-3.0-only
+.\" schcheck.1 -- Manual page of schcheck
+.\" Copyright (c) 2026 Jakob Kastelic
+.TH SCHCHECK 1
+.SH NAME
+schcheck \- check a netlist for what a schematic leaves undone
+.SH SYNOPSIS
+.B schcheck
+[
+.I file.nl
+]
+.SH DESCRIPTION
+.I Schcheck
+reads a netlist,
+.IR netlist (5),
+from the file or stdin, as
+.IR schnet (1)
+writes it, and tells each fault on a line:
+a pin on no net (pin REF.PIN \-), unless the source marks it
+unconnected on purpose (nc, pin REF.PIN nc);
+a net of one pin alone;
+a part of two pins or more with all of them on one net, a part
+shorted.
+It reads nothing but the netlist.
+.SH EXAMPLES
+.nf
+schnet sheet.sch | schcheck
+schcheck out/sheet.nl
+.fi
+.SH SEE ALSO
+schnet(1), netlist(5), sch(5)
+.SH DIAGNOSTICS
+FILE: and the fault (stdin: for none), as
+.PP
+.RS
+.nf
+sheet.nl: R101.2 is on no net, and not marked nc
+sheet.nl: net N has one pin alone, R101.1
+sheet.nl: C102 has all its pins on net GND
+.fi
+.RE
+.PP
+Exit status 1 on a fault, 2 if the file cannot be read.

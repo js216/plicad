@@ -164,7 +164,11 @@ static int clear_on(size_t k, int board, char *why, size_t n)
 		snprintf(why, n, "off the board");
 		return 0;
 	}
-	if (board && !scope && pcb_in_cut(&B, c, 0)) {
+	if (board && !scope &&
+	    pcb_edge_dist(&B, 1,
+			  (const double[4]){ c[0] + 1e-6, c[1] + 1e-6,
+					     c[2] - 1e-6, c[3] - 1e-6 },
+			  0, NULL) <= 0) {
 		snprintf(why, n, "in a cutout");
 		return 0;
 	}

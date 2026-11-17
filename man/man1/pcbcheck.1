@@ -24,9 +24,16 @@ via or hole of a plane's net, or a pad or track of it on the plane's
 layer, joins the plane (but a pad the plane relieves joins by its neck
 alone).
 Each net must be one piece and no piece may hold two nets; copper of two
-nets keeps the clearance; copper keeps the edge rule from the outline,
-but for the parts the rule excepts; each track ends at the center of a
-pad of its net or at a via (or, a neck, in its own plane); the copper
+nets keeps the clearance; copper keeps the edge rule from the outline
+and the cutouts, measured from the copper itself, a track as the
+segment it is, to a cutout's round corners as round, but for the parts
+the rule excepts, the fault at the point of the copper nearest the edge
+(copper past the outline, or into a cutout, is a fault of its own: it
+runs past the edge);
+each track ends at the center of a pad of its net (of a long pad, at
+the center or at an end, as
+.IR pcbroute (1)
+joins it) or at a via (or, a neck, in its own plane); the copper
 between the two pins of a
 .B width
 .I PIN PIN W
@@ -56,8 +63,8 @@ then 1 mm and 2 mm farther out, at the first place clear of the mask
 openings, the other parts' courtyards and the designators before it;
 if none is clear, above.
 Each fault is a line, naming a part by its name and designator
-(ch1.gain.rf (R401)) and a pad as ch1.gain.rf.1 (R401); nothing is
-printed when all is well.
+(ch1.gain.rf (R401)) and a pad as ch1.gain.rf.1 (R401), and each once,
+however many ways it is found; nothing is printed when all is well.
 With
 .B \-l
 it prints, a net a line, the length of its tracks and its vias, and,

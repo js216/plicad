@@ -8,9 +8,10 @@
 // schdraw does, and writes the flat netlist (netlist(5)): a part record
 // for each part, by its designator, and a net record for each net, with
 // its pins by their numbers; a global net of several pages is one net.
-// Flags are not parts; a pin on no net is left out.  The parts and the
-// pins of a net are sorted by designator and pin, the nets by name, so
-// the output of a source is always the same.
+// Flags are not parts; each pin on no net is a pin record of its own,
+// after the nets, nc if the source leaves it unconnected on purpose, -
+// if not.  The parts and the pins of a net are sorted by designator and
+// pin, the nets by name, so the output of a source is always the same.
 
 #include "schsrc.h"
 #include <stdio.h>
@@ -229,6 +230,29 @@ int main(int argc, char **argv)
 		     m++) {
 		}
 		write_net(&net[k], m);
+	}
+	// The pins on no net: of each part, in the order of its pins.
+	for (size_t k = 0; k < npart; k++) {
+		const struct sch *s = part[k].s;
+		const struct sch_part *q = &s->part[part[k].part];
+
+		for (size_t p = 0; p < q->dev->shape->npin; p++) {
+			int on = 0;
+
+			for (size_t t = 0; !on && t < s->nnet; t++) {
+				for (size_t j = 0; !on && j < s->net[t].nend;
+				     j++) {
+					on = s->net[t].end[j].part ==
+						     part[k].part &&
+					     s->net[t].end[j].pin == p;
+				}
+			}
+			if (!on) {
+				printf("pin %s.%s %s\n", q->ref,
+				       sch_pnum(q->dev, p),
+				       q->nc && q->nc[p] ? "nc" : "-");
+			}
+		}
 	}
 	free(part);
 	free(net);
