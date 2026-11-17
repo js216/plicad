@@ -238,13 +238,14 @@ static int faults;
 static char **told; // The faults printed, each once.
 static size_t ntold;
 
-// Prints a fault, made by the caller, and the place it is at; but not a
-// second time word for word.
-static void fault(const char *what, double x, double y)
+// Prints a fault, made by the caller, the place it is at and a hint
+// after it; but not a second time word for word.
+static void fault_hint(const char *what, double x, double y, const char *hint)
 {
-	char line[2200];
+	char line[2800];
 
-	snprintf(line, sizeof line, "%s: %s at %.3f %.3f", B.file, what, x, y);
+	snprintf(line, sizeof line, "%s: %s at %.3f %.3f%s", B.file, what, x, y,
+		 hint);
 	faults = 1;
 	for (size_t i = 0; i < ntold; i++) {
 		if (!strcmp(told[i], line)) {
@@ -254,6 +255,11 @@ static void fault(const char *what, double x, double y)
 	told = pcb_grow(told, ntold, sizeof *told);
 	told[ntold++] = pcb_strdup(line);
 	printf("%s\n", line);
+}
+
+static void fault(const char *what, double x, double y)
+{
+	fault_hint(what, x, y, "");
 }
 
 // Whether a stroke runs into the box, by points along it 0.05 mm apart.
@@ -338,12 +344,10 @@ static void check_refs(const struct pcb_stroke *s, size_t n)
 						   o;
 
 				pcb_ref_hint(&B, s, n, h, hint, sizeof hint);
-				snprintf(
-					msg, sizeof msg,
-					"the designators of %s and %s overlap%s",
-					label(&B.part[q]), label(&B.part[o]),
-					hint);
-				fault(msg, a[0], a[1]);
+				snprintf(msg, sizeof msg,
+					 "the designators of %s and %s overlap",
+					 label(&B.part[q]), label(&B.part[o]));
+				fault_hint(msg, a[0], a[1], hint);
 			}
 		}
 	}
@@ -406,10 +410,9 @@ static void check_silk(void)
 					}
 					snprintf(
 						msg, sizeof msg,
-						"the silkscreen of %s runs over pad %s%s",
-						silk_of(&s[i]), pad_name(q, k),
-						hint);
-					fault(msg, s[i].x0, s[i].y0);
+						"the silkscreen of %s runs over pad %s",
+						silk_of(&s[i]), pad_name(q, k));
+					fault_hint(msg, s[i].x0, s[i].y0, hint);
 					while (i + 1 < n &&
 					       s[i + 1].part == s[i].part) {
 						i++;
