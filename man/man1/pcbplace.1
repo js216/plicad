@@ -51,6 +51,11 @@ fixed outside it, as they stand from its root.
 What is not moved, a part fixed or kept from the lock or a block fixed
 by its root, and comes on another part or a keep-out, is a fault: its
 line and both parts.
+A place statement of no form of
+.IR pcb (5),
+or a fix or place statement whose rot is not 0, 90, 180 or 270,
+places nothing and is a fault, told once, naming the word that is
+wrong; a pin placed from that is not there is a fault, told once.
 With
 .B \-v
 each placement is told on stderr with its line and rule; it and every

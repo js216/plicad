@@ -654,10 +654,14 @@ static double shape_near(const double *v, int n, double x, double y,
 static int crosses(const double *a, const double *b, const double *c,
 		   const double *d)
 {
-	double d1 = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-	double d2 = (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]);
-	double d3 = (d[0] - c[0]) * (a[1] - c[1]) - (d[1] - c[1]) * (a[0] - c[0]);
-	double d4 = (d[0] - c[0]) * (b[1] - c[1]) - (d[1] - c[1]) * (b[0] - c[0]);
+	double d1 =
+		(b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+	double d2 =
+		(b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]);
+	double d3 =
+		(d[0] - c[0]) * (a[1] - c[1]) - (d[1] - c[1]) * (a[0] - c[0]);
+	double d4 =
+		(d[0] - c[0]) * (b[1] - c[1]) - (d[1] - c[1]) * (b[0] - c[0]);
 
 	return d1 * d2 < 0 && d3 * d4 < 0;
 }
@@ -1129,7 +1133,8 @@ static void statement(struct pcb *b, char **w, int n, int line, char **dirs,
 		char *t = free_text(&ts, &ta, &bottom);
 
 		if (!t) {
-			pcb_error(b, line, "text TEXT at X Y [size H] [bottom]");
+			pcb_error(b, line,
+				  "text TEXT at X Y [size H] [bottom]");
 			return;
 		}
 		free(t);
@@ -1902,7 +1907,8 @@ static size_t ref_places(const struct pcb_part *p, const char *ref,
 						 &q->h);
 					if (across) {
 						q->x = (c[0] + c[2] - q->w) / 2;
-						q->y = side ? c[1] - gap - q->h :
+						q->y = side ? c[1] - gap -
+								       q->h :
 							      c[3] + gap;
 					} else {
 						q->y = (c[1] + c[3] - q->h) / 2;
@@ -1930,8 +1936,8 @@ static void place_box(const struct place *q, double t[4])
 // Writes the strokes of a text in its place: from the box's lower left,
 // its baseline a descender up; turned, reading upward; on the bottom,
 // read from below, mirrored about the box's middle.
-static void text_strokes(struct pcb_stroke **s, size_t *n, size_t q,
-			 int bottom, const char *text, const struct place *at)
+static void text_strokes(struct pcb_stroke **s, size_t *n, size_t q, int bottom,
+			 const char *text, const struct place *at)
 {
 	double *sg, dn = stroke_descends(text) ? at->size / 3 : 0;
 	size_t ns = stroke_text(text, at->size, &sg);
@@ -1956,8 +1962,7 @@ static void text_strokes(struct pcb_stroke **s, size_t *n, size_t q,
 // The words of a text statement: text TEXT at X Y [size H] [bottom];
 // its place goes to at, its side to bottom, and its text to the caller
 // to free.  Returns NULL if they are not so.
-static char *free_text(const struct pcb_stmt *st, struct place *at,
-		       int *bottom)
+static char *free_text(const struct pcb_stmt *st, struct place *at, int *bottom)
 {
 	int k = st->n - 1, a;
 	double v[3];
@@ -2034,9 +2039,8 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 			double t[4];
 
 			place_box(&o[k], t);
-			room[order[i]] += (size_t)text_clear(b, order[i],
-							     p->bottom, t, NULL,
-							     NULL, 0);
+			room[order[i]] += (size_t)text_clear(
+				b, order[i], p->bottom, t, NULL, NULL, 0);
 		}
 	}
 	for (size_t i = 1; i < nrule; i++) {
@@ -2049,8 +2053,8 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 		}
 	}
 	for (size_t i = 0; i < nrule; i++) {
-		size_t q = order[i], np = ref_places(&b->part[q], b->part[q].ref,
-						      o);
+		size_t q = order[i],
+		       np = ref_places(&b->part[q], b->part[q].ref, o);
 		size_t pick = 0;
 
 		for (size_t k = 0; k < np; k++) {
@@ -2071,7 +2075,8 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 	for (size_t q = 0; q < b->npart; q++) {
 		const struct pcb_part *p = &b->part[q];
 
-		for (size_t i = 0; p->placed && p->fp && i < p->fp->nsilk; i++) {
+		for (size_t i = 0; p->placed && p->fp && i < p->fp->nsilk;
+		     i++) {
 			const struct fp_line *ln = &p->fp->silk[i];
 
 			for (size_t j = 0; j + 1 < ln->n; j++) {

@@ -237,9 +237,9 @@ static void drill(void)
 	}
 }
 
-static const struct pcb_plot gerber = { g_begin,  end,	   g_part, g_net,
-					polarity, g_flash, g_line, g_region,
-					NULL };
+static const struct pcb_plot gerber = { g_begin, end,	   g_part,
+					g_net,	 polarity, g_flash,
+					g_line,	 g_region, NULL };
 
 int main(int argc, char **argv)
 {

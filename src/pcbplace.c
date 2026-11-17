@@ -25,6 +25,9 @@
 //   place PART|GROUP near THING [WAY] [GAP] [rot R]
 //                                        the nearest room by THING (a part,
 //                                        group, pin, cutout [N] or edge)
+// A place statement of no such form, or a statement whose rot is not
+// 0, 90, 180 or 270, places nothing and is a fault, told once, naming
+// the word that is wrong.
 // No part moves for a designator (pcb_silk).  The fixed parts are
 // placed first, the rest in the order their anchors allow.  A part
 // without rot is turned the way, of four, that brings its pads nearest
@@ -470,6 +473,108 @@ static int is_near(const struct pcb_stmt *st)
 	       !strcmp(st->w[2], "near");
 }
 
+static int *told; // The lines of the faults told once.
+static size_t ntold;
+
+// Tells a fault of a statement once over all passes, the first only.
+static void fault_once(const struct pcb_stmt *st, const char *what)
+{
+	B.failed = 1;
+	for (size_t i = 0; i < ntold; i++) {
+		if (told[i] == st->line) {
+			return;
+		}
+	}
+	told = pcb_grow(told, ntold, sizeof *told);
+	told[ntold++] = st->line;
+	pcb_error(&B, st->line, "%s", what);
+}
+
+// A fault of the statement's form, after its first word.
+static void form_fault(const struct pcb_stmt *st, const char *what)
+{
+	char line[1200];
+
+	snprintf(line, sizeof line, "%s: %s", st->w[0], what);
+	fault_once(st, line);
+}
+
+// The fault of a pin that is not there.
+static void no_pin(const struct pcb_stmt *st, const char *pin)
+{
+	char line[1100];
+
+	snprintf(line, sizeof line, "no pin %s", pin);
+	fault_once(st, line);
+}
+
+static int number(const char *s)
+{
+	char *e;
+
+	(void)strtod(s, &e);
+	return e != s && !*e;
+}
+
+// Whether a turn is one of the four: 0, 90, 180 or 270.
+static int turn_ok(const char *s)
+{
+	return !strcmp(s, "0") || !strcmp(s, "90") || !strcmp(s, "180") ||
+	       !strcmp(s, "270");
+}
+
+// Whether a fix or place statement turns its part one of the four ways
+// and, a place statement, has a form of pcb(5); if not, the word that
+// is wrong is told.  Of near, near_thing tells the rest; of fix, place.
+static int form_ok(const struct pcb_stmt *st)
+{
+	int n = st->n;
+	const char *of = n > 3 ? st->w[3] : "";
+	char what[1100];
+
+	for (int i = 0; i + 1 < st->n; i++) {
+		if (!strcmp(st->w[i], "rot") && !turn_ok(st->w[i + 1])) {
+			snprintf(what, sizeof what,
+				 "'%s' is not a turn (0, 90, 180, 270)",
+				 st->w[i + 1]);
+			form_fault(st, what);
+			return 0;
+		}
+	}
+	if (strcmp(st->w[0], "place") || is_near(st)) {
+		return 1;
+	}
+	if (n >= 2 && !strcmp(st->w[n - 2], "rot")) {
+		n -= 2;
+	}
+	if (n < 2) {
+		form_fault(st, "missing the part");
+	} else if (n < 3) {
+		form_fault(st, "missing a way, or 'near'");
+	} else if (!strcmp(st->w[2], "near")) {
+		form_fault(st, "missing the thing after 'near'");
+	} else if (way_word(st->w[2]) < 0) {
+		snprintf(what, sizeof what,
+			 "'%s' is not a way (right, left, up, down)", st->w[2]);
+		form_fault(st, what);
+	} else if (strcmp(of, "of") && strcmp(of, "from")) {
+		form_fault(st, "missing 'of', 'from' or 'near'");
+	} else if (n < 5) {
+		form_fault(st, *of == 'o' ? "missing the part after 'of'" :
+					    "missing the pin after 'from'");
+	} else if (*of == 'o' && n > 5 && !number(st->w[5])) {
+		snprintf(what, sizeof what, "'%s' is not a gap", st->w[5]);
+		form_fault(st, what);
+	} else if (n > (*of == 'o' ? 6 : 5)) {
+		snprintf(what, sizeof what, "'%s' is one word too many",
+			 st->w[*of == 'o' ? 6 : 5]);
+		form_fault(st, what);
+	} else {
+		return 1;
+	}
+	return 0;
+}
+
 // The parts of a group, a dot after its name.
 static int group_has(const char *g)
 {
@@ -484,8 +589,8 @@ static int group_has(const char *g)
 // What a near statement is near, as a box, and the words after it: the
 // way (-1 any) and the gap; inside is set for the edge, whose room is
 // inside it.  Returns 0, the fault told, if it is not so.
-static int near_thing(const struct pcb_stmt *st, int n, double t[4],
-		      int *way, double *gap, int *inside)
+static int near_thing(const struct pcb_stmt *st, int n, double t[4], int *way,
+		      double *gap, int *inside)
 {
 	const char *th = st->w[3];
 	int i = 4;
@@ -503,7 +608,8 @@ static int near_thing(const struct pcb_stmt *st, int n, double t[4],
 	} else if (!strcmp(th, "cutout")) {
 		int c = 1;
 
-		if (i < n && strspn(st->w[i], "0123456789") == strlen(st->w[i])) {
+		if (i < n &&
+		    strspn(st->w[i], "0123456789") == strlen(st->w[i])) {
 			c = atoi(st->w[i++]);
 		}
 		if (c < 1 || (size_t)c > B.ncut) {
@@ -533,8 +639,8 @@ static int near_thing(const struct pcb_stmt *st, int n, double t[4],
 		for (size_t q = 0; q < B.npart; q++) {
 			double c[4];
 
-			if (!of_group(B.part[q].name, th) || !B.part[q].placed ||
-			    !B.part[q].fp) {
+			if (!of_group(B.part[q].name, th) ||
+			    !B.part[q].placed || !B.part[q].fp) {
 				continue;
 			}
 			pcb_court(&B.part[q], c);
@@ -548,9 +654,10 @@ static int near_thing(const struct pcb_stmt *st, int n, double t[4],
 			return 0;
 		}
 	} else {
-		pcb_error(&B, st->line,
-			  "place PART|GROUP near PART|GROUP|PIN|cutout [N]|edge "
-			  "[WAY] [GAP]");
+		pcb_error(
+			&B, st->line,
+			"place PART|GROUP near PART|GROUP|PIN|cutout [N]|edge "
+			"[WAY] [GAP]");
 		return 0;
 	}
 	if (i < n && way_word(st->w[i]) >= 0) {
@@ -563,9 +670,10 @@ static int near_thing(const struct pcb_stmt *st, int n, double t[4],
 		i += *e || !(*gap >= 0) ? 0 : 1;
 	}
 	if (i != n) {
-		pcb_error(&B, st->line,
-			  "place PART|GROUP near PART|GROUP|PIN|cutout [N]|edge "
-			  "[WAY] [GAP]");
+		pcb_error(
+			&B, st->line,
+			"place PART|GROUP near PART|GROUP|PIN|cutout [N]|edge "
+			"[WAY] [GAP]");
 		return 0;
 	}
 	return 1;
@@ -620,8 +728,8 @@ static int near_search(size_t k, long b, const struct pcb_stmt *st, int n)
 			       fmax(c[2] - c[0], c[3] - c[1]);
 
 		for (int ti = 0; ti * NEAR_STEP / 2 <= reach; ti++) {
-			double along = (ti % 2 ? 1 : -1) * ((ti + 1) / 2) *
-				       NEAR_STEP;
+			double along =
+				(ti % 2 ? 1 : -1) * ((ti + 1) / 2) * NEAR_STEP;
 
 			for (int sd = 0; sd < 4; sd++) {
 				double x, y;
@@ -1146,8 +1254,8 @@ static void place_groups(void)
 		long b = -1, root = -1;
 		size_t a, ap, n = 0;
 
-		if (strcmp(st->w[0], "place") ||
-		    !(is_near(st) || (st->n >= 5 && !strcmp(st->w[3], "from"))) ||
+		if (strcmp(st->w[0], "place") || !form_ok(st) ||
+		    !(is_near(st) || !strcmp(st->w[3], "from")) ||
 		    part_named(st->w[1]) >= 0 || !is_block(st->w[1])) {
 			continue;
 		}
@@ -1169,7 +1277,11 @@ static void place_groups(void)
 			anchor[root] = near_anchor(st);
 			continue;
 		}
-		if (n != 1 || !pcb_pin(&B, st->w[4], &a, &ap)) {
+		if (!pcb_pin(&B, st->w[4], &a, &ap)) {
+			no_pin(st, st->w[4]);
+			continue;
+		}
+		if (n != 1) {
 			pcb_error(
 				&B, st->line,
 				"place GROUP WAY from PIN, or near THING: the "
@@ -1248,12 +1360,14 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 		const struct pcb_stmt *st = &B.stmt[s];
 		long k;
 
-		if (strcmp(st->w[0], "fix") && strcmp(st->w[0], "place")) {
+		if ((strcmp(st->w[0], "fix") && strcmp(st->w[0], "place")) ||
+		    !form_ok(st)) {
 			continue;
 		}
 		k = st->n >= 2 ? part_named(st->w[1]) : -1;
 		if (k < 0 && is_block(st->w[1]) && !strcmp(st->w[0], "place") &&
-		    (is_near(st) || (st->n >= 5 && !strcmp(st->w[3], "from")))) {
+		    (is_near(st) ||
+		     (st->n >= 5 && !strcmp(st->w[3], "from")))) {
 			continue; // A block placed whole: place_groups.
 		}
 		if (k < 0 || !B.part[k].fp) {
@@ -1278,18 +1392,13 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 				pcb_error(&B, st->line, "no part %s", st->w[4]);
 				stmt_of[k] = -1;
 			}
-		} else if (st->n >= 5 && !strcmp(st->w[0], "place") &&
-			   !strcmp(st->w[3], "from")) {
-			char name[1024], *dot;
+		} else if (!strcmp(st->w[0], "place")) {
+			size_t a, ap;
 
-			snprintf(name, sizeof name, "%s", st->w[4]);
-			dot = strrchr(name, '.');
-			if (dot) {
-				*dot = 0;
-			}
-			anchor[k] = part_named(name);
-			if (anchor[k] < 0) {
-				pcb_error(&B, st->line, "no part %s", name);
+			if (pcb_pin(&B, st->w[4], &a, &ap)) {
+				anchor[k] = (long)a;
+			} else {
+				no_pin(st, st->w[4]);
 				stmt_of[k] = -1;
 			}
 		}
@@ -1358,7 +1467,8 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 					continue;
 				}
 				if (pass ? (anchor[k] < 0 || done[anchor[k]]) &&
-						   near_ready((size_t)k, done) :
+						    near_ready((size_t)k,
+							       done) :
 					   !strcmp(B.stmt[stmt_of[k]].w[0],
 						   "fix")) {
 					next = (long)k;

@@ -135,7 +135,7 @@ static uint64_t hash(const char *s)
 static void norm_value(const char *s, char *out, size_t n)
 {
 	static const char pre[] = "pnumkKMGPNU";
-	static const double mul[] = { 1e-12, 1e-9, 1e-6, 1e-3, 1e3,  1e3,
+	static const double mul[] = { 1e-12, 1e-9, 1e-6,  1e-3, 1e3, 1e3,
 				      1e6,   1e9,  1e-12, 1e-9, 1e-6 };
 	char num[64];
 	size_t k = 0;

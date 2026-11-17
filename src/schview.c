@@ -127,8 +127,8 @@ static int in_hover_group(int k)
 	g = notes[hover].group;
 	name = vg_part_name(k);
 	n = strlen(g);
-	return strcmp(g, "-") &&
-	       !strncmp(name, g, n) && (!name[n] || name[n] == '.');
+	return strcmp(g, "-") && !strncmp(name, g, n) &&
+	       (!name[n] || name[n] == '.');
 }
 
 // The parts of the group of the note under the pointer magenta
@@ -146,11 +146,11 @@ static void color(const struct vg_run *r)
 	static const double magenta[3] = { 1, 0x80 / 255.0, 1 };
 	static const double black[3] = { 0, 0, 0 };
 
-	vg_color(!r->dark				    ? black :
-		 in_hover_group(r->part)		    ? magenta :
+	vg_color(!r->dark		 ? black :
+		 in_hover_group(r->part) ? magenta :
 		 (r->part >= 0 && r->part == vg_sel) ||
 				 (r->net >= 0 && r->net == sel_net) ?
-							    cyan :
+					   cyan :
 		 r->text || r->frame ? khaki :
 				       gray,
 		 1);
@@ -501,8 +501,8 @@ static void read_page(const char *buf, size_t len, size_t pg)
 		memcpy(line, l, n);
 		line[n] = 0;
 		l = e ? e + 1 : NULL;
-		if (sscanf(line, "text %c %lf %*f %d %lf %lf %n", &font, &sz, &al,
-			   &x, &y, &at) == 5 &&
+		if (sscanf(line, "text %c %lf %*f %d %lf %lf %n", &font, &sz,
+			   &al, &x, &y, &at) == 5 &&
 		    at && nsp < 32) {
 			double w;
 
@@ -602,7 +602,8 @@ static void read_page(const char *buf, size_t len, size_t pg)
 				h.r = w;
 				h.net = net;
 				h.page = pg;
-				hits = realloc(hits, (nhits + 1) * sizeof *hits);
+				hits = realloc(hits,
+					       (nhits + 1) * sizeof *hits);
 				if (!hits) {
 					exit(2);
 				}
@@ -617,11 +618,15 @@ static void read_page(const char *buf, size_t len, size_t pg)
 					     1e-3 ||
 				     hypot(hits[i].b[0] - x, hits[i].b[1] - y) <
 					     1e-3)) {
-					struct hit h = { { x, y }, { x, y }, 0,
-							 hits[i].net, pg };
+					struct hit h = { { x, y },
+							 { x, y },
+							 0,
+							 hits[i].net,
+							 pg };
 
-					hits = realloc(hits, (nhits + 1) *
-								     sizeof *hits);
+					hits = realloc(hits,
+						       (nhits + 1) *
+							       sizeof *hits);
 					if (!hits) {
 						exit(2);
 					}
@@ -653,8 +658,9 @@ static void note_boxes(size_t pg)
 		if (nt->page != pg) {
 			continue;
 		}
-		fprintf(out, "line 0.6 %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f "
-			     "%.3f %.3f\n",
+		fprintf(out,
+			"line 0.6 %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f "
+			"%.3f %.3f\n",
 			nt->x - h, nt->y - h, nt->x + h, nt->y - h, nt->x + h,
 			nt->y + h, nt->x - h, nt->y + h, nt->x - h, nt->y - h);
 		fprintf(out, "text S %.3f 0 1 %.3f %.3f N\n", NOTE_BOX / 2,

@@ -823,11 +823,11 @@ static void check_ends(void)
 					     (s.layer < 0 ||
 					      s.layer == t->layer) &&
 					     hypot(s.x - x, s.y - y) < 1e-3;
-					for (int e2 = 0; e2 < np && !ok &&
-							 pcb_net_of(&B, q, k) ==
-								 t->net &&
-							 (s.layer < 0 ||
-							  s.layer == t->layer);
+					for (int e2 = 0;
+					     e2 < np && !ok &&
+					     pcb_net_of(&B, q, k) == t->net &&
+					     (s.layer < 0 ||
+					      s.layer == t->layer);
 					     e2++) {
 						ok = hypot(p[e2][0] - x,
 							   p[e2][1] - y) < 1e-3;

@@ -1337,8 +1337,7 @@ static void miter_past(struct stage *g, size_t v, const struct corner *c,
 	pl = curve_at(fc[lng], on[lng]);
 	pc = far_b ? curve_at(&bl->ca, bl->ta[kl]) :
 		     curve_at(&bl->cb, bl->tb[kl]);
-	if (!curve_through(&bl->s, &g->sh->f[fo[lng]].s, far[!lng], pl,
-			   &cv)) {
+	if (!curve_through(&bl->s, &g->sh->f[fo[lng]].s, far[!lng], pl, &cv)) {
 		corner_fail(g, v,
 			    "go past their crease along no line, circle or "
 			    "conic: no exact corner");
@@ -1576,11 +1575,11 @@ static void check_touch(const struct stage *g, const struct blend *b, int on_a)
 	// A curve that runs past the edge of f into a sliver at a miter
 	// (miter_past) lies on f up to that edge.
 	double lo = b->past[0] == self ? b->tpast[0] :
-		    on_a		    ? b->ta[0] :
-					      b->tb[0];
+		    on_a	       ? b->ta[0] :
+					 b->tb[0];
 	double hi = b->past[1] == self ? b->tpast[1] :
-		    on_a		    ? b->ta[1] :
-					      b->tb[1];
+		    on_a	       ? b->ta[1] :
+					 b->tb[1];
 	double in = (hi - lo) * INSIDE;
 	struct cpiece pc = { *c, lo + in, hi - in };
 

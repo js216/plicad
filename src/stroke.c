@@ -169,7 +169,8 @@ size_t stroke_text(const char *s, double h, double **seg)
 			// Narrowed about the middle of the grid, x 2.
 			(*seg)[4 * n] = x0 + (2 + (g[0] - '2') * NARROW) * u;
 			(*seg)[4 * n + 1] = (g[1] - '2') * u;
-			(*seg)[4 * n + 2] = x0 + (2 + (g[2] - '2') * NARROW) * u;
+			(*seg)[4 * n + 2] =
+				x0 + (2 + (g[2] - '2') * NARROW) * u;
 			(*seg)[4 * n + 3] = (g[3] - '2') * u;
 			n++;
 			g++;

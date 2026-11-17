@@ -1865,9 +1865,9 @@ static int value_ok(const char *kind, const char *v)
 							 NULL;
 	size_t n = strspn(v, "0123456789.");
 
-	return !units || (n && strspn(v, "0123456789") && v[n] &&
-			  strchr(units, v[n]) && !v[n + 1] &&
-			  strchr(v, '.') == strrchr(v, '.'));
+	return !units ||
+	       (n && strspn(v, "0123456789") && v[n] && strchr(units, v[n]) &&
+		!v[n + 1] && strchr(v, '.') == strrchr(v, '.'));
 }
 
 static void read_part(struct sch_shape *sh, char **w, int n)
@@ -1917,7 +1917,8 @@ static void read_part(struct sch_shape *sh, char **w, int n)
 			i += 2;
 			// WAY of PART N: N grid steps between the boxes.
 			if (pl.kind == OF && i + 1 < n &&
-			    strspn(w[i + 1], "0123456789") == strlen(w[i + 1]) &&
+			    strspn(w[i + 1], "0123456789") ==
+				    strlen(w[i + 1]) &&
 			    integer(w[i + 1], &pl.gap)) {
 				i++;
 			}
@@ -2113,7 +2114,7 @@ static void read_statement(char **w, int n)
 		l.side = -1;
 		l.ref[0] = sch_strdup(w[n - 1]);
 		l.ref[1] = sch_strdup(w[0]);
-		l.name = sch_strdup(n == 4		   ? w[1] :
+		l.name = sch_strdup(n == 4		    ? w[1] :
 				    !strcmp(w[0], "ground") ? "GND" :
 							      "CHASSIS");
 		l.scope = sch_strdup(group_path);

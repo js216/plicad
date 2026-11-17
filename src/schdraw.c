@@ -977,7 +977,8 @@ static int flag_box(const struct sch_part *q, double b[4], double *tx,
 	double px, py, off, w;
 	const char *fl = q->dev->shape->flag;
 
-	if (strcmp(fl, "supply") && strcmp(fl, "port") && strcmp(fl, "global")) {
+	if (strcmp(fl, "supply") && strcmp(fl, "port") &&
+	    strcmp(fl, "global")) {
 		return 0;
 	}
 	sch_pin_at(q, 0, &x, &y, &d);
@@ -1261,8 +1262,8 @@ static void sheet(double room[4], double paper[2], int print)
 			   !print) {
 		} else if (!strncmp(buf, "line ", 5)) {
 			printf("line %.2f%s\n", LW, buf + 4);
-		} else if (sscanf(buf, "text %*c %lf %lf %d %lf %lf %n",
-				  &tsz, &ta, &tj, &tx, &ty, &at) == 5 &&
+		} else if (sscanf(buf, "text %*c %lf %lf %d %lf %lf %n", &tsz,
+				  &ta, &tj, &tx, &ty, &at) == 5 &&
 			   at) {
 			// In the stroke font, its capitals as high as the
 			// template's at 0.9 of their size.
@@ -1420,8 +1421,9 @@ static void flag_text(const struct sch_part *q)
 		t = "";
 	}
 	while (*t && n < 256) {
-		size_t k = isdigit((unsigned char)*t) ? strspn(t, "0123456789") :
-							1;
+		size_t k = isdigit((unsigned char)*t) ?
+				   strspn(t, "0123456789") :
+				   1;
 
 		k = k < sizeof piece[0] ? k : sizeof piece[0] - 1;
 		memcpy(piece[n], t, k);
@@ -1771,9 +1773,11 @@ static void write_vec(void)
 			cx = OX + x * GRID * SC;
 			cy = OY + y * GRID * SC;
 			printf("line %.3f %.3f %.3f %.3f %.3f\n", LW * SC,
-			       cx - r * SC, cy - r * SC, cx + r * SC, cy + r * SC);
+			       cx - r * SC, cy - r * SC, cx + r * SC,
+			       cy + r * SC);
 			printf("line %.3f %.3f %.3f %.3f %.3f\n", LW * SC,
-			       cx - r * SC, cy + r * SC, cx + r * SC, cy - r * SC);
+			       cx - r * SC, cy + r * SC, cx + r * SC,
+			       cy - r * SC);
 		}
 		// The lines align to the part: to the left of it flush right,
 		// above or below it centered, else flush left.
@@ -2117,8 +2121,8 @@ static void cross_refs(void)
 				on |= !strcmp(pg->port[j], q->name);
 			}
 			if (on) {
-				sprintf(t + strlen(t), "%c%d", any++ ? ',' : '(',
-					pg->num);
+				sprintf(t + strlen(t), "%c%d",
+					any++ ? ',' : '(', pg->num);
 			}
 		}
 		if (any > 1) {

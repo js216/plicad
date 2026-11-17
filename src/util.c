@@ -187,14 +187,16 @@ char *lib_file(const char *dir, const char *name)
 	char *out = NULL;
 	char *slash = NULL;
 
-	if (len < 0 || (size_t)len == sizeof exe - 1)
+	if (len < 0 || (size_t)len == sizeof exe - 1) {
 		die("cannot find the program, to find %s in the library", name);
+	}
 	exe[len] = '\0';
 	// The library is lib beside the directory of the program.
 	for (int up = 0; up < 2; up++) {
 		slash = strrchr(exe, '/');
-		if (!slash)
+		if (!slash) {
 			die("cannot find the library, for %s", name);
+		}
 		*slash = '\0';
 	}
 	n = strlen(exe) + strlen(dir) + strlen(name) + 7;

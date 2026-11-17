@@ -173,8 +173,7 @@ static void link(double x0, double y0, const char *x1, double y1, int n)
 // each number of its list but k to that page; its spans are the text
 // records before its flag record (vec(5)), the right of each measured
 // by the font.
-static void port_links(const struct span *sp, int n, double x, double y,
-		       int k)
+static void port_links(const struct span *sp, int n, double x, double y, int k)
 {
 	int first = 0;
 	char right[1024], t[160];
@@ -189,8 +188,8 @@ static void port_links(const struct span *sp, int n, double x, double y,
 		int to = !i ? first :
 			 sp[i].t[0] >= '0' && sp[i].t[0] <= '9' &&
 					 atoi(sp[i].t) != k ?
-				    atoi(sp[i].t) :
-				    0;
+			      atoi(sp[i].t) :
+			      0;
 
 		size_t m = 0;
 
@@ -253,11 +252,12 @@ static void draw(const char *path, const double rgb[3], int outline, int names,
 			continue;
 		}
 		// The texts before a flag of a port are its spans.
-		if (k && sscanf(buf, "text %c %lf %*f %*d %lf %lf %n",
-				&sp[nsp < 32 ? nsp : 31].font,
-				&sp[nsp < 32 ? nsp : 31].size,
-				&sp[nsp < 32 ? nsp : 31].x,
-				&sp[nsp < 32 ? nsp : 31].y, &sat) == 4 &&
+		if (k &&
+		    sscanf(buf, "text %c %lf %*f %*d %lf %lf %n",
+			   &sp[nsp < 32 ? nsp : 31].font,
+			   &sp[nsp < 32 ? nsp : 31].size,
+			   &sp[nsp < 32 ? nsp : 31].x,
+			   &sp[nsp < 32 ? nsp : 31].y, &sat) == 4 &&
 		    sat) {
 			struct span *q = &sp[nsp < 32 ? nsp : 31];
 
@@ -265,8 +265,8 @@ static void draw(const char *path, const double rgb[3], int outline, int names,
 			copy_prefix(q->t, sizeof q->t, buf + sat,
 				    strlen(buf + sat));
 			nsp += nsp < 32;
-		} else if (k && sscanf(buf, "flag %511s %lf %lf %15s", net,
-				       &fx, &fy, kind) == 4) {
+		} else if (k && sscanf(buf, "flag %511s %lf %lf %15s", net, &fx,
+				       &fy, kind) == 4) {
 			if (!strcmp(kind, "port") && links) {
 				port_links(sp, nsp, fx, fy, k);
 			}
@@ -346,7 +346,8 @@ static void draw(const char *path, const double rgb[3], int outline, int names,
 				       "%.4f 0 translate %.4f setlinewidth "
 				       "newpath",
 				       x, y, angle,
-				       -stroke_width(buf + at, size) * align / 2,
+				       -stroke_width(buf + at, size) * align /
+					       2,
 				       STROKE_PEN * size);
 				for (size_t j = 0; j < n; j++) {
 					printf(" %.4f %.4f moveto %.4f %.4f lineto",

@@ -224,9 +224,8 @@ static void v_pin(const char *name, double x, double y)
 	fprintf(out, "pin %s %.4f %.4f\n", name, x, y);
 }
 
-static const struct pcb_plot vec = { v_begin, v_end,  v_part,	v_net,
-				     v_dark,  v_flash, v_line, v_region,
-				     v_pin };
+static const struct pcb_plot vec = { v_begin, v_end,  v_part,	v_net, v_dark,
+				     v_flash, v_line, v_region, v_pin };
 
 // The holes: the vias' and the parts' plated holes, as disks.
 static void holes(void)

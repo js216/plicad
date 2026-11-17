@@ -85,9 +85,10 @@ static void read_netlist(FILE *in)
 			nets = xrealloc(nets, (nnets + 1) * sizeof *nets);
 			nets[nnets++] = name;
 			if (n - first == 1) {
-				snprintf(msg, sizeof msg,
-					 "net %.1000s has one pin alone, %.1000s",
-					 name, w[first]);
+				snprintf(
+					msg, sizeof msg,
+					"net %.1000s has one pin alone, %.1000s",
+					name, w[first]);
 				fault(msg);
 			}
 			for (size_t i = first; i < n; i++) {
@@ -95,9 +96,10 @@ static void read_netlist(FILE *in)
 			}
 		} else if (n == 3 && !strcmp(w[0], "pin")) {
 			if (strcmp(w[2], "nc")) {
-				snprintf(msg, sizeof msg,
-					 "%.1000s is on no net, and not marked nc",
-					 w[1]);
+				snprintf(
+					msg, sizeof msg,
+					"%.1000s is on no net, and not marked nc",
+					w[1]);
 				fault(msg);
 			}
 			add_pin(w[1], NULL);

@@ -9,10 +9,10 @@
 // The copper is kept by connection, from a pad to a pad or to its via:
 // a connection keeps its copper if the statements about its net, its
 // pads and its width are as the lock says they were made from, and its
-// copper is clear of the pads as they now stand; any other is made anew,
-// among the copper kept, which nothing moves.  So an edit makes anew
-// only the connections it touches.  When a net finds no way, its pads
-// and where it got stuck are named.
+// copper is clear of the pads as they now stand and keeps the edge rule;
+// any other is made anew, among the copper kept, which nothing moves.
+// So an edit makes anew only the connections it touches.  When a net
+// finds no way, its pads and where it got stuck are named.
 //
 // The statements:
 //   width NET W            its tracks W mm wide (rule track by default)
@@ -47,7 +47,8 @@
 // its nets whose pads are all of it (a net to a port waits for the
 // layout round it), and the vias of its pads, with no outline.  The
 // copper of a block (block GROUP) is its section's, moved with its
-// parts, and kept as it is.
+// parts, and kept as it is, but for a connection that breaks the edge
+// rule on the board (a group alone has no outline): that is made anew.
 
 #define _POSIX_C_SOURCE 200809L // For fmemopen.
 
@@ -73,7 +74,9 @@ static int **padnet; // The net of each pad of each part, worked out once.
 // and every search stays inside it.
 static int X0, Y0;
 static double OX, OY;
-static unsigned char bad[WIN * WIN]; // Cells the net now routed may not take.
+// Cells the net now routed may not take: 1 by copper, which its own pads
+// at the ends may override, 2 by the edge, which nothing overrides.
+static unsigned char bad[WIN * WIN];
 static unsigned char inp[WIN * WIN], inq[WIN * WIN]; // In the pads at the ends.
 // Of each state: its cost, the way the state before it was entered, its
 // place in the heap (-1 once taken off), valid while its stamp is the
@@ -300,8 +303,7 @@ static void mark_seg(double ax, double ay, double bx, double by, double d)
 // Sets up the window for net n of width w about (mx, my), its grid
 // through (ox, oy): the cells its track may not take, each obstacle in
 // the window marked in the cells round it.
-static void window(int n, double w, double mx, double my, double ox,
-		   double oy)
+static void window(int n, double w, double mx, double my, double ox, double oy)
 {
 	double d = w / 2 + B.clearance, r = WIN * CELL / 2 + d + 1;
 
@@ -336,8 +338,10 @@ static void window(int n, double w, double mx, double my, double ox,
 		for (size_t j = 1; j < t->n; j++) {
 			const double *e = &t->xy[2 * j - 2];
 
-			if (fmin(e[0], e[2]) > mx + r || fmax(e[0], e[2]) < mx - r ||
-			    fmin(e[1], e[3]) > my + r || fmax(e[1], e[3]) < my - r) {
+			if (fmin(e[0], e[2]) > mx + r ||
+			    fmax(e[0], e[2]) < mx - r ||
+			    fmin(e[1], e[3]) > my + r ||
+			    fmax(e[1], e[3]) < my - r) {
 				continue;
 			}
 			mark_seg(e[0], e[1], e[2], e[3], d + t->w / 2);
@@ -364,9 +368,10 @@ static void window(int n, double w, double mx, double my, double ox,
 		for (int i = 0; i < WIN; i++) {
 			double x = cx(i), y = cy(j);
 
-			if (pcb_edge_dist(&B, 0, (const double[4]){ x, y, x, y },
+			if (pcb_edge_dist(&B, 0,
+					  (const double[4]){ x, y, x, y },
 					  w / 2, NULL) < B.edge) {
-				bad[j * WIN + i] = 1;
+				bad[j * WIN + i] |= 2;
 			}
 		}
 	}
@@ -472,7 +477,6 @@ static int cell_at(double x, double y)
 	return i < 0 || j < 0 || i >= WIN || j >= WIN ? -1 : (int)(j * WIN + i);
 }
 
-
 // The connections of the -v trace, and of the messages: PART.PAD (REF).
 static const char *pad_label(const struct pcb_end *e)
 {
@@ -503,13 +507,22 @@ static int track_ends_at(int n, double x, double y)
 	return 0;
 }
 
-// The point of pad s of net n a track joins it at, toward (x, y): its
-// center, or of a long pad its end nearest; of two ends as near, the one
-// a track of the net ends at already, else the one farther from the
-// edge, else the upper or right one, so a pad met from its side is not
-// joined at its end by the edge.
+// Whether a track of width w ending at p keeps the edge rule.
+static int off_edge(const double p[2], double w)
+{
+	return scope ||
+	       pcb_edge_dist(&B, 0, (const double[4]){ p[0], p[1], p[0], p[1] },
+			     w / 2, NULL) >= B.edge;
+}
+
+// The point of pad s of net n a track of width w joins it at, toward
+// (x, y): its center, or of a long pad its end nearest; of two ends as
+// near, the one a track of the net ends at already, else the one farther
+// from the edge, else the upper or right one, so a pad met from its side
+// is not joined at its end by the edge; and never an end the track would
+// break the edge rule at, if the other keeps it.
 static void pad_point(int n, const struct pcb_spot *s, double x, double y,
-		      double p[2])
+		      double w, double p[2])
 {
 	double e[2][2], d0, d1;
 	int k = 0;
@@ -523,18 +536,21 @@ static void pad_point(int n, const struct pcb_spot *s, double x, double y,
 			k = !track_ends_at(n, e[0][0], e[0][1]);
 		}
 		if (k < 0 && !scope) {
-			double g0 = pcb_edge_dist(&B, 0,
-						  (const double[4]){ e[0][0], e[0][1],
-								     e[0][0], e[0][1] },
-						  0, NULL);
-			double g1 = pcb_edge_dist(&B, 0,
-						  (const double[4]){ e[1][0], e[1][1],
-								     e[1][0], e[1][1] },
-						  0, NULL);
+			double g0 = pcb_edge_dist(
+				&B, 0,
+				(const double[4]){ e[0][0], e[0][1], e[0][0],
+						   e[0][1] },
+				0, NULL);
+			double g1 = pcb_edge_dist(
+				&B, 0,
+				(const double[4]){ e[1][0], e[1][1], e[1][0],
+						   e[1][1] },
+				0, NULL);
 
 			k = g0 > g1 + 1e-6 ? 0 : g1 > g0 + 1e-6 ? 1 : -1;
 		}
 		k = k < 0 ? 1 : k;
+		k = !off_edge(e[k], w) && off_edge(e[!k], w) ? !k : k;
 	}
 	p[0] = e[k][0];
 	p[1] = e[k][1];
@@ -554,8 +570,8 @@ static void mark_pad(unsigned char *in, const struct pcb_spot *s)
 	j1 = up_int((s->y + s->h / 2 - OY) / CELL) - Y0;
 	for (int j = j0 < 0 ? 0 : j0; j <= j1 && j < WIN; j++) {
 		for (int i = i0 < 0 ? 0 : i0; i <= i1 && i < WIN; i++) {
-			in[j * WIN + i] = (unsigned char)inside_spot(s, cx(i),
-								     cy(j), 0);
+			in[j * WIN + i] =
+				(unsigned char)inside_spot(s, cx(i), cy(j), 0);
 		}
 	}
 }
@@ -579,7 +595,8 @@ static int section(int n, double w, const double *a, unsigned ma,
 	cb = cell_at(b[0], b[1]);
 	near[0] = a[0];
 	near[1] = a[1];
-	if (ca < 0 || cb < 0) {
+	// Nothing overrides the edge, not even at the ends.
+	if (ca < 0 || cb < 0 || !off_edge(a, w) || !off_edge(b, w)) {
 		return 0;
 	}
 	memset(inp, 0, sizeof inp);
@@ -602,7 +619,7 @@ static int section(int n, double w, const double *a, unsigned ma,
 		int clear = 1;
 
 		for (int c = ca; clear && c != cb; c += dj * WIN + di) {
-			clear = !bad[c] || inp[c] || inq[c];
+			clear = !(bad[c] & 2) && (!bad[c] || inp[c] || inq[c]);
 		}
 		for (d = 0; d < 8 && (DI[d] != di || DJ[d] != dj); d++) {
 		}
@@ -644,7 +661,8 @@ static int section(int n, double w, const double *a, unsigned ma,
 			if ((inq[nc] || nc == cb) && !(mb >> nd & 1)) {
 				continue;
 			}
-			if (bad[nc] && !inq[nc] && !inp[nc] && nc != cb) {
+			if (nc != cb && ((bad[nc] & 2) ||
+					 (bad[nc] && !inq[nc] && !inp[nc]))) {
 				continue;
 			}
 			turn = abs(nd - d);
@@ -653,7 +671,8 @@ static int section(int n, double w, const double *a, unsigned ma,
 				continue; // No sharp turns.
 			}
 			reach(nc * 8 + nd,
-			      cost[s] + (nd % 2 ? 1.41421356 : 1) + turn * BEND, d);
+			      cost[s] + (nd % 2 ? 1.41421356 : 1) + turn * BEND,
+			      d);
 		}
 	}
 	if (goal < 0) {
@@ -685,7 +704,7 @@ static int section(int n, double w, const double *a, unsigned ma,
 		st = (c - DJ[d] * WIN - DI[d]) * 8 + pd;
 	}
 	// The corner before b on b's line; the ends exact.
-	if (m >= 3) {
+	if (m >= 3 && goal % 2 == 0) {
 		if (goal % 8 == 0 || goal % 8 == 4) {
 			(*xy)[3] = b[1];
 		} else {
@@ -700,7 +719,8 @@ static int section(int n, double w, const double *a, unsigned ma,
 		for (int k = 0; k < 2; k++) {
 			double t = (*xy)[2 * i + (size_t)k];
 
-			(*xy)[2 * i + (size_t)k] = (*xy)[2 * (m - 1 - i) + (size_t)k];
+			(*xy)[2 * i + (size_t)k] =
+				(*xy)[2 * (m - 1 - i) + (size_t)k];
 			(*xy)[2 * (m - 1 - i) + (size_t)k] = t;
 		}
 	}
@@ -720,8 +740,10 @@ static int midpoint(int n, double w, const double *p, const double *u,
 	for (int k = 0; k <= 2 * SLIDE; k++) {
 		double t = (k % 2 ? 1 : -1) * (double)((k + 1) / 2) * CELL;
 
-		q[0] = OX + (double)lround((p[0] + u[0] * t - OX) / CELL) * CELL;
-		q[1] = OY + (double)lround((p[1] + u[1] * t - OY) / CELL) * CELL;
+		q[0] = OX +
+		       (double)lround((p[0] + u[0] * t - OX) / CELL) * CELL;
+		q[1] = OY +
+		       (double)lround((p[1] + u[1] * t - OY) / CELL) * CELL;
 		if (free_at(q[0], q[1], w / 2, 0, n, &who)) {
 			return 1;
 		}
@@ -746,9 +768,9 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 
 	pcb_spot(&B, &B.part[a->part], a->pad, &sa);
 	pcb_spot(&B, &B.part[b->part], b->pad, &sb);
-	pad_point(n, &sa, sb.x, sb.y, pa);
-	pad_point(n, &sb, pa[0], pa[1], pb);
-	pad_point(n, &sa, pb[0], pb[1], pa);
+	pad_point(n, &sa, sb.x, sb.y, w, pa);
+	pad_point(n, &sb, pa[0], pa[1], w, pb);
+	pad_point(n, &sa, pb[0], pb[1], w, pa);
 	len = hypot(pb[0] - pa[0], pb[1] - pa[1]);
 	u[0] = len > 0 ? -(pb[1] - pa[1]) / len : 0;
 	u[1] = len > 0 ? (pb[0] - pa[0]) / len : 1;
@@ -821,7 +843,6 @@ static int connect(int n, const struct pcb_end *a, const struct pcb_end *b,
 	}
 	return 1;
 }
-
 
 // The ends of net n to route on the top: its pads on the top.
 static size_t top_ends(int n, struct pcb_end **ends)
@@ -1357,6 +1378,34 @@ static int link_clear(long l)
 	return 1;
 }
 
+// Whether the copper of connection l keeps the edge rule from the
+// outline and the cutouts, as pcbcheck(1) measures it; a group laid out
+// alone has no outline.
+static int link_off_edge(long l)
+{
+	for (size_t i = 0; !scope && i < B.ntrack; i++) {
+		const struct pcb_track *t = &B.track_[i];
+
+		for (size_t j = 1; t->link == l && j < t->n; j++) {
+			if (pcb_edge_dist(&B, 0, &t->xy[2 * j - 2], t->w / 2,
+					  NULL) < B.edge - 1e-6) {
+				return 0;
+			}
+		}
+	}
+	for (size_t i = 0; !scope && i < B.nvia; i++) {
+		const struct pcb_via *v = &B.via[i];
+
+		if (v->link == l &&
+		    pcb_edge_dist(&B, 0,
+				  (const double[4]){ v->x, v->y, v->x, v->y },
+				  v->dia / 2, NULL) < B.edge - 1e-6) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
 // Whether connection l of net n may be kept: its pads where they stood
 // (now, as the lock tells them), its width what the statements give now,
 // and its copper clear of the pads as they stand.
@@ -1559,9 +1608,11 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 			continue;
 		}
 		now = pcb_net_pads(&B, (size_t)k, &np);
-		// A block's copper is kept as its lock has it.
-		kept[l] = l >= ours ||
-			  (!fresh[k] && now && keep_link((long)l, now, np));
+		// A block's copper is kept as its lock has it, but for what
+		// breaks the edge rule, which a group alone does not know.
+		kept[l] = (l >= ours ||
+			   (!fresh[k] && now && keep_link((long)l, now, np))) &&
+			  link_off_edge((long)l);
 		for (size_t j = 0; j < np; j++) {
 			free(now[j]);
 		}
