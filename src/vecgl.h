@@ -121,6 +121,11 @@ const char *vg_part_name(int i);
 // its name.
 int vg_net(const char *s);
 const char *vg_net_name(int i);
+// The index of the net of a net record, s the text after "net ": NAME
+// [class CLASS], its class kept; cuts s at its name.  The class of a
+// net, or NULL for none.
+int vg_net_record(char *s);
+const char *vg_net_class(int i);
 // Sets the color, in sRGB and opacity; the frame blends in linear light.
 void vg_color(const double c[3], double a);
 // The text the viewers write over the drawing, in pixels: in the stroke

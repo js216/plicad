@@ -18,7 +18,8 @@
 // clears the selection here alone, and prints nothing.  A click on a
 // wire, a dot or a pin's end out of any part, or on a global's mark or
 // name, selects the net, drawn light cyan with its flags, its name in
-// the upper right corner.  A note is a khaki box with an N; the pointer
+// the upper right corner, after its class and a colon if it has one
+// (power:outputs.ch1.gain.vp).  A note is a khaki box with an N; the pointer
 // over it opens it: its text shows, wrapped, at the upper left, and its
 // badge and its group's parts are lit magenta.  The texts over the
 // drawing are in the stroke font, at one size whatever the zoom; the
@@ -318,7 +319,17 @@ static void overlay(void)
 		vg_text(4, vg_h - vg_font_h - 2, t);
 	}
 	if (sel_net >= 0) {
-		vg_corner(vg_net_name(sel_net));
+		const char *c = vg_net_class(sel_net);
+		char *name = malloc(strlen(vg_net_name(sel_net)) +
+				    (c ? strlen(c) + 1 : 0) + 1);
+
+		// CLASS:NET, or NET for a net of no class.
+		if (name) {
+			sprintf(name, "%s%s%s", c ? c : "", c ? ":" : "",
+				vg_net_name(sel_net));
+			vg_corner(name);
+			free(name);
+		}
 	}
 	if (hover >= 0) {
 		note_text(notes[hover].text);
@@ -612,7 +623,7 @@ static void read_page(const char *buf, size_t len, size_t pg)
 		}
 		nsp = 0;
 		if (!strncmp(line, "net", 3) && (!line[3] || line[3] == ' ')) {
-			net = line[3] ? vg_net(line + 4) : -1;
+			net = line[3] ? vg_net_record(line + 4) : -1;
 		} else if (net >= 0 &&
 			   (sscanf(line, "line %lf %lf %lf %lf %lf", &v[0],
 				   &v[1], &v[2], &v[3], &v[4]) == 5 ||

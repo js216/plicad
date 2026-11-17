@@ -79,7 +79,7 @@ static const char *const help[] = {
 // of any part, its points, width and the group of the tracks joined to
 // it end to end, not through a pad (KiCad's connected track).
 struct track {
-	char net[256];
+	char net[256], klass[64]; // Its net, and the net's class or "".
 	double *xy, w;
 	int n;
 	size_t group;
@@ -110,7 +110,7 @@ static size_t nls;
 // The track selected: its layer (or -1), its net, and the file of its
 // lines, drawn brightened over its layer.
 static long sel_layer = -1;
-static char sel_net[256];
+static char sel_net[512];
 static struct vg_file sel_file;
 static int bar_on = 1, outline = 1, hover, pass;
 static const struct layer *now;
@@ -620,7 +620,7 @@ static void group_tracks(struct names *nm)
 static struct names *make_names(const char *path)
 {
 	FILE *in = fopen(path, "r"), *out[2][NAMES];
-	char *line = NULL, *buf[2][NAMES], net[256] = "";
+	char *line = NULL, *buf[2][NAMES], net[256] = "", klass[64] = "";
 	size_t cap = 0, len[2][NAMES], npad = 0;
 	struct pad *pads = NULL;
 	struct names *nm = calloc(1, sizeof *nm);
@@ -640,6 +640,15 @@ static struct names *make_names(const char *path)
 
 		line[strcspn(line, "\n")] = 0;
 		if (!strncmp(line, "net", 3) && (!line[3] || line[3] == ' ')) {
+			// net NAME [class CLASS]
+			char *c = line + 3 + !!line[3];
+
+			c += strcspn(c, " ");
+			*klass = 0;
+			if (!strncmp(c, " class ", 7)) {
+				snprintf(klass, sizeof klass, "%s", c + 7);
+			}
+			*c = 0;
 			snprintf(net, sizeof net, "%s",
 				 line[3] ? line + 4 : "");
 			continue;
@@ -686,6 +695,7 @@ static struct names *make_names(const char *path)
 			nm->tracks = t;
 			t = &nm->tracks[nm->ntracks];
 			snprintf(t->net, sizeof t->net, "%s", net);
+			snprintf(t->klass, sizeof t->klass, "%s", klass);
 			t->w = v[0];
 			t->n = (n - 1) / 2;
 			t->xy = malloc((size_t)(n - 1) * sizeof *t->xy);
@@ -865,6 +875,32 @@ static int track_at(double x, double y, double tol, size_t *layer, size_t *t)
 	return 0;
 }
 
+// The text of the corner for track t selected: CLASS:NET (NET for a net
+// of no class), the width of t, and the length of all the tracks of its
+// net on the layers of copper, in mm and in mil.
+static void corner_text(const struct track *t)
+{
+	double len = 0;
+
+	for (size_t i = 0; i < nls; i++) {
+		for (size_t k = 0; ls[i].names && k < ls[i].names->ntracks;
+		     k++) {
+			const struct track *r = &ls[i].names->tracks[k];
+
+			for (int j = 0; !strcmp(r->net, t->net) && j + 1 < r->n;
+			     j++) {
+				len += hypot(r->xy[2 * j + 2] - r->xy[2 * j],
+					     r->xy[2 * j + 3] -
+						     r->xy[2 * j + 1]);
+			}
+		}
+	}
+	snprintf(sel_net, sizeof sel_net,
+		 "%s%s%s  width %.3f mm = %.1f mil  routed %.2f mm = %.1f mil",
+		 t->klass, *t->klass ? ":" : "", t->net, t->w, t->w / 0.0254,
+		 len, len / 0.0254);
+}
+
 // Selects the connected track of track t of layer l: its lines into a
 // file of their own, drawn brightened.
 static void select_track(size_t l, size_t t)
@@ -898,7 +934,7 @@ static void select_track(size_t l, size_t t)
 	}
 	free(buf);
 	sel_layer = (long)l;
-	snprintf(sel_net, sizeof sel_net, "%s", nm->tracks[t].net);
+	corner_text(&nm->tracks[t]);
 }
 
 // A click: on a key of the bar, as the key; on a track, out of the pads,

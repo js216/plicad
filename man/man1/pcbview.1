@@ -54,7 +54,17 @@ A click on a track, out of the pads, on a layer of copper shown, the
 topmost first, selects its connected track as KiCad does: the tracks of
 its net joined to it end to end where the end is in no pad (from pad to
 pad, or to a via); they are drawn brightened as a selected part, the
-net's name stands in a black box in the upper right corner (in the
+net's name stands in a black box in the upper right corner, after its
+class and a colon if its net record gives one
+.RI ( vec (5)),
+then the width of the track clicked and the length of all the tracks
+of its net on the layers of copper read, each in mm and in mil, as
+.PP
+.RS
+power:outputs.ch1.gain.vp  width 0.500 mm = 19.7 mil  routed 12.34 mm = 485.8 mil
+.RE
+.PP
+(in the
 stroke font, its capitals 14 pixels high whatever the zoom, as
 Loading...; the bar and the help are in the font fixed), the part
 selected is cleared and nothing is printed; a click on anything else clears it.

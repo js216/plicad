@@ -17,8 +17,10 @@
 
 #define PI 3.14159265358979323846
 
-static char *font_file, **parts, **nets;
-static size_t nparts, nnets;
+// The names of the parts and of the nets, and the class of each net
+// (NULL for none).
+static char *font_file, **parts, **nets, **classes;
+static size_t nparts, nnets, nclasses;
 
 static void *more(void *p, size_t n)
 {
@@ -64,6 +66,34 @@ int vg_net(const char *s)
 const char *vg_net_name(int i)
 {
 	return i >= 0 && (size_t)i < nnets ? nets[i] : "";
+}
+
+int vg_net_record(char *s)
+{
+	char *c = s + strcspn(s, " ");
+	int i;
+
+	if (*c) {
+		*c++ = 0;
+	}
+	i = vg_net(s);
+	classes = more(classes, nnets * sizeof *classes);
+	for (size_t k = nclasses; k < nnets; k++) {
+		classes[k] = NULL;
+	}
+	nclasses = nnets;
+	if (!strncmp(c, "class ", 6) && c[6] && !classes[i]) {
+		c += 6;
+		c[strcspn(c, " ")] = 0;
+		classes[i] = more(NULL, strlen(c) + 1);
+		strcpy(classes[i], c);
+	}
+	return i;
+}
+
+const char *vg_net_class(int i)
+{
+	return i >= 0 && (size_t)i < nclasses ? classes[i] : NULL;
 }
 
 // The glyphs of lib/fonts/nimbussans.txt: by font and code point, the
@@ -495,7 +525,7 @@ void vg_load_stream(struct vg_file *f, FILE *in, double via)
 			open_elem = -1;
 		} else if (!strncmp(line, "net", 3) &&
 			   (!line[3] || line[3] == ' ')) {
-			state.net = line[3] ? vg_net(line + 4) : -1;
+			state.net = line[3] ? vg_net_record(line + 4) : -1;
 			state.frame = 0;
 		} else if (!strncmp(line, "text ", 5)) {
 			state.text = 1;

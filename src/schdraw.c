@@ -1665,6 +1665,19 @@ static void write_notes(const double room[4])
 	note_box = NULL;
 }
 
+// Opens the records of the net of the name: net NAME, and the class the
+// page gives it, if any.
+static void net_record(const char *name)
+{
+	for (size_t k = 0; k < S.nnet; k++) {
+		if (!strcmp(S.net[k].name, name) && S.net[k].klass) {
+			printf("net %s class %s\n", name, S.net[k].klass);
+			return;
+		}
+	}
+	printf("net %s\n", name);
+}
+
 // Writes the sheet as vec(5): the template, then each net's wires and
 // dots, then each part, its symbol and its text, and the flags.
 static void write_vec(void)
@@ -1694,7 +1707,7 @@ static void write_vec(void)
 				continue;
 			}
 			if (!any) {
-				printf("net %s\n", S.net[k].name);
+				net_record(S.net[k].name);
 				any = 1;
 			}
 			xy = sch_alloc(2 * p->n * sizeof *xy);
@@ -1745,7 +1758,7 @@ static void write_vec(void)
 
 		// A flag is of its net, drawn lit with it.
 		if (q->dev->shape->flag) {
-			printf("net %s\n", q->name);
+			net_record(q->name);
 			symbol(q);
 			flag_text(q);
 			pin_ends(q);

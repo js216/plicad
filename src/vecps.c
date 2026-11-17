@@ -619,8 +619,9 @@ static void names_in(const char *path, const double w[4], double scale)
 
 		buf[strcspn(buf, "\n")] = 0;
 		if (!strncmp(buf, "net", 3) && (!buf[3] || buf[3] == ' ')) {
+			// net NAME [class CLASS]: the name.
 			copy_prefix(net, sizeof net, buf + 4 * !!buf[3],
-				    buf[3] ? strlen(buf + 4) : 0);
+				    buf[3] ? strcspn(buf + 4, " ") : 0);
 			continue;
 		}
 		if (!strncmp(buf, "part", 4) && (!buf[4] || buf[4] == ' ')) {

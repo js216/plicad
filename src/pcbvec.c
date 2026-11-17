@@ -9,8 +9,8 @@
 // a Gerber for, named alike (top.vec, ..., topsilk.vec), and drill.vec,
 // the holes as disks; what each layer draws is pcbplot's.  Each file
 // says first what it is, by KiCad's name of the layer (layer F.Cu); a
-// part's records are bracketed by part, a net's by net, and a plane is a
-// zone of its net; each part's box is given by name, so pcbview names
+// part's records are bracketed by part, a net's by net (with its class,
+// if the netlist gives it one), and a plane is a zone of its net; each part's box is given by name, so pcbview names
 // and selects them.
 
 #include "pcbplot.h"
@@ -125,7 +125,16 @@ static void open_brackets(const double *xy, size_t n, double r)
 		part_open = 1;
 	}
 	if (net && !net_open && !in_zone) {
-		fprintf(out, "net %s\n", net);
+		const char *c = NULL;
+
+		// The class the netlist gives the net, for the viewer.
+		for (size_t k = 0; k < B.nnet; k++) {
+			if (!strcmp(B.net[k].name, net)) {
+				c = B.net[k].klass;
+			}
+		}
+		fprintf(out, "net %s%s%s\n", net, c ? " class " : "",
+			c ? c : "");
 		net_open = 1;
 	}
 	for (size_t q = 0; part && q < B.npart; q++) {

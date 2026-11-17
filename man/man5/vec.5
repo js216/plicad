@@ -34,7 +34,7 @@ zone NET                the fill of a zone of copper begins
 end                     and ends
 part NAME [REF]         the records of a part begin
 part                    and end
-net NAME                the records of a net begin
+net NAME [class CLASS]  the records of a net begin
 net                     and end
 pin REF.PIN X Y         a pin of a part: its end, or its pad's center
 flag NET X Y port|global
@@ -98,6 +98,11 @@ draw that part, so a viewer can draw it brighter when it is selected;
 a part may have several such runs.
 The name is the part's in its source (outputs.ch1.gain.rf), which the viewers
 select by; REF, its designator (R401), is for the reader.
+A net record names the net and, if it has one, its class, as the
+netlist gives it
+.RI ( netlist (5));
+schdraw writes the class the page gives the net, pcbvec the netlist's;
+the viewers show it with the name.
 A pin record gives where a wire meets a pin of a part on a sheet, or
 the center of a pad of a pin on a layer of copper, by its designator
 and pin number as the netlist names it (R401.2), and a flag
