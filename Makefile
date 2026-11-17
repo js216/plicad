@@ -18,6 +18,9 @@ LDLIBS := -lX11 -lGL -lm
 
 LDFLAGS := -Wl,--as-needed
 
+# The monitors, of vgview.o, which view links for its title.
+build/view build/schview build/pcbview: LDLIBS += -lXinerama
+
 all: $(addprefix build/,$(PROGS))
 
 build/%.o: src/%.c

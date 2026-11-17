@@ -16,6 +16,7 @@
 #include <GL/glx.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/Xinerama.h>
 #include <X11/keysym.h>
 #include <math.h>
 #include <poll.h>
@@ -306,6 +307,53 @@ static void drag(int dx, int dy)
 	fresh &= !dx && !dy;
 }
 
+// The monitor of the root point (x, y), as left, top, right, bottom:
+// the screen's, without Xinerama.
+static void monitor(int x, int y, int m[4])
+{
+	XineramaScreenInfo *s = NULL;
+	int n = 0;
+
+	m[0] = m[1] = 0;
+	m[2] = DisplayWidth(d, DefaultScreen(d));
+	m[3] = DisplayHeight(d, DefaultScreen(d));
+	if (XineramaIsActive(d)) {
+		s = XineramaQueryScreens(d, &n);
+	}
+	for (int i = 0; i < n; i++) {
+		if (x >= s[i].x_org && x < s[i].x_org + s[i].width &&
+		    y >= s[i].y_org && y < s[i].y_org + s[i].height) {
+			m[0] = s[i].x_org;
+			m[1] = s[i].y_org;
+			m[2] = s[i].x_org + s[i].width;
+			m[3] = s[i].y_org + s[i].height;
+		}
+	}
+	XFree(s);
+}
+
+// The pointer of a drag at an edge of monitor m goes round to the other
+// edge; the last point (lx, ly) of the drag moves with it, and the
+// motion queued before it is dropped, so the view goes on without a
+// jump.
+static void wrap(const XMotionEvent *e, const int m[4], int *lx, int *ly)
+{
+	int x = e->x_root, y = e->y_root;
+	XEvent q;
+
+	x = x <= m[0] ? m[2] - 2 : x >= m[2] - 1 ? m[0] + 1 : x;
+	y = y <= m[1] ? m[3] - 2 : y >= m[3] - 1 ? m[1] + 1 : y;
+	if (x == e->x_root && y == e->y_root) {
+		return;
+	}
+	XWarpPointer(d, None, DefaultRootWindow(d), 0, 0, 0, 0, x, y);
+	XSync(d, False);
+	while (XCheckTypedWindowEvent(d, win, MotionNotify, &q)) {
+	}
+	*lx += x - e->x_root;
+	*ly += y - e->y_root;
+}
+
 // A click: the viewer's own (its bar), or the part there, or clear.
 static void click(int px, int py)
 {
@@ -374,7 +422,7 @@ static void command(const char *s)
 
 static void event(XEvent *e)
 {
-	static int down, moved, lx, ly;
+	static int down, moved, lx, ly, mon[4];
 	KeySym k = 0, kp;
 	char ch;
 	int asked = draw; // A frame asked by an earlier event of the batch.
@@ -403,11 +451,13 @@ static void event(XEvent *e)
 		moved = 0;
 		lx = e->xbutton.x;
 		ly = e->xbutton.y;
+		monitor(e->xbutton.x_root, e->xbutton.y_root, mon);
 	} else if (e->type == MotionNotify && down) {
 		drag(e->xmotion.x - lx, e->xmotion.y - ly);
 		moved |= e->xmotion.x != lx || e->xmotion.y != ly;
 		lx = e->xmotion.x;
 		ly = e->xmotion.y;
+		wrap(&e->xmotion, mon, &lx, &ly);
 	} else if (e->type == ButtonRelease && e->xbutton.button == 1) {
 		down = 0;
 		if (!moved) {
