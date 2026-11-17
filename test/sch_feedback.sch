@@ -8,7 +8,7 @@
 # the tests.
 
 page feedback
-title Inverting amplifier
+title Inverting Amplifier
 
 opamp u LMH6609 flip
 resistor rin 1K left from u.in-

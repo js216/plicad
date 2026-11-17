@@ -5,7 +5,7 @@
 # The supplies are decoupled at the pins; a circuit made up for the tests.
 
 page filter
-title Filtered buffer
+title Filtered Buffer
 field Rev 1
 
 port IN buf.in

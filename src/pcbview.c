@@ -389,15 +389,22 @@ static int bar_keys(int keys[16], const struct layer *of[16])
 	return n;
 }
 
+// The cells of the bar's keys, in pixels: a character of the stroke font
+// and margins 5 wide; as tall as vg_corner's box, the descenders in it.
+#define KEY_H (VG_CAP * 4 / 3 + 12)
+
+static double key_w(void)
+{
+	return stroke_width("m", VG_CAP) + 10;
+}
+
 // The key of the bar at a point, or 0.
 static int bar_at(int x, int y)
 {
 	int keys[16], n = bar_keys(keys, (const struct layer *[16]){ 0 });
-	int i = x / (vg_font_w + 6);
+	int i = (int)(x / key_w());
 
-	return bar_on && x >= 0 && y >= 0 && y < vg_font_h + 4 && i < n ?
-		       keys[i] :
-		       0;
+	return bar_on && x >= 0 && y >= 0 && y < KEY_H && i < n ? keys[i] : 0;
 }
 
 // The bar: a shown layer's key on its color, in black or white as the
@@ -415,9 +422,8 @@ static void overlay(void)
 		"z zones: filled",     "Z zones: outlines",
 	};
 	const struct layer *of[16];
-	int keys[16], n = bar_keys(keys, of), cw = vg_font_w + 6;
-	int top = top_key();
-	int ch = vg_font_h + 4;
+	int keys[16], n = bar_keys(keys, of), top = top_key();
+	double cw = key_w(), ch = KEY_H;
 
 	// The net of the selected track, in the upper right corner.
 	if (sel_layer >= 0) {
@@ -433,14 +439,14 @@ static void overlay(void)
 		glColor3d(1, 1, 1);
 		if (on) {
 			glColor3dv(c);
-			glRecti(i * cw, vg_h, (i + 1) * cw, vg_h - ch);
+			glRectd(i * cw, vg_h, (i + 1) * cw, vg_h - ch);
 			glColor3d(lum <= 0.5, lum <= 0.5, lum <= 0.5);
 		}
-		vg_text(i * cw + 3, vg_h - ch + 4, k);
-		// The layer drawn on top, underlined.
+		vg_stroke(i * cw + 5, vg_h - 6 - VG_CAP, k);
+		// The layer drawn on top, underlined under the descenders.
 		if (keys[i] == top) {
-			glRecti(i * cw + 2, vg_h - ch + 3,
-				i * cw + 4 + vg_font_w, vg_h - ch + 1);
+			glRectd(i * cw + 4, vg_h - ch + 2, (i + 1) * cw - 4,
+				vg_h - ch + 4);
 		}
 		if (keys[i] != hover) {
 			continue;
@@ -453,11 +459,11 @@ static void overlay(void)
 			}
 		}
 		glColor3d(0.1, 0.1, 0.1);
-		glRecti(i * cw, vg_h - ch - 2,
-			i * cw + 8 + (int)strlen(name) * vg_font_w,
+		glRectd(i * cw, vg_h - ch - 2,
+			i * cw + 16 + stroke_width(name, VG_CAP),
 			vg_h - 2 * ch - 2);
 		glColor3d(1, 1, 1);
-		vg_text(i * cw + 4, vg_h - 2 * ch + 2, name);
+		vg_stroke(i * cw + 8, vg_h - ch - 8 - VG_CAP, name);
 	}
 }
 
@@ -1016,7 +1022,7 @@ int main(int argc, char **argv)
 	int a = vg_start(argc, argv, &v);
 	double box[4] = { 1e300, 1e300, -1e300, -1e300 };
 
-	vg_top = vg_font_h + 4; // The bar.
+	vg_top = (int)ceil(KEY_H); // The bar.
 	vg_solid = 1;
 	nls = (size_t)(argc - a);
 	ranks = nls;

@@ -63,12 +63,12 @@ struct vg_viewer {
 };
 
 // The view: the point at the center, pixels a unit, the window, the
-// part selected (-1 none), the font's cell, and the pixels at the top a
-// viewer keeps for itself (the help stands under them).
+// part selected (-1 none), and the pixels at the top a viewer keeps for
+// itself (the help stands under them).
 extern double vg_x, vg_y, vg_zoom;
 // The share of the window that fit gives the box, 0.95 unless set.
 extern double vg_fill;
-extern int vg_w, vg_h, vg_sel, vg_font_w, vg_font_h, vg_top;
+extern int vg_w, vg_h, vg_sel, vg_top;
 // A line thinner than a pixel is drawn a pixel wide at full strength,
 // not fainter (a board's outline).
 extern int vg_solid;
@@ -137,8 +137,5 @@ void vg_corner(const char *s);
 // Titles window w by the absolute path of path (WM_NAME and
 // _NET_WM_NAME), or with dir by its directory, a slash at the end.
 void vg_title(Display *d, Window w, const char *path, int dir);
-// Draws text from pixel (x, y) of the window, from its lower left, in
-// the font fixed, in the color of glColor.
-void vg_text(int x, int y, const char *s);
 
 #endif

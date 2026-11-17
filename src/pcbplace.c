@@ -1062,7 +1062,7 @@ static int place_block(size_t b)
 	if (!place(r, lr->rot, &way)) {
 		return 0;
 	}
-	// A move by whole steps of the lock's 0.1 µm, so the parts stand
+	// A move by whole steps of the lock's 0.1 um, so the parts stand
 	// to the digit as the block's lock has them, relative to each other.
 	tx = round((B.part[r].x - lr->x) * 1e4) / 1e4;
 	ty = round((B.part[r].y - lr->y) * 1e4) / 1e4;

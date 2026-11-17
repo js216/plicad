@@ -49,6 +49,19 @@ the [classic rules](https://doi.org/10.1002/j.1538-7305.1978.tb02135.x):
 | smsheet   | Lays views on sheets as PostScript, with title block           |
 | tomesh    | Writes the triangles of parts as an OBJ mesh                   |
 | view      | Shows meshes and pictures in a window; a click names the part  |
+| schdraw   | Draws a schematic sheet as plain vectors                       |
+| schnet    | Writes the netlist of a schematic sheet                        |
+| schcheck  | Checks a netlist for what a schematic leaves undone            |
+| netdiff   | Compares two netlists by their circuits, not their names       |
+| schview   | Shows a schematic sheet in a window                            |
+| pcbplace  | Places the parts of a board as its source says                 |
+| pcbroute  | Routes the copper of a board as its source says                |
+| pcbcheck  | Checks the copper of a board against its netlist and rules     |
+| pcbgerber | Writes the Gerber and drill files of a board                   |
+| pcbvec    | Writes the layers of a board as plain vectors                  |
+| gbrvec    | Turns a Gerber or Excellon file into plain vectors             |
+| pcbview   | Shows the layers of a board in a window                        |
+| vecps     | Draws vector files as pages of PostScript                      |
 
 ### Usage
 
@@ -127,6 +140,7 @@ and standard tables of screws, holes, inserts, bends and packages
 
 - Strict ISO C99. GCC runs with all applicable warnings as errors.
 - The programs link dynamically to two libraries, the system C library and libm.
+  The viewers (view, schview, pcbview) link X11, GL and Xinerama as well.
 - The code follows the [Linux coding
   style,](https://github.com/torvalds/linux/blob/master/Documentation/process/coding-style.rst)
   with a few exceptions (e.g. use `//` comments only, and braces around every

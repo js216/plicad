@@ -26,12 +26,12 @@
 #include <unistd.h>
 
 double vg_x, vg_y, vg_zoom = 1, vg_fill = 0.95;
-int vg_w = 1000, vg_h = 700, vg_sel = -1, vg_font_w, vg_font_h, vg_top;
+int vg_w = 1000, vg_h = 700, vg_sel = -1, vg_top;
 
 static const struct vg_viewer *V;
 static Display *d;
 static Window win;
-static int srgb, font_base, help, fresh = 1, draw = 1, loading;
+static int srgb, help, fresh = 1, draw = 1, loading;
 static char shot[4096];
 
 static double linear(double c)
@@ -43,13 +43,6 @@ void vg_color(const double c[3], double a)
 {
 	glColor4d(srgb ? linear(c[0]) : c[0], srgb ? linear(c[1]) : c[1],
 		  srgb ? linear(c[2]) : c[2], a);
-}
-
-void vg_text(int x, int y, const char *s)
-{
-	glRasterPos2i(x, y);
-	glListBase((GLuint)font_base - 32);
-	glCallLists((GLsizei)strlen(s), GL_UNSIGNED_BYTE, s);
 }
 
 void vg_stroke(double x, double y, const char *s)
@@ -112,7 +105,10 @@ void vg_title(Display *dp, Window w, const char *path, int dir)
 // ground; its overlay and the help as they are; the picture asked for.
 static void frame(void)
 {
-	size_t n = 0, w = 0;
+	// The help's lines, as the note of schview: a capital and two thirds
+	// apart, in a box of margins 8 wide.
+	double w = 0, lh = VG_CAP * 5 / 3, top = vg_h - vg_top;
+	size_t n = 0;
 
 	if (srgb) {
 		glEnable(GL_FRAMEBUFFER_SRGB);
@@ -139,17 +135,15 @@ static void frame(void)
 		vg_corner("Loading...");
 	}
 	for (; help && V->help[n]; n++) {
-		w = strlen(V->help[n]) > w ? strlen(V->help[n]) : w;
+		w = fmax(w, stroke_width(V->help[n], VG_CAP));
 	}
 	glColor4f(0, 0, 0, 0.6F);
 	if (help) {
-		glRecti(0, vg_h - vg_top, 16 + (int)w * vg_font_w,
-			vg_h - vg_top - 16 - (int)n * vg_font_h);
+		glRectd(0, top, w + 16, top - (double)n * lh - 12);
 	}
 	glColor3f(1, 1, 1);
 	for (size_t k = 0; k < n; k++) {
-		vg_text(8, vg_h - vg_top - 8 - (int)(k + 1) * vg_font_h,
-			V->help[k]);
+		vg_stroke(8, top - 6 - VG_CAP - (double)k * lh, V->help[k]);
 	}
 	if (*shot) {
 		FILE *f = fopen(shot, "wb");
@@ -208,7 +202,6 @@ int vg_start(int argc, char **argv, const struct vg_viewer *v)
 	XSetWindowAttributes wa;
 	XVisualInfo *vi;
 	GLXFBConfig *fc = NULL;
-	XFontStruct *font;
 	int n = 0;
 	long pid = 0;
 
@@ -260,15 +253,6 @@ int vg_start(int argc, char **argv, const struct vg_viewer *v)
 					   True));
 	XFree(vi);
 	XFree(fc);
-	font = XLoadQueryFont(d, "fixed");
-	if (!font) {
-		fprintf(stderr, "%s: no font fixed\n", v->name);
-		exit(2);
-	}
-	font_base = (int)glGenLists(96);
-	vg_font_w = font->max_bounds.width;
-	vg_font_h = font->ascent + font->descent;
-	glXUseXFont(font->fid, 32, 96, font_base);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glEnableClientState(GL_VERTEX_ARRAY);

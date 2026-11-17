@@ -7,7 +7,7 @@
 # circuit made up for the tests.
 
 page upper
-title Upper half
+title Upper Half
 resistor r 10K
 supply +5V at r.1
 port MID r.2

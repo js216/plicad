@@ -22,11 +22,12 @@
 // (power:outputs.ch1.gain.vp).  A note is a khaki box with an N; the pointer
 // over it opens it: its text shows, wrapped, at the upper left, and its
 // badge and its group's parts are lit magenta.  The texts over the
-// drawing are in the stroke font, at one size whatever the zoom; the
-// help in the font fixed.  The selected part is drawn in light cyan, and its page shows when it is newly
-// selected; c centers it (again: zooms in two times), C zooms out two
-// times, F5 reads the file again (Loading... in the upper right
-// meanwhile), ? shows or hides a help of the keys, and q quits.  The
+// drawing and the help are in the stroke font, at one size whatever
+// the zoom.  The selected part is drawn in light cyan, and its page
+// shows when it is newly selected; c centers it (again: zooms in two
+// times), C zooms out two times, F5 reads the file again (Loading... in
+// the upper right meanwhile), ? shows or hides a help of the keys, and
+// q quits.  The
 // window's title is the absolute path of the file.  Commands come on
 // stdin, one a line: "select NAME", "select", "center",
 // "shot FILE" (the next frame as a picture), and "page next", "page
@@ -316,7 +317,7 @@ static void overlay(void)
 				 typing);
 		}
 		vg_color((const double[3]){ 0.8, 0.8, 0.8 }, 1);
-		vg_text(4, vg_h - vg_font_h - 2, t);
+		vg_stroke(8, vg_h - 6 - VG_CAP, t);
 	}
 	if (sel_net >= 0) {
 		const char *c = vg_net_class(sel_net);
