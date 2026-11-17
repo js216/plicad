@@ -12,8 +12,10 @@ schview \- show the pages of a schematic
 shows the pages of a schematic in a window, one at a time, smoothed,
 khaki (#BBBB99) on black.
 A page runs from its page record (page W H N) to the next; with more
-than one, the top left names the page shown, and a part selected from
-stdin shows its page.
+than one, the top left names the page shown, and a part newly
+selected, from stdin or by a click, shows its page; PgDn and PgUp turn
+the pages with a part selected too.
+The window's title is the absolute path of the file.
 The sheet comes as
 .IR vec (5)
 from
@@ -41,8 +43,11 @@ The keys:
 .nf
 c           center the selected part; again, with nothing
             changed in between, zoom in two times about it
+C           zoom out two times about the middle of the window,
+            centering nothing
 Space       fit the sheet: its frame at the edge of the window
-F5          read the file again, the view kept
+F5          read the file again, the view kept; Loading...
+            in the upper right corner meanwhile
 Esc         deselect, here alone; hide the help
 ?           a help of the keys, on and off
 q           quit

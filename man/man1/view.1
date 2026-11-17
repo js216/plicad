@@ -37,6 +37,7 @@ unit less.
 A click on nothing clears the pick and prints nothing;
 .B select
 alone on the input clears it too.
+The window's title is the absolute path of the scene file.
 So viewers cross-probe through FIFOs, the output of each the input of
 another, as schview(1) and pcbview(1) do.
 The unit of a part is the subassembly or the mesh of several parts
@@ -64,7 +65,8 @@ Space
 Fit all.
 .TP
 F5
-Read the scene and its meshes again, the view kept.
+Read the scene and its meshes again, the view kept; Loading... stands
+in a black box in the upper right corner meanwhile.
 .TP
 Esc
 Pick nothing, and hide the help.
@@ -74,6 +76,9 @@ Center the view on the picked part, its zoom and direction kept; c
 again, with no drag, zoom, view key or pick between, zooms in two times
 about it.
 With no part picked, nothing.
+.TP
+.B C
+Zoom out two times about the middle of the window, centering nothing.
 .TP
 .B "i f b l r t u"
 Iso, front, back, left, right, top, bottom.

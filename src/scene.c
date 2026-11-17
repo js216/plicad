@@ -41,7 +41,7 @@ enum {
 
 #define FRAMES_MAX 100000.0 // The most frames of a spin.
 #define LEVEL_MAX 64.0 // The most units up for H, O, S and a drag.
-#define CENTER_ZOOM 2.0 // The zoom of a center again.
+#define CENTER_ZOOM 2.0 // The zoom of a center again, and of a zoom out.
 
 static void free_part(struct part *p)
 {
@@ -103,6 +103,7 @@ const char *const view_help[] = {
 	"F5              read the scene again",
 	"Esc             pick nothing, hide this help",
 	"c               center on the picked part; again, zoom in",
+	"C               zoom out",
 	"i f b l r t u   iso front back left right top under",
 	"h               hide the part under the cursor",
 	"o               show only the part under the cursor, or all again",
@@ -1222,6 +1223,14 @@ void scene_center(struct scene *s)
 		s->centered = 1;
 	}
 	s->touched = 1;
+}
+
+void scene_zoom_out(struct scene *s)
+{
+	cam_zoom(&s->cam, CENTER_ZOOM,
+		 (struct px){ (double)s->cam.sz.w / 2,
+			      (double)s->cam.sz.h / 2 });
+	scene_cam_moved(s);
 }
 
 void scene_cam_moved(struct scene *s)

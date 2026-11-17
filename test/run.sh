@@ -1168,7 +1168,8 @@ view_names() {
 	props=
 	k=0
 	while test $k -lt 100; do
-		props=$(xprop -name 'view view' WM_CLASS _NET_WM_PID \
+		props=$(xprop -name "$(realpath test/view.scene)" WM_CLASS \
+			_NET_WM_PID \
 			2> /dev/null) && case $props in
 			*_NET_WM_PID*=*) break ;;
 			esac

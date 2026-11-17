@@ -254,8 +254,8 @@ name="pcbview keys: ? and the keypad"
 			bar) echo "!$X pcbview click $((at * 12 - 6)) 4" ;;
 			pipe) if test "$k" = z; then
 				case $n in
-				base | on) echo "zones outline" ;;
-				*) echo "zones fill" ;;
+				base | on) echo "zones fill" ;;
+				*) echo "zones outline" ;;
 				esac
 			else
 				echo "$cmd"
@@ -294,8 +294,8 @@ name="pcbview keys: ? and the keypad"
 		cmp -s "$1/all0.ppm" "$1/all2.ppm" &&
 		cmp -s "$1/all1.ppm" "$1/all3.ppm" &&
 		cmp -s "$1/all0.ppm" "$1/shot.ppm"' - "$tmp"
-# The bar: its z on gray while the zones are filled, plain once
-# clicked; the pointer over a key names it on a dark box under the bar.
+# The bar: its z plain while the zones are outlines (at first), on
+# gray once clicked; the pointer over a key names it on a dark box under the bar.
 # Its keys here: t b s y e d z, a cell each, 12 pixels wide (the font
 # fixed, 6 wide, and 6 more); the names drawn on 0.1 gray, its red 26.
 cell() {
@@ -307,7 +307,7 @@ z1=$(cell $((6 * 12 + 1)) 2)
 h1=$(cell 4 30)
 printf "!%s pcbview click %d 4\n" "$X" $((6 * 12 + 6)) | view "$P/pcbview" $L
 z2=$(cell $((6 * 12 + 1)) 2)
-check test "$z1" -gt 100 -a "$z2" -lt 60
+check test "$z1" -lt 60 -a "$z2" -gt 100
 name="pcbview bar: names"
 check test "$h1" -gt 15 -a "$h1" -lt 40
 # The names of nets and pins, as KiCad shows them: none at the fit, and
@@ -364,14 +364,15 @@ check sh -c 'test "$1" -eq 0 && test "$2" -gt 10 && test "$3" -gt 0 &&
 name="pcbview lives through clicks all over the board"
 grid pcbview | view "$P/pcbview" $L
 check test -s "$tmp/shot.ppm"
-# The zones as outlines: z leaves the top copper as it is (its pixels,
-# red 200 52 52), takes the plane's fill away (green 127 200 127) but
-# for its outline, and z again brings the fill back.
+# The zones as outlines (as they start): outlined, the top copper is
+# as filled (its pixels, red 200 52 52), the plane's fill gone (green
+# 127 200 127) but for its outline, and filled again it is back.
 count() {
 	od -An -tu1 -v -w3 "$1" | awk -v r="$2" -v g="$3" -v b="$4" \
 		'$1 == r && $2 == g && $3 == b { n++ } END { print n + 0 }'
 }
 {
+	echo "zones fill"
 	echo "shot $tmp/z0.ppm"
 	echo "zones outline"
 	echo "shot $tmp/z1.ppm"

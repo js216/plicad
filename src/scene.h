@@ -266,6 +266,9 @@ void scene_select_name(struct scene *s, const char *name);
 // did so last with no change of the view or the pick since, zooms in
 // two times about it; does nothing with no part picked.
 void scene_center(struct scene *s);
+// Zooms out two times about the middle of the view, centering nothing:
+// a center again, then this, gives back the zoom.
+void scene_zoom_out(struct scene *s);
 // Notes that the view changed by other than scene_center.
 void scene_cam_moved(struct scene *s);
 // Sets the size of the view to sz, and fits all to it if nothing set the

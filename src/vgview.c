@@ -6,7 +6,7 @@
 // commands, the selection and the stdin of cross-probing, which
 // schview and pcbview share.
 
-#define _DEFAULT_SOURCE // For poll and read.
+#define _DEFAULT_SOURCE // For poll, read and realpath.
 #define GL_GLEXT_PROTOTYPES
 
 #include "vecgl.h"
@@ -29,7 +29,7 @@ int vg_w = 1000, vg_h = 700, vg_sel = -1, vg_font_w, vg_font_h, vg_top;
 static const struct vg_viewer *V;
 static Display *d;
 static Window win;
-static int srgb, font_base, help, fresh = 1, draw = 1;
+static int srgb, font_base, help, fresh = 1, draw = 1, loading;
 static char shot[4096];
 
 static double linear(double c)
@@ -48,6 +48,45 @@ void vg_text(int x, int y, const char *s)
 	glRasterPos2i(x, y);
 	glListBase((GLuint)font_base - 32);
 	glCallLists((GLsizei)strlen(s), GL_UNSIGNED_BYTE, s);
+}
+
+void vg_corner(const char *s)
+{
+	int w = (int)strlen(s) * vg_font_w + 8, h = vg_font_h + 4;
+
+	glColor3d(0, 0, 0);
+	glRecti(vg_w - w - 4, vg_h, vg_w, vg_h - h);
+	glColor3d(1, 1, 1);
+	vg_text(vg_w - w, vg_h - h + 4, s);
+}
+
+void vg_title(Display *dp, Window w, const char *path, int dir)
+{
+	char *full = realpath(path, NULL), *t;
+	const char *name = full ? full : path;
+	size_t n = strlen(name);
+
+	if (dir) {
+		const char *slash = strrchr(name, '/');
+
+		n = slash ? (size_t)(slash - name) + 1 : 0;
+	}
+	t = malloc(n + 3);
+	if (t) {
+		if (dir && !n) {
+			strcpy(t, "./");
+		} else {
+			memcpy(t, name, n);
+			t[n] = 0;
+		}
+		XStoreName(dp, w, t);
+		XChangeProperty(dp, w, XInternAtom(dp, "_NET_WM_NAME", False),
+				XInternAtom(dp, "UTF8_STRING", False), 8,
+				PropModeReplace, (const unsigned char *)t,
+				(int)strlen(t));
+	}
+	free(t);
+	free(full);
 }
 
 // A frame: the viewer's drawing in linear light, multisampled, over its
@@ -76,6 +115,9 @@ static void frame(void)
 	glOrtho(0, vg_w, 0, vg_h, -1, 1);
 	if (V->overlay) {
 		V->overlay();
+	}
+	if (loading) {
+		vg_corner("Loading...");
 	}
 	for (; help && V->help[n]; n++) {
 		w = strlen(V->help[n]) > w ? strlen(V->help[n]) : w;
@@ -188,7 +230,7 @@ int vg_start(int argc, char **argv, const struct vg_viewer *v)
 	snprintf(name, sizeof name, "%s", v->name);
 	snprintf(cls, sizeof cls, "%c%s", v->name[0] - 'a' + 'A', v->name + 1);
 	XSetClassHint(d, win, &hint);
-	XStoreName(d, win, v->name);
+	vg_title(d, win, argv[1], v->dir_title);
 	// The process, by which window placers know the window.
 	pid = (long)getpid();
 	XChangeProperty(d, win, XInternAtom(d, "_NET_WM_PID", False),
@@ -258,14 +300,14 @@ static void click(int px, int py)
 	}
 }
 
-// Centers the selected part; again, with nothing changed in between,
-// zooms in two times about it.
 void vg_fit(const double box[4])
 {
 	memcpy(fit_box, box, sizeof fit_box);
 	fit();
 }
 
+// Centers the selected part; again, with nothing changed in between,
+// zooms in two times about it.
 static void center(void)
 {
 	static double last[3];
@@ -354,15 +396,27 @@ static void event(XEvent *e)
 	} else if (k == XK_q) {
 		exit(0);
 	} else if (k == XK_F5 && V->reload) {
+		// Told before the reading, which takes a while.
+		loading = 1;
+		frame();
+		loading = 0;
 		vg_sel = -1;
 		V->reload();
 	} else if (k == XK_Escape) {
 		vg_sel = -1;
 		help = 0;
+		if (V->key) {
+			V->key(k);
+		}
 	} else if (k == XK_space) {
 		fit();
 	} else if (k == XK_c) {
 		center();
+	} else if (k == XK_C) {
+		// About the middle of the window: c again, then C, gives back
+		// the zoom.
+		vg_zoom /= 2;
+		fresh = 0;
 	} else if (k == XK_question) {
 		help = !help;
 	} else if (k && V->key) {

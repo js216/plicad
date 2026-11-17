@@ -14,9 +14,12 @@
 // (its symbol's body, a text of it) selects the part, of the smallest
 // such element, and prints "select NAME" on stdout; a click on none
 // clears the selection here alone, and prints nothing.  The selected
-// part is drawn in light cyan; c centers it (again: zooms in two
-// times), ? shows or hides a help of the keys, and q quits.  Commands
-// come on stdin, one a line: "select NAME", "select", "center",
+// part is drawn in light cyan, and its page shows when it is newly
+// selected; c centers it (again: zooms in two times), C zooms out two
+// times, F5 reads the file again (Loading... in the upper right
+// meanwhile), ? shows or hides a help of the keys, and q quits.  The
+// window's title is the absolute path of the file.  Commands come on
+// stdin, one a line: "select NAME", "select", "center",
 // "shot FILE" (the next frame as a picture), and "page next", "page
 // prev" and "page N".  So two viewers
 // cross-probe through two FIFOs, each one's stdout the other's stdin.
@@ -42,6 +45,7 @@ static const char *const help[] = {
 	"F5              read the file again",
 	"Esc             deselect, hide this help",
 	"c               center the selected part, again: zoom in",
+	"C               zoom out",
 	"?               this help, on and off",
 	"q               quit",
 	NULL,
@@ -108,8 +112,14 @@ static void turn(size_t p)
 
 static void draw(void)
 {
-	// A part selected from outside shows its page.
-	turn(page_of(vg_sel));
+	static int shown = -1; // The selection last turned to.
+
+	// A part newly selected, from outside or here, shows its page; the
+	// pages turn freely after.
+	if (vg_sel != shown) {
+		shown = vg_sel;
+		turn(page_of(vg_sel));
+	}
 	vg_draw(pages[now], all, color);
 }
 

@@ -57,6 +57,9 @@ struct vg_viewer {
 	int (*click)(int x, int y);
 	int (*move)(int x, int y);
 	void (*reload)(void); // F5: read the files again, the view kept.
+	// The window's title is the directory of the first file, not the
+	// file (the layers of a board).
+	int dir_title;
 };
 
 // The view: the point at the center, pixels a unit, the window, the
@@ -115,6 +118,11 @@ int vg_part(const char *s);
 const char *vg_part_name(int i);
 // Sets the color, in sRGB and opacity; the frame blends in linear light.
 void vg_color(const double c[3], double a);
+// Draws text in a black box in the upper right corner of the window.
+void vg_corner(const char *s);
+// Titles window w by the absolute path of path (WM_NAME and
+// _NET_WM_NAME), or with dir by its directory, a slash at the end.
+void vg_title(Display *d, Window w, const char *path, int dir);
 // Draws text from pixel (x, y) of the window, from its lower left, in
 // the font fixed, in the color of glColor.
 void vg_text(int x, int y, const char *s);

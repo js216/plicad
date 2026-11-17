@@ -18,10 +18,11 @@
 // paste, e the edge, d the holes;
 // a shows all and A hides all; a layer key with Shift (T, B, S, M, P,
 // Y, E, D, and ! to ( for 1 to 9) moves that layer on top of the others,
-// shown, the others keeping their order; z draws the zones filled or as outlines;
-// l shows or hides the bar of the layers at the top left, whose keys do
-// as clicked and are named as the pointer passes; c, Space, ? and q are
-// vecgl's.  Commands come on stdin, a line each: those of vecgl, and
+// shown, the others keeping their order; z draws the zones filled or as
+// outlines (outlines at first); Esc clears the part and the track
+// selected; l shows or hides the bar of the layers at the top left, whose keys do
+// as clicked and are named as the pointer passes; c, C, Space, ? and q
+// are vecgl's.  The window's title is the directory of the files.  Commands come on stdin, a line each: those of vecgl, and
 // "layer top", "layer bottom", "layer N", "layer silk", "layer edge",
 // "layer drill", "layer all", "layer none", "courtyard", "zones fill",
 // "zones outline" and "bar".
@@ -48,16 +49,17 @@ static const char *const help[] = {
 	"click a track   select its connected track, its net named",
 	"space           fit all",
 	"F5              read the files again",
-	"Esc             deselect, hide this help",
+	"Esc             deselect parts and tracks, hide this help",
 	"t b             top, bottom copper on and off",
 	"1 ... 9         inner layer N on and off",
 	"T B S M P Y E D that layer on top (shown), the rest in order",
 	"! ... (         the same for inner layer 1 to 9",
 	"y s e d         courtyards, silkscreen, edge, holes on and off",
 	"m p             solder mask, paste on and off",
-	"z               zones filled or outlined",
+	"z               zones filled or outlined (at first outlined)",
 	"a A             all layers on, all off",
 	"c               center the selected part, again: zoom in",
+	"C               zoom out",
 	"l               the bar of the layers, on and off",
 	"bar             click a key: as the key; the pointer names it",
 	"?               this help, on and off",
@@ -110,7 +112,7 @@ static size_t nls;
 static long sel_layer = -1;
 static char sel_net[256];
 static struct vg_file sel_file;
-static int bar_on = 1, outline, hover, pass;
+static int bar_on = 1, outline = 1, hover, pass;
 static const struct layer *now;
 static const double via_hole[3] = { 227 / 255.0, 183 / 255.0, 46 / 255.0 };
 
@@ -434,12 +436,7 @@ static void overlay(void)
 
 	// The net of the selected track, in the upper right corner.
 	if (sel_layer >= 0) {
-		int w = (int)strlen(sel_net) * vg_font_w + 8;
-
-		glColor3d(0.1, 0.1, 0.1);
-		glRecti(vg_w - w - 4, vg_h, vg_w, vg_h - ch);
-		glColor3d(1, 1, 1);
-		vg_text(vg_w - w, vg_h - ch + 4, sel_net);
+		vg_corner(sel_net);
 	}
 
 	for (int i = 0; bar_on && i < n; i++) {
@@ -778,6 +775,11 @@ static int key(KeySym k)
 	const char *at = k < 128 && k ? strchr(shifted, (int)k) : NULL;
 	int any = k == 'z' || k == 'a' || k == 'A';
 
+	// Esc clears the track and its net too.
+	if (k == XK_Escape) {
+		sel_layer = -1;
+		return 1;
+	}
 	// A shifted layer key: that layer on top, shown; again, back.
 	if (at) {
 		int lk = plain[at - shifted];
@@ -979,6 +981,7 @@ static void reload(void)
 int main(int argc, char **argv)
 {
 	static const struct vg_viewer v = { .name = "pcbview",
+					    .dir_title = 1,
 					    .reload = reload,
 					    .bg = { 0, 0, 0 },
 					    .help = help,

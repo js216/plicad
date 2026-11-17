@@ -16,8 +16,11 @@
 // all in the view, and the keys i, f, b, l, r, t and u (iso, front,
 // back, left, right, top, underside) set it; c centers the view on the
 // picked part, and c again, with no change of the view or the pick
-// between, zooms in two times about it; F5 reads the scene again;
-// Escape deselects and hides the help; q quits.
+// between, zooms in two times about it; C zooms out two times about the
+// middle, centering nothing; F5 reads the scene again,
+// Loading... in the upper right meanwhile;
+// Escape deselects and hides the help; q quits.  The window's title is
+// the absolute path of the scene file.
 // The keys h, o and s act on the part under the pointer: h hides it, o
 // shows it alone (or, with one part alone, all again, wherever the
 // pointer is) and s turns it see-through or back; H, O and S do the same
@@ -43,6 +46,7 @@
 #include "obj.h"
 #include "scene.h"
 #include "util.h"
+#include "vecgl.h"
 #define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
 #include <GL/glext.h>
@@ -116,6 +120,7 @@ struct gui {
 	unsigned draw, quit;
 	struct px press, last;
 	char label[LABEL_LEN];
+	int loading; // F5 reads the scene: Loading... in the corner.
 	char unit[LABEL_LEN]; // The unit of the picked part, or empty.
 	char drag[LABEL_LEN]; // The part or unit that a drag moves.
 	int in_open;
@@ -466,7 +471,7 @@ static void draw_label(const struct gui *g)
 {
 	const struct cam *c = &g->s.cam;
 
-	if ((!g->label[0] && !g->help) || !g->font) {
+	if ((!g->label[0] && !g->help && !g->loading) || !g->font) {
 		return;
 	}
 	glDisable(GL_LIGHTING);
@@ -478,6 +483,15 @@ static void draw_label(const struct gui *g)
 	glLoadIdentity();
 	if (g->help) {
 		help_box(g);
+	}
+	if (g->loading) {
+		int w = (int)strlen("Loading...") * g->font_w + 8;
+		int h = g->font_h + 4;
+
+		glColor3f(0, 0, 0);
+		glRecti(c->sz.w - w - 4, c->sz.h, c->sz.w, c->sz.h - h);
+		glColor3f(1, 1, 1);
+		text_at(g, c->sz.w - w, c->sz.h - h + 4, "Loading...");
 	}
 	glColor3f(1, 1, 1);
 	text_at(g, LABEL_AT, LABEL_AT, g->label);
@@ -773,6 +787,11 @@ static int arrange_key(struct gui *g, const char *buf, KeySym ks, int ctrl,
 		return 0;
 	}
 	if (ks == XK_F5) {
+		// Told before the reading, which takes a while.
+		g->loading = 1;
+		draw(g);
+		glXSwapBuffers(g->d, g->w);
+		g->loading = 0;
 		reload_scene(g);
 		return 0;
 	}
@@ -827,8 +846,12 @@ static void key(struct gui *g, XKeyEvent *e)
 		g->draw = 1;
 		return;
 	}
-	if (!strcmp(buf, "c")) {
-		scene_center(&g->s);
+	if (!strcmp(buf, "c") || !strcmp(buf, "C")) {
+		if (buf[0] == 'c') {
+			scene_center(&g->s);
+		} else {
+			scene_zoom_out(&g->s);
+		}
 		g->draw = 1;
 		return;
 	}
@@ -979,8 +1002,6 @@ static void open_window(struct gui *g, const char *path)
 	XFontStruct *font = NULL;
 	Window root = 0;
 	XEvent e;
-	char title[LABEL_LEN];
-	char *base = base_name(path);
 
 	g->d = XOpenDisplay(NULL);
 	if (!g->d) {
@@ -1003,9 +1024,7 @@ static void open_window(struct gui *g, const char *path)
 		g->d, root, 0, 0, (unsigned)g->s.cam.sz.w,
 		(unsigned)g->s.cam.sz.h, 0, vi->depth, InputOutput, vi->visual,
 		(unsigned long)CWColormap | (unsigned long)CWEventMask, &wa);
-	xsnprintf(title, "view %s", base);
-	free(base);
-	XStoreName(g->d, g->w, title);
+	vg_title(g->d, g->w, path, 0);
 	name_window(g);
 	g->close = XInternAtom(g->d, "WM_DELETE_WINDOW", False);
 	XSetWMProtocols(g->d, g->w, &g->close, 1);

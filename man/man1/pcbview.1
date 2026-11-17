@@ -38,6 +38,8 @@ Drill                       holes; 0.4 mm or less, a via's
 .RE
 .PP
 A file of no layer known is gray.
+The window's title is the absolute path of the directory of the first
+file, a slash at the end.
 It opens fitted to all the layers loaded, shown or not, as Space fits
 them; the wheel zooms round the pointer and the left button drags the
 view.
@@ -52,7 +54,7 @@ A click on a track, out of the pads, on a layer of copper shown, the
 topmost first, selects its connected track as KiCad does: the tracks of
 its net joined to it end to end where the end is in no pad (from pad to
 pad, or to a via); they are drawn brightened as a selected part, the
-net's name stands in the upper right corner, the part selected is
+net's name stands in a black box in the upper right corner, the part selected is
 cleared and nothing is printed; a click on anything else clears it.
 The selected part's records are drawn brightened as KiCad draws a
 selected item: each color c of brightness br (0.299 r + 0.587 g +
@@ -75,14 +77,19 @@ p           the solder paste
 e           the outline
 d           the holes
 a, A        all the layers on, all off (not z)
-z           draw the zones filled or as their outlines
+z           draw the zones filled or as their outlines (at
+            first outlines)
 c           center the selected part; again, with nothing
             changed in between, zoom in two times about it
+C           zoom out two times about the middle of the window,
+            centering nothing
 l           show or hide the bar of the layers
 Space       fit all
 F5          read the files again, the view, the layers shown and
-            their order kept
-Esc         deselect, here alone; hide the help
+            their order kept; Loading... in the upper right corner
+            meanwhile
+Esc         deselect the part and the track, here alone; hide
+            the help
 ?           a help of the keys, on and off
 q           quit
 .fi
@@ -105,7 +112,7 @@ outline over all the layers.
 A zone is a plane, from a region under a net.
 The bar at the top left has the key of each layer loaded, from the top
 down, on the layer's color if it is shown, plain if not, and last z, on
-gray while the zones are filled; the key of the layer drawn on top
+gray while the zones are filled (they start as outlines); the key of the layer drawn on top
 (Shift) is underlined; a click on a key does as the key.
 The pointer over a key names it at once, under the bar ("top copper
 (F.Cu)", "inner 1 (In1.Cu)", "silkscreen", "zones: filled", ...).
