@@ -309,11 +309,11 @@ struct pcb_stroke {
 // The silkscreen of the board, in the stroke font (stroke.h): the lines
 // of each placed part's footprint, its designator, and the text of each
 // text statement (its baseline's left end at X Y, its capitals H high).
-// A designator of a ref statement stands where it says.  Any other reads
-// along its courtyard's long side (turned for a part taller than wide),
-// on whichever long side has room, as large as fits from full size down
-// to 0.5 mm, at that size as near the courtyard as fits; failing both
-// long sides, a short side.  Room is clear of the mask openings and the
+// A designator of a ref statement stands where it says.  Any other takes
+// the first place with room: from full size down to 0.5 mm; at each size
+// on the long sides of its courtyard, then the short; reading along the
+// long side (turned for a part taller than wide), then the other way;
+// as near the courtyard as fits.  Room is clear of the mask openings and the
 // courtyards of the other parts of its side, of the designators of its
 // side placed before it, and inside the board by the edge rule; the
 // designators with the fewest places clear choose first; with none
@@ -324,10 +324,11 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s);
 // The box of the designator of part q among the strokes, if it has one.
 int pcb_ref_box(const struct pcb_stroke *s, size_t n, size_t q, double box[4]);
 // What would give the designator of part q room among the strokes, for
-// a fault, into buf: "; REF is W x H mm at SIZE (tried SIDES)", then, of
-// its four sides at 0.5 mm (in the middle, at the start or the end), the
-// one that needs least: clear, "; try: ref PART SIDE [ALIGN] [rot 90]
-// size 0.5"; else, if the parts past that side need to move out 2 mm at
+// a fault, into buf: "; REF is W x H mm at SIZE (tried SIDES)", then the
+// first place clear, searched as the rule does but at the gap, in the
+// middle, at the start or the end of a side, "; try: ref PART SIDE
+// [ALIGN] [rot 90] size S"; else, of its four sides at 0.5 mm, the one
+// that needs least: if the parts past that side need to move out 2 mm at
 // most, the part that needs most and the gap from it, to 0.1 mm, "; try:
 // place PART WAY of PART GAP (E mm more SIDE)"; else "; nothing within
 // 2 mm: move PART or a neighbor (NAME)", the part in the way.

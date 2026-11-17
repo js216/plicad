@@ -67,13 +67,14 @@ and each net's copper was made by its current statements for its pads
 where they stand: the fault says what changed.
 A designator stands as
 .IR pcb (5)
-says: by its ref statement, or by the rule, along its courtyard's long
-side, as large and as near as fits, the most cramped first.
+says: by its ref statement, or by the rule, as large as fits on any
+side either way, and as near as fits, the most cramped first.
 A fault of a designator over a pad or another designator ends with its
-size, the sides it tried, and the least change that clears it at 0.5
-mm: a ref statement (; try: ref PART SIDE size 0.5), else a gap of a
-place statement within 2 mm (; try: place PART WAY of PART GAP), else
-the part in the way (; nothing within 2 mm: move PART or a neighbor
+size, the sides it tried, and a change that clears it: the ref statement
+of the first place clear, searched as the rule searches (; try: ref
+PART SIDE size S), else, at 0.5 mm, the least gap of a place statement
+within 2 mm (; try: place PART WAY of PART GAP), else the part in the
+way (; nothing within 2 mm: move PART or a neighbor
 (NAME)).
 The text of a text statement must not run over an opening of the mask,
 off the board or over a cutout.

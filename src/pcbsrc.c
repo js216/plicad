@@ -2434,7 +2434,7 @@ static void ref_at(const char *sd, int a, const double c[4], double bw,
 
 #define RULE_SIZES 4 // The sizes a designator by rule tries: 0.8 to 0.5.
 #define RULE_GAPS 9 // The gaps it tries: SILK_GAP, out by 0.1 mm.
-#define RULE_PLACES (4 * RULE_SIZES * RULE_GAPS)
+#define RULE_PLACES (8 * RULE_SIZES * RULE_GAPS)
 
 // The box of a designator's text of capital height h, turned or not.
 static void ref_dims(const char *ref, double h, int rot, double *w, double *bh)
@@ -2446,49 +2446,38 @@ static void ref_dims(const char *ref, double h, int rot, double *w, double *bh)
 }
 
 // The places of a designator with no ref statement, in the order it
-// takes them: its text along the courtyard's long side (turned for a
-// part taller than wide); on the long sides first, then on the short
-// ones; on either of a pair, as large as fits, from full size down to
-// 0.5 mm, and at that size as near the courtyard as fits, centered on
+// takes them: from full size down to 0.5 mm, at each size on the long
+// sides first, then on the short ones; on either of a pair, its text
+// along the courtyard's long side (turned for a part taller than wide),
+// then the other way, and so as near the courtyard as fits, centered on
 // the side.  Returns their number.
 static size_t ref_places(const struct pcb_part *p, const char *ref,
 			 struct place *o)
 {
 	double c[4];
-	int rot;
-	size_t n = 0;
+	int tall;
 
 	pcb_court(p, c);
-	rot = c[3] - c[1] > c[2] - c[0];
-	for (int pair = 0; pair < 2; pair++) {
-		for (int z = 0; z < RULE_SIZES; z++) {
-			for (int g = 0; g < RULE_GAPS; g++) {
-				for (int side = 0; side < 2; side++) {
-					struct place *q = &o[n++];
-					double gap = SILK_GAP + 0.1 * g;
-					// Across the long axis (the long sides)
-					// or along it (the short).
-					int across = rot ? pair : !pair;
+	tall = c[3] - c[1] > c[2] - c[0];
+	for (int k = 0; k < RULE_PLACES; k++) {
+		struct place *q = &o[k];
+		int side = k % 2, r = k / (2 * RULE_GAPS) % 2;
+		double gap = SILK_GAP + 0.1 * (k / 2 % RULE_GAPS);
+		// Across the long axis (the long sides) or along it.
+		int across = tall == (k / (4 * RULE_GAPS) % 2);
 
-					q->size = SILK_H - 0.1 * z;
-					q->rot = rot;
-					ref_dims(ref, q->size, rot, &q->w,
-						 &q->h);
-					if (across) {
-						q->x = (c[0] + c[2] - q->w) / 2;
-						q->y = side ? c[1] - gap -
-								       q->h :
-							      c[3] + gap;
-					} else {
-						q->y = (c[1] + c[3] - q->h) / 2;
-						q->x = side ? c[2] + gap :
-							      c[0] - gap - q->w;
-					}
-				}
-			}
+		q->size = SILK_H - 0.1 * (k / (8 * RULE_GAPS));
+		q->rot = tall != r;
+		ref_dims(ref, q->size, q->rot, &q->w, &q->h);
+		if (across) {
+			q->x = (c[0] + c[2] - q->w) / 2;
+			q->y = side ? c[1] - gap - q->h : c[3] + gap;
+		} else {
+			q->y = (c[1] + c[3] - q->h) / 2;
+			q->x = side ? c[2] + gap : c[0] - gap - q->w;
 		}
 	}
-	return n;
+	return RULE_PLACES;
 }
 
 // The box of a place, its pen round it.
@@ -2729,7 +2718,8 @@ void pcb_ref_hint(const struct pcb *b, const struct pcb_stroke *s, size_t n,
 	size_t *owner = pcb_alloc((b->npart + 1) * sizeof *owner);
 	size_t nd = 0, who = b->npart;
 	double c[4], size = rs ? ref_size(rs) : 0.5, w, h, best = HUGE_VAL;
-	int rot, order[4], bs = -1, ba = 1, k = 0;
+	double bz = 0.5;
+	int rot, order[4], bs = -1, ba = 1, br = 0, k = 0;
 	char tried[40] = "";
 
 	pcb_court(p, c);
@@ -2757,26 +2747,32 @@ void pcb_ref_hint(const struct pcb *b, const struct pcb_stroke *s, size_t n,
 		snprintf(tried + strlen(tried), sizeof tried - strlen(tried),
 			 "%s%s", i ? ", " : "", sides[order[i]]);
 	}
-	// At 0.5 mm, on each side, in the middle, at the start and the end.
-	for (int i = 0; i < 4; i++) {
-		for (int j = 0; j < 3; j++) {
+	// As the rule: from 0.8 mm down, the first size with room; at each,
+	// on each side, either way, in the middle, at the start and the end;
+	// with none, what needs least at 0.5 mm.
+	for (int z = 0; z < RULE_SIZES && best > 1e-10; z++) {
+		bs = -1;
+		for (int i = 0; i < 24; i++) {
 			struct place pl;
 			double at[2], t[4], e;
 			size_t wh;
 
-			pl.size = 0.5;
-			pl.rot = rot;
-			ref_dims(p->ref, pl.size, rot, &pl.w, &pl.h);
-			ref_at(sides[order[i]], am[j], c, pl.w, pl.h, at);
+			pl.size = SILK_H - 0.1 * z;
+			pl.rot = rot != i / 3 % 2;
+			ref_dims(p->ref, pl.size, pl.rot, &pl.w, &pl.h);
+			ref_at(sides[order[i / 6]], am[i % 3], c, pl.w, pl.h,
+			       at);
 			pl.x = at[0];
 			pl.y = at[1];
 			place_box(&pl, t);
 			e = text_need(b, q, p->bottom, t, done, side, owner, nd,
-				      c, order[i], &wh);
+				      c, order[i / 6], &wh);
 			if (bs < 0 || e < best) {
 				best = e;
-				bs = order[i];
-				ba = am[j];
+				bs = order[i / 6];
+				ba = am[i % 3];
+				br = pl.rot;
+				bz = pl.size;
 				who = wh;
 			}
 		}
@@ -2789,8 +2785,8 @@ void pcb_ref_hint(const struct pcb *b, const struct pcb_stroke *s, size_t n,
 	best = ceil(best * 10 - 1e-9) / 10;
 	if (best == 0) {
 		snprintf(buf + k, len - (size_t)k,
-			 "; try: ref %s %s%s%s size 0.5", p->name, sides[bs],
-			 aligns[ba], rot ? " rot 90" : "");
+			 "; try: ref %s %s%s%s size %.1f", p->name, sides[bs],
+			 aligns[ba], br ? " rot 90" : "", bz);
 	} else if (best <= 2) {
 		double oc[4], d;
 
