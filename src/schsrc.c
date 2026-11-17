@@ -495,6 +495,7 @@ enum { ROOT, FROM, BESIDE, OF, BETWEEN }; // How a part is placed.
 
 struct place {
 	int kind, dir, line;
+	int gap; // Of WAY of PART N: the least gap between the boxes, or -1.
 	char *ref[2], *scope;
 	size_t pid[2], part; // The pins or the part it is placed against.
 	char *group; // Or the group, as its path and a dot ("ch1.").
@@ -1436,6 +1437,15 @@ static int place_of(size_t k)
 			       down_int(b[1]) - off -
 				       (pl->group ? up_int(b[3]) - oy : 0) :
 			       oy;
+		if (pl->gap >= 0) {
+			sch_box(q, c);
+			if ((dir == SCH_R ? c[0] - b[2] :
+			     dir == SCH_L ? b[0] - c[2] :
+			     dir == SCH_U ? c[1] - b[3] :
+					    b[1] - c[3]) < pl->gap - 1e-9) {
+				continue;
+			}
+		}
 		if (clear_unit(k)) {
 			return 1;
 		}
@@ -1874,6 +1884,7 @@ static void read_part(struct sch_shape *sh, char **w, int n)
 	q.line = line_no;
 	pl.kind = ROOT;
 	pl.dir = -1;
+	pl.gap = -1;
 	pl.line = line_no;
 	pl.scope = sch_strdup(group_path);
 	if (n < 2) {
@@ -1904,6 +1915,12 @@ static void read_part(struct sch_shape *sh, char **w, int n)
 			pl.dir = d;
 			pl.ref[0] = sch_strdup(w[i + 2]);
 			i += 2;
+			// WAY of PART N: N grid steps between the boxes.
+			if (pl.kind == OF && i + 1 < n &&
+			    strspn(w[i + 1], "0123456789") == strlen(w[i + 1]) &&
+			    integer(w[i + 1], &pl.gap)) {
+				i++;
+			}
 		} else if (!strcmp(w[i], "beside")) {
 			pl.kind = BESIDE;
 			pl.ref[0] = sch_strdup(w[++i]);
@@ -2026,7 +2043,15 @@ static void read_statement(char **w, int n)
 		}
 		depth--;
 	} else if (!strcmp(w[0], "note")) {
-		// For the people and the agents that read the source.
+		// For the people and the agents that read the source, and
+		// for the viewer, which shows it by its group.
+		struct sch_note nt;
+
+		nt.group = depth ? sch_strdup(group_path) : NULL;
+		nt.text = join(w, 1, n);
+		nt.line = line_no;
+		R->note = grow(R->note, R->nnote, sizeof *R->note);
+		R->note[R->nnote++] = nt;
 	} else if (!strcmp(w[0], "port") && n == 3) {
 		struct alias al;
 
@@ -2125,6 +2150,7 @@ static void flag_pin(size_t pid, const char *flag, const char *name)
 	f.side = -1;
 	f.line = line_no;
 	pl.kind = ROOT;
+	pl.gap = -1;
 	k = add_part(&f, &pl);
 	r = &pins[pid];
 	r->flagpart = (long)k;

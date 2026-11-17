@@ -116,6 +116,13 @@ struct sch_page {
 	size_t nport;
 };
 
+// A note of the source: the group it is said in, by its path (NULL
+// outside any group), its text and its line.
+struct sch_note {
+	char *group, *text;
+	int line;
+};
+
 // A page of the source, read: its number and name, and the pages of the
 // whole file.
 struct sch {
@@ -134,6 +141,8 @@ struct sch {
 	size_t nnet;
 	struct sch_hint *hint;
 	size_t nhint;
+	struct sch_note *note;
+	size_t nnote;
 	char **lib;
 	size_t nlib;
 	// The room the drawing keeps, in points at scale 1, from the clear

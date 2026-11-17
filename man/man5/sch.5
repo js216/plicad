@@ -42,7 +42,8 @@ PLACE is one of
 .RS
 .nf
 WAY from PIN            joined to the pin
-WAY of PART             next to the part, not joined
+WAY of PART [N]         next to the part, not joined, N grid
+                        steps between the two boxes at least
 beside PART [WAY]       in parallel with the part
 between PIN and PIN WAY joined to both pins, out the way past them
 .fi
@@ -96,8 +97,9 @@ BUF(1,2); a port on one page alone has no list.
 A port of the sheet on one page alone, in a file of several, is
 warned of.
 .B note
-is for the reader ("keep this loop small"); the programs pass over
-it.
+is for the reader ("keep this loop small"); schdraw writes it for the
+viewers by the group it is said in, and the printed sheet leaves it
+out.
 Notes never name designators.
 .SS Parts
 A part statement starts with its kind, the name of a symbol (resistor,
@@ -139,7 +141,8 @@ joins their pins of a kind at each end, and the line meets the bar in
 its middle.
 A row that would not be clear so stays as it was laid.
 .B of
-places a part next to another without joining them.
+places a part next to another without joining them, with N whole
+steps of the grid at least between their boxes if N is said.
 .B between
 places a part of two pins along the line of the two pins, out the way
 said past everything that stands across that span; its pin 1 joins the

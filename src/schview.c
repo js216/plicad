@@ -18,7 +18,9 @@
 // clears the selection here alone, and prints nothing.  A click on a
 // wire, a dot or a pin's end out of any part, or on a global's mark or
 // name, selects the net, drawn light cyan with its flags, its name in
-// the upper right corner.  The selected
+// the upper right corner.  A note is a khaki box with an N; the pointer
+// over it shows its text, wrapped, and lights its group's parts in
+// magenta.  The selected
 // part is drawn in light cyan, and its page shows when it is newly
 // selected; c centers it (again: zooms in two times), C zooms out two
 // times, F5 reads the file again (Loading... in the upper right
@@ -29,7 +31,7 @@
 // prev" and "page N".  So two viewers
 // cross-probe through two FIFOs, each one's stdout the other's stdin.
 
-#define _POSIX_C_SOURCE 200809L // For fmemopen.
+#define _POSIX_C_SOURCE 200809L // For fmemopen, open_memstream, strdup.
 
 #include "vecgl.h"
 #include <GL/gl.h>
@@ -97,7 +99,40 @@ static struct hit *hits;
 static size_t nhits;
 static int sel_net = -1; // The net selected, or -1.
 
-// The text and the sheet's frame and title block khaki (#BBBB99), the
+// The notes (vec(5) note X Y GROUP TEXT): the middle of the box, its
+// group (- outside any), its text and page; the boxes of each page, drawn
+// as a file of their own; the note under the pointer (-1 none).
+#define NOTE_BOX 10.0
+struct note {
+	double x, y;
+	char group[512], *text;
+	size_t page;
+};
+static struct note *notes;
+static size_t nnotes;
+static struct vg_file **note_files;
+static long hover = -1;
+static int px_at, py_at; // The pointer, in pixels.
+
+// Whether part k is of the group of the note under the pointer: its
+// name the group, or the group and a dot before the rest.
+static int in_hover_group(int k)
+{
+	const char *g, *name;
+	size_t n;
+
+	if (hover < 0 || k < 0) {
+		return 0;
+	}
+	g = notes[hover].group;
+	name = vg_part_name(k);
+	n = strlen(g);
+	return strcmp(g, "-") &&
+	       !strncmp(name, g, n) && (!name[n] || name[n] == '.');
+}
+
+// The parts of the group of the note under the pointer magenta
+// (#FF80FF); else the text
 // rest of the drawing a whiter gray (#D4D4D0), light cyan (#A0FFFF) for
 // the part or the net selected (its wires, dots and flags), or black
 // for what clears.
@@ -108,9 +143,11 @@ static void color(const struct vg_run *r)
 	static const double gray[3] = { 0xd4 / 255.0, 0xd4 / 255.0,
 					0xd0 / 255.0 };
 	static const double cyan[3] = { 0xa0 / 255.0, 1, 1 };
+	static const double magenta[3] = { 1, 0x80 / 255.0, 1 };
 	static const double black[3] = { 0, 0, 0 };
 
 	vg_color(!r->dark				    ? black :
+		 in_hover_group(r->part)		    ? magenta :
 		 (r->part >= 0 && r->part == vg_sel) ||
 				 (r->net >= 0 && r->net == sel_net) ?
 							    cyan :
@@ -145,6 +182,13 @@ static void turn(size_t p)
 	}
 }
 
+static void note_color(const struct vg_run *r)
+{
+	(void)r;
+	vg_color((const double[3]){ 0xbb / 255.0, 0xbb / 255.0, 0x99 / 255.0 },
+		 1);
+}
+
 static void draw(void)
 {
 	static int shown = -1; // The selection last turned to.
@@ -156,6 +200,49 @@ static void draw(void)
 		turn(page_of(vg_sel));
 	}
 	vg_draw(pages[now], all, color);
+	if (note_files[now]) {
+		vg_draw(note_files[now], all, note_color);
+	}
+}
+
+// The text of the note under the pointer, in a black box by the pointer,
+// wrapped at about 60 characters, inside the window.
+static void tooltip(const char *t)
+{
+	char line[16][80];
+	int n = 0, w = 0, x, y, lh = vg_font_h + 2;
+
+	while (*t && n < 16) {
+		size_t len = strlen(t), cut = len;
+
+		if (len > 60) {
+			cut = 60;
+			while (cut > 20 && t[cut] != ' ') {
+				cut--;
+			}
+			if (t[cut] != ' ') {
+				cut = 60;
+			}
+		}
+		snprintf(line[n], sizeof line[n], "%.*s", (int)cut, t);
+		w = (int)strlen(line[n]) > w ? (int)strlen(line[n]) : w;
+		n++;
+		t += cut;
+		t += strspn(t, " ");
+	}
+	w = w * vg_font_w + 12;
+	x = px_at + 16;
+	y = vg_h - py_at - 16; // The top of the box, from the bottom.
+	x = x + w > vg_w ? vg_w - w : x;
+	x = x < 0 ? 0 : x;
+	y = y - n * lh - 8 < 0 ? n * lh + 8 : y;
+	y = y > vg_h ? vg_h : y;
+	glColor3d(0, 0, 0);
+	glRecti(x, y, x + w, y - n * lh - 8);
+	glColor3d(1, 1, 1);
+	for (int k = 0; k < n; k++) {
+		vg_text(x + 6, y - 4 - (k + 1) * lh + 2, line[k]);
+	}
 }
 
 // The page number being typed after g, at the top left, and the name of
@@ -175,6 +262,9 @@ static void overlay(void)
 	}
 	if (sel_net >= 0) {
 		vg_corner(vg_net_name(sel_net));
+	}
+	if (hover >= 0) {
+		tooltip(notes[hover].text);
 	}
 }
 
@@ -288,6 +378,27 @@ static int flag_click(double x, double y, double tol)
 }
 
 static int pick(double x, double y, double tol);
+
+// The pointer moved: the note under it, if any, shown; the selection
+// unchanged.
+static int move(int px, int py)
+{
+	long was = hover;
+	double x = vg_x + (px - vg_w / 2) / vg_zoom;
+	double y = vg_y - (py - vg_h / 2) / vg_zoom;
+
+	px_at = px;
+	py_at = py;
+	hover = -1;
+	for (size_t i = 0; px >= 0 && i < nnotes; i++) {
+		if (notes[i].page == now &&
+		    fabs(notes[i].x - x) <= NOTE_BOX / 2 &&
+		    fabs(notes[i].y - y) <= NOTE_BOX / 2) {
+			hover = (long)i;
+		}
+	}
+	return hover != was || hover >= 0;
+}
 
 // A click: on a flag, as flag_click; on a part, the part (vgview's); on
 // a wire, a dot or a pin's end out of any part, within 3 pixels, its
@@ -407,6 +518,24 @@ static void read_page(const char *buf, size_t len, size_t pg)
 			nsp++;
 			continue;
 		}
+		if (!strncmp(line, "note ", 5)) {
+			struct note nt;
+			int o = 0;
+
+			memset(&nt, 0, sizeof nt);
+			if (sscanf(line, "note %lf %lf %511s %n", &nt.x, &nt.y,
+				   nt.group, &o) == 3 &&
+			    o) {
+				nt.text = strdup(line + o);
+				nt.page = pg;
+				notes = realloc(notes,
+						(nnotes + 1) * sizeof *notes);
+				if (!notes || !nt.text) {
+					exit(2);
+				}
+				notes[nnotes++] = nt;
+			}
+		}
 		if (!strncmp(line, "flag ", 5)) {
 			struct flag f;
 
@@ -504,6 +633,46 @@ static void read_page(const char *buf, size_t len, size_t pg)
 	}
 }
 
+// The boxes of the notes of page pg, each with an N in it, into a file of
+// their own.
+static void note_boxes(size_t pg)
+{
+	char *text = NULL;
+	size_t len = 0;
+	FILE *out = open_memstream(&text, &len), *in;
+	double h = NOTE_BOX / 2;
+
+	note_files = realloc(note_files, (pg + 1) * sizeof *note_files);
+	if (!note_files || !out) {
+		exit(2);
+	}
+	note_files[pg] = NULL;
+	for (size_t i = 0; i < nnotes; i++) {
+		const struct note *nt = &notes[i];
+
+		if (nt->page != pg) {
+			continue;
+		}
+		fprintf(out, "line 0.6 %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f "
+			     "%.3f %.3f\n",
+			nt->x - h, nt->y - h, nt->x + h, nt->y - h, nt->x + h,
+			nt->y + h, nt->x - h, nt->y + h, nt->x - h, nt->y - h);
+		fprintf(out, "text S %.3f 0 1 %.3f %.3f N\n", NOTE_BOX / 2,
+			nt->x, nt->y - NOTE_BOX / 4);
+	}
+	fclose(out);
+	in = len ? fmemopen(text, len, "r") : NULL;
+	if (in) {
+		note_files[pg] = calloc(1, sizeof **note_files);
+		if (!note_files[pg]) {
+			exit(2);
+		}
+		vg_load_stream(note_files[pg], in, 0);
+		fclose(in);
+	}
+	free(text);
+}
+
 // Reads the file, a page from each page record to the next.
 static void load(void)
 {
@@ -516,6 +685,11 @@ static void load(void)
 	npages = 0;
 	nflags = 0;
 	nhits = 0;
+	for (size_t i = 0; i < nnotes; i++) {
+		free(notes[i].text);
+	}
+	nnotes = 0;
+	hover = -1;
 	sel_net = -1;
 	if (!in) {
 		fprintf(stderr, "schview: cannot read %s\n", path);
@@ -544,6 +718,7 @@ static void load(void)
 			vg_load_stream(pages[npages], m, 0);
 			fclose(m);
 			read_page(buf, len, npages);
+			note_boxes(npages);
 			// Its number from its page record, page W H N.
 			pg = !strncmp(buf, "page ", 5) ? buf :
 							 strstr(buf, "\npage ");
@@ -586,6 +761,10 @@ static void reload(void)
 	for (size_t p = 0; p < npages; p++) {
 		vg_free(pages[p]);
 		free(pages[p]);
+		if (note_files[p]) {
+			vg_free(note_files[p]);
+			free(note_files[p]);
+		}
 	}
 	load();
 }
@@ -600,6 +779,7 @@ int main(int argc, char **argv)
 					    .key = key,
 					    .command = command,
 					    .click = click,
+					    .move = move,
 					    .reload = reload };
 	int i = vg_start(argc, argv, &v);
 

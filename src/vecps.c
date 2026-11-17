@@ -23,7 +23,7 @@
 // to pages as schview(1) follows its clicks: its circle and name to the
 // first page it lists other than its own, each number of its list but
 // its own to that page (pdfmark /Link, /Fit, no border); a global links
-// nowhere.
+// nowhere.  Note records are for the viewers: none is printed.
 //
 // A region render (-r, or -p) crops to a window and names what is in it:
 // -r X0 Y0 X1 Y1 is the window; -p PART (by its name or designator,

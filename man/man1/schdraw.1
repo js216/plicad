@@ -28,6 +28,14 @@ on, its own too, as BUF(1,2), each piece of the list a text record of
 its own; a port on one page alone has none.
 A flag record says whether its flag is a port of the sheet or a global,
 and a flag is drawn between the records of its net.
+Each note of the source is a note record, for the viewers: its group,
+its text and the middle of its box, which stands at a corner of the
+box of its group's bodies (of all the page's, for a note outside any
+group), stepped out along the diagonal until clear of everything drawn
+(wires, dots, symbols, all text, flags, the frame and title block and
+the other notes' boxes); the notes of one group stand side by side.
+A note that finds no room is left out, with a warning:
+FILE:LINE: warning: no room for the note box of GROUP.
 The records of each part are bracketed by its name (the path of its
 groups and its own, as outputs.ch1.gain.rf), with its box named, and those of
 each net by the net's name, for

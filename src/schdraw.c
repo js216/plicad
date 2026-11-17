@@ -63,6 +63,7 @@
 #define DESCENT SCH_DESCENT
 #define PINNUM 3.25 // The pin numbers of an integrated circuit.
 #define HELV_CAP 0.72 // The capital height of a template's text, by its em.
+#define NOTE_BOX 10.0 // The side of the box of a note, in points of the page.
 #define MARGIN 8 // Grid units round everything, for the router.
 #define SPREAD_MIN 2 // The least gap between blocks spread, in grid units.
 
@@ -1471,6 +1472,197 @@ static void pin_ends(const struct sch_part *q)
 	}
 }
 
+static int body(size_t i, double b[4]);
+
+// The note boxes placed so far, in points of the drawing.
+static double (*note_box)[4];
+static size_t nnote_box;
+
+static int boxes_meet(const double *a, const double *b)
+{
+	return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+}
+
+// Whether a note's box, in points of the drawing, is clear of all that
+// is drawn, a point apart, and inside the room (r, in points of the
+// drawing): the wires and dots, the bodies of the parts and the flags,
+// all their text, and the other notes' boxes.
+static int note_clear(const double nb[4], const double r[4])
+{
+	double b[4] = { nb[0] - 1, nb[1] - 1, nb[2] + 1, nb[3] + 1 }, c[4];
+	double tx, ty;
+	int al;
+
+	if (nb[0] < r[0] || nb[1] < r[1] || nb[2] > r[2] || nb[3] > r[3]) {
+		return 0;
+	}
+	for (size_t i = 0; i < npolys; i++) {
+		const struct poly *p = &polys[i];
+
+		for (size_t j = 0; j < p->n; j++) {
+			size_t k = j + 1 < p->n ? j + 1 : j;
+
+			c[0] = fmin(p->xy[2 * j], p->xy[2 * k]) * GRID - DOT_R;
+			c[1] = fmin(p->xy[2 * j + 1], p->xy[2 * k + 1]) * GRID -
+			       DOT_R;
+			c[2] = fmax(p->xy[2 * j], p->xy[2 * k]) * GRID + DOT_R;
+			c[3] = fmax(p->xy[2 * j + 1], p->xy[2 * k + 1]) * GRID +
+			       DOT_R;
+			if (boxes_meet(b, c)) {
+				return 0;
+			}
+		}
+	}
+	for (size_t i = 0; i < S.npart; i++) {
+		const struct sch_part *q = &S.part[i];
+		const struct label *l = &labels[i];
+
+		body(i, c);
+		if (boxes_meet(b, c)) {
+			return 0;
+		}
+		if (q->dev->shape->flag && flag_box(q, c, &tx, &ty, &al) &&
+		    boxes_meet(b, c)) {
+			return 0;
+		}
+		if (l->nline) {
+			const double t[4] = { l->x, l->y, l->x + l->w,
+					      l->y + l->h };
+
+			if (boxes_meet(b, t)) {
+				return 0;
+			}
+		}
+		for (size_t p = 0; p < q->dev->shape->npin; p++) {
+			if (pin_number_at(q, p, &tx, &ty, &al)) {
+				const double t[4] = { tx - 4, ty - 1, tx + 4,
+						      ty + PINNUM + 1 };
+
+				if (boxes_meet(b, t)) {
+					return 0;
+				}
+			}
+		}
+	}
+	for (size_t i = 0; i < nnote_box; i++) {
+		if (boxes_meet(b, note_box[i])) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+// Writes a note record for each note of the page, its box placed by its
+// group: at a corner of the box of the bodies of the group's parts (of
+// all parts, for a note outside any group), stepped out along the
+// diagonal until it is clear of all the drawing, the frame and the
+// title block (the room, in points of the page); the notes of one group
+// side by side.  The record gives the box's center; it is NOTE_BOX
+// units square, for the viewers alone.
+static void write_notes(const double room[4])
+{
+	const double r[4] = { (room[0] - OX) / SC, (room[1] - OY) / SC,
+			      (room[2] - OX) / SC, (room[3] - OY) / SC };
+	double side = NOTE_BOX / SC;
+	char *done = sch_alloc(S.nnote + 1);
+
+	nnote_box = 0;
+	note_box = sch_alloc((S.nnote + 1) * sizeof *note_box);
+	for (size_t i = 0; i < S.nnote; i++) {
+		const char *g = S.note[i].group;
+		size_t gl = g ? strlen(g) : 0, row = 0, first = nnote_box;
+		double e[4] = { 1e300, 1e300, -1e300, -1e300 }, c[4];
+		int found = 0;
+
+		if (done[i]) {
+			continue;
+		}
+		for (size_t k = 0; k < S.npart; k++) {
+			if (S.part[k].dev->shape->flag ||
+			    (g && (strncmp(S.part[k].name, g, gl) ||
+				   S.part[k].name[gl] != '.'))) {
+				continue;
+			}
+			body(k, c);
+			e[0] = fmin(e[0], c[0]);
+			e[1] = fmin(e[1], c[1]);
+			e[2] = fmax(e[2], c[2]);
+			e[3] = fmax(e[3], c[3]);
+		}
+		if (e[2] < e[0]) {
+			e[0] = e[2] = (r[0] + r[2]) / 2;
+			e[1] = e[3] = (r[1] + r[3]) / 2;
+		}
+		for (size_t j = i; j < S.nnote; j++) {
+			const char *h = S.note[j].group;
+
+			row += !done[j] && (g ? h && !strcmp(g, h) : !h);
+		}
+		// Each corner in turn, a step further out each round: the
+		// upper left, the upper right, the lower left, the lower right,
+		// the row going out from the box.
+		for (int step = 0; !found && step < 400; step++) {
+			for (int k = 0; !found && k < 4; k++) {
+				int right = k % 2, up = k < 2;
+				double d = step * GRID / 2;
+				double x = right ? e[2] + d : e[0] - d - side;
+				double y = up ? e[3] + d : e[1] - d - side;
+				int ok = 1;
+
+				nnote_box = first;
+				for (size_t m = 0; ok && m < row; m++) {
+					double bx = x + (right ? 1 : -1) *
+								(double)m *
+								(side + 2);
+					double *nb = note_box[nnote_box];
+
+					nb[0] = bx;
+					nb[1] = y;
+					nb[2] = bx + side;
+					nb[3] = y + side;
+					ok = note_clear(nb, r);
+					nnote_box += ok ? 1 : 0;
+				}
+				found = ok;
+			}
+		}
+		if (!found) {
+			// No room: the group's notes are left out of the view.
+			nnote_box = first;
+			for (size_t j = i; j < S.nnote; j++) {
+				const char *h = S.note[j].group;
+
+				if (!done[j] && (g ? h && !strcmp(g, h) : !h)) {
+					done[j] = 1;
+					fprintf(stderr,
+						"%s:%d: warning: no room for the "
+						"note box of %s\n",
+						S.file, S.note[j].line,
+						g ? g : "-");
+				}
+			}
+			continue;
+		}
+		for (size_t j = i, m = first; j < S.nnote; j++) {
+			const char *h = S.note[j].group;
+			const double *nb;
+
+			if (done[j] || !(g ? h && !strcmp(g, h) : !h)) {
+				continue;
+			}
+			done[j] = 1;
+			nb = note_box[m++];
+			printf("note %.3f %.3f %s %s\n",
+			       OX + (nb[0] + nb[2]) / 2 * SC,
+			       OY + (nb[1] + nb[3]) / 2 * SC, g ? g : "-",
+			       S.note[j].text);
+		}
+	}
+	free(done);
+	free(note_box);
+	note_box = NULL;
+}
+
 // Writes the sheet as vec(5): the template, then each net's wires and
 // dots, then each part, its symbol and its text, and the flags.
 static void write_vec(void)
@@ -1600,6 +1792,7 @@ static void write_vec(void)
 		}
 		printf("part\n");
 	}
+	write_notes(room);
 }
 
 // The distance between two boxes, x0 y0 x1 y1.

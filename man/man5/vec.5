@@ -39,6 +39,7 @@ net                     and end
 pin REF.PIN X Y         a pin of a part: its end, or its pad's center
 flag NET X Y port|global
                         the end of the pin of a flag of a net
+note X Y GROUP TEXT     a note of a sheet, for the viewers
 # TEXT                  a comment
 .fi
 .RE
@@ -111,5 +112,9 @@ The text records just before a flag record are the flag's text, a
 record a span: a port's name, then each piece of its list of pages, the
 bracket, each number and each comma, a text of its own; so a viewer or
 a printer knows where each page number stands.
+A note record is a note of the source of a sheet: the middle of its
+box, a square of 10 units, the group it is said in by its full path
+(- outside any group) and its text, to the end of the line; it draws
+nothing on paper, and a viewer shows it as a box that tells the text.
 .SH SEE ALSO
 gbrvec(1), vecps(1), pcbview(1), schview(1)
