@@ -10,8 +10,9 @@
 // parts it is placed against kept theirs; any other part is placed
 // anew, among the others as they stand, which nothing moves.  So an
 // edit of one statement moves that part and those placed against it,
-// and nothing else.  The copper of the lock is passed on as it is;
-// pcbroute tells what has gone stale.
+// and nothing else.  Placement is best effort: the same source and
+// lock need not give the same places.  The copper of the lock is
+// passed on as it is; pcbroute tells what has gone stale.
 //
 // The statements, in mm and degrees:
 //   fix PART at X Y [rot R] [bottom]     where the mechanics put it

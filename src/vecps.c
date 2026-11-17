@@ -13,7 +13,8 @@
 // with page records is drawn as those pages instead, each at its size and
 // scale 1: page k of each file, its records from its k-th page record to
 // the next (those before the first are of the first), on page k of the
-// PostScript.  Clear polarity is drawn white.  Text in the stroke font
+// PostScript.  Clear polarity erases what its file drew before and
+// nothing of the other files (vec(5)).  Text in the stroke font
 // S is drawn stroke by stroke (stroke.h); other text is set in Helvetica,
 // or Helvetica-Oblique for the font I, in ISO Latin-1 (but - is the
 // hyphen, as in the fonts' own encoding).  With -n the
@@ -225,164 +226,285 @@ static void port_links(const struct span *sp, int n, double x, double y, int k)
 	}
 }
 
+// The spans of the port read so far, of the file drawn.
+struct pen {
+	struct span sp[32];
+	int nsp;
+};
+
+// Draws a record of a file in the color, filled or outlined, of its
+// page k (from 1), or of all of it for k 0.
+static void record(char *buf, const double rgb[3], int outline, int names,
+		   int k, int links, struct pen *pn)
+{
+	char *s = buf + strcspn(buf, " \n"), *end;
+	char net[512], kind[16];
+	double fx, fy;
+	int sat = 0;
+
+	// The texts before a flag of a port are its spans.
+	if (k &&
+	    sscanf(buf, "text %c %lf %*f %*d %lf %lf %n",
+		   &pn->sp[pn->nsp < 32 ? pn->nsp : 31].font,
+		   &pn->sp[pn->nsp < 32 ? pn->nsp : 31].size,
+		   &pn->sp[pn->nsp < 32 ? pn->nsp : 31].x,
+		   &pn->sp[pn->nsp < 32 ? pn->nsp : 31].y, &sat) == 4 &&
+	    sat) {
+		struct span *q = &pn->sp[pn->nsp < 32 ? pn->nsp : 31];
+
+		buf[strcspn(buf, "\n")] = 0;
+		copy_prefix(q->t, sizeof q->t, buf + sat, strlen(buf + sat));
+		pn->nsp += pn->nsp < 32;
+	} else if (k && sscanf(buf, "flag %511s %lf %lf %15s", net, &fx, &fy,
+			       kind) == 4) {
+		if (!strcmp(kind, "port") && links) {
+			port_links(pn->sp, pn->nsp, fx, fy, k);
+		}
+		pn->nsp = 0;
+	} else {
+		pn->nsp = 0;
+	}
+	if (!strncmp(buf, "dark", 4)) {
+		printf("%.3f %.3f %.3f setrgbcolor\n", rgb[0], rgb[1], rgb[2]);
+	} else if (!strncmp(buf, "clear", 5)) {
+		if (!outline) {
+			printf("1 setgray\n");
+		}
+	} else if (!strncmp(buf, "disk", 4)) {
+		double v[3] = { 0, 0, 0 };
+
+		for (int n = 0; n < 3; n++) {
+			v[n] = strtod(s, &end);
+			s = end;
+		}
+		printf("newpath %.4f %.4f %.4f 0 360 arc closepath %s\n", v[0],
+		       v[1], v[2], outline ? "stroke" : "fill");
+	} else if (!strncmp(buf, "line", 4)) {
+		double w = strtod(s, &end);
+		int first = 1;
+
+		s = end;
+		printf("%.4f setlinewidth newpath", outline ? 0.05 : w);
+		for (;;) {
+			double x = strtod(s, &end), y;
+
+			if (end == s) {
+				break;
+			}
+			s = end;
+			y = strtod(s, &end);
+			s = end;
+			printf(" %.4f %.4f %s", x, y,
+			       first ? "moveto" : "lineto");
+			first = 0;
+		}
+		printf(" stroke\n");
+	} else if (!strncmp(buf, "poly", 4)) {
+		int first = 1;
+
+		printf("newpath");
+		for (;;) {
+			double x = strtod(s, &end), y;
+
+			if (end == s) {
+				break;
+			}
+			s = end;
+			y = strtod(s, &end);
+			s = end;
+			printf(" %.4f %.4f %s", x, y,
+			       first ? "moveto" : "lineto");
+			first = 0;
+		}
+		printf(" closepath %s\n", outline ? "stroke" : "fill");
+	} else if (!strncmp(buf, "text ", 5)) {
+		char font;
+		double size, angle, x, y;
+		int align, at = 0;
+
+		if (sscanf(buf, "text %c %lf %lf %d %lf %lf %n", &font, &size,
+			   &angle, &align, &x, &y, &at) == 6 &&
+		    at > 0 && font == 'S') {
+			// The font of strokes, drawn stroke by stroke.
+			double *sg;
+			size_t n;
+
+			buf[strcspn(buf, "\n")] = 0;
+			n = stroke_text(buf + at, size, &sg);
+			printf("gsave %.3f %.3f translate %.3f rotate "
+			       "%.4f 0 translate %.4f setlinewidth "
+			       "newpath",
+			       x, y, angle,
+			       -stroke_width(buf + at, size) * align / 2,
+			       STROKE_PEN * size);
+			for (size_t j = 0; j < n; j++) {
+				printf(" %.4f %.4f moveto %.4f %.4f lineto",
+				       sg[4 * j], sg[4 * j + 1], sg[4 * j + 2],
+				       sg[4 * j + 3]);
+			}
+			printf(" stroke grestore\n");
+			free(sg);
+		} else if (at > 0) {
+			buf[strcspn(buf, "\n")] = 0;
+			printf("/%s findfont %.3f scalefont setfont "
+			       "%.3f %.3f moveto gsave %.3f rotate ",
+			       font == 'I' ? "VecI" : "VecR", size, x, y,
+			       angle);
+			ps_string(buf + at);
+			printf(" dup stringwidth pop %d mul -2 div 0 "
+			       "rmoveto show grestore\n",
+			       align);
+		}
+	} else if (!strncmp(buf, "name", 4) && names) {
+		char name[512];
+		double b[4];
+
+		if (sscanf(buf, "name %511s %lf %lf %lf %lf", name, &b[0],
+			   &b[1], &b[2], &b[3]) == 5 &&
+		    b[2] - b[0] < 50) {
+			printf("gsave 0 setgray (%s) dup stringwidth pop 2 div neg "
+			       "%.4f add %.4f moveto show grestore\n",
+			       name, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2);
+		}
+	}
+}
+
+// Clips off the copper a clear record takes (a poly, a disk or a line,
+// each segment of it): the clip is what it was less the record, as the
+// even-odd interior of the box Cbox and the record's outline.
+static void clip_off(char *buf)
+{
+	char *s = buf + strcspn(buf, " \n"), *end;
+	double v[3], w, x0 = 0, y0 = 0;
+	int first = 1;
+
+	if (!strncmp(buf, "disk", 4)) {
+		for (int n = 0; n < 3; n++) {
+			v[n] = strtod(s, &end);
+			s = end;
+		}
+		printf("newpath Cbox %.4f %.4f moveto %.4f %.4f %.4f 0 360 arc "
+		       "closepath eoclip newpath\n",
+		       v[0] + v[2], v[1], v[0], v[1], v[2]);
+	} else if (!strncmp(buf, "poly", 4)) {
+		printf("newpath Cbox");
+		for (;;) {
+			double x = strtod(s, &end), y;
+
+			if (end == s) {
+				break;
+			}
+			s = end;
+			y = strtod(s, &end);
+			s = end;
+			printf(" %.4f %.4f %s", x, y,
+			       first ? "moveto" : "lineto");
+			first = 0;
+		}
+		printf(" closepath eoclip newpath\n");
+	} else if (!strncmp(buf, "line", 4)) {
+		w = strtod(s, &end);
+		s = end;
+		// A segment at a time: the outline of one is simple.
+		for (;;) {
+			double x = strtod(s, &end), y;
+
+			if (end == s) {
+				break;
+			}
+			s = end;
+			y = strtod(s, &end);
+			s = end;
+			if (!first) {
+				printf("newpath %.4f setlinewidth %.4f %.4f moveto "
+				       "%.4f %.4f lineto strokepath Cbox eoclip "
+				       "newpath\n",
+				       w, x0, y0, x, y);
+			}
+			x0 = x;
+			y0 = y;
+			first = 0;
+		}
+	}
+}
+
 // Draws a file in the color, filled or outlined: its page k (from 1),
-// or all of it for k 0.
+// or all of it for k 0.  What it clears (vec(5)) erases what it drew
+// before and nothing of the other files: each run of its dark records
+// is drawn clipped off every clear record after it.
 static void draw(const char *path, const double rgb[3], int outline, int names,
 		 int k, int links)
 {
 	FILE *f = fopen(path, "r");
-	char *buf = malloc(LINE);
-	int now = 1, seen = 0, nsp = 0;
-	struct span sp[32];
+	char *buf = malloc(LINE), **line = NULL;
+	size_t n = 0, nclear = 0;
+	int now = 1, seen = 0;
+	struct pen pn = { .nsp = 0 };
 
 	if (!f || !buf) {
 		die(path, "cannot read");
 	}
-	printf("%.3f %.3f %.3f setrgbcolor\n", rgb[0], rgb[1], rgb[2]);
 	while (fgets(buf, LINE, f)) {
-		char *s = buf + strcspn(buf, " \n"), *end;
-		char net[512], kind[16];
-		double fx, fy;
-		int sat = 0;
-
 		if (!strncmp(buf, "page ", 5) && seen++) {
 			now++;
 		}
 		if (k && now != k) {
 			continue;
 		}
-		// The texts before a flag of a port are its spans.
-		if (k &&
-		    sscanf(buf, "text %c %lf %*f %*d %lf %lf %n",
-			   &sp[nsp < 32 ? nsp : 31].font,
-			   &sp[nsp < 32 ? nsp : 31].size,
-			   &sp[nsp < 32 ? nsp : 31].x,
-			   &sp[nsp < 32 ? nsp : 31].y, &sat) == 4 &&
-		    sat) {
-			struct span *q = &sp[nsp < 32 ? nsp : 31];
-
-			buf[strcspn(buf, "\n")] = 0;
-			copy_prefix(q->t, sizeof q->t, buf + sat,
-				    strlen(buf + sat));
-			nsp += nsp < 32;
-		} else if (k && sscanf(buf, "flag %511s %lf %lf %15s", net, &fx,
-				       &fy, kind) == 4) {
-			if (!strcmp(kind, "port") && links) {
-				port_links(sp, nsp, fx, fy, k);
-			}
-			nsp = 0;
-		} else {
-			nsp = 0;
+		line = realloc(line, (n + 1) * sizeof *line);
+		if (!line || !(line[n] = strdup(buf))) {
+			die(path, "out of memory");
 		}
-		if (!strncmp(buf, "dark", 4)) {
-			printf("%.3f %.3f %.3f setrgbcolor\n", rgb[0], rgb[1],
-			       rgb[2]);
-		} else if (!strncmp(buf, "clear", 5)) {
-			if (!outline) {
-				printf("1 setgray\n");
-			}
-		} else if (!strncmp(buf, "disk", 4)) {
-			double v[3] = { 0, 0, 0 };
-
-			for (int n = 0; n < 3; n++) {
-				v[n] = strtod(s, &end);
-				s = end;
-			}
-			printf("newpath %.4f %.4f %.4f 0 360 arc closepath %s\n",
-			       v[0], v[1], v[2], outline ? "stroke" : "fill");
-		} else if (!strncmp(buf, "line", 4)) {
-			double w = strtod(s, &end);
-			int first = 1;
-
-			s = end;
-			printf("%.4f setlinewidth newpath", outline ? 0.05 : w);
-			for (;;) {
-				double x = strtod(s, &end), y;
-
-				if (end == s) {
-					break;
-				}
-				s = end;
-				y = strtod(s, &end);
-				s = end;
-				printf(" %.4f %.4f %s", x, y,
-				       first ? "moveto" : "lineto");
-				first = 0;
-			}
-			printf(" stroke\n");
-		} else if (!strncmp(buf, "poly", 4)) {
-			int first = 1;
-
-			printf("newpath");
-			for (;;) {
-				double x = strtod(s, &end), y;
-
-				if (end == s) {
-					break;
-				}
-				s = end;
-				y = strtod(s, &end);
-				s = end;
-				printf(" %.4f %.4f %s", x, y,
-				       first ? "moveto" : "lineto");
-				first = 0;
-			}
-			printf(" closepath %s\n", outline ? "stroke" : "fill");
-		} else if (!strncmp(buf, "text ", 5)) {
-			char font;
-			double size, angle, x, y;
-			int align, at = 0;
-
-			if (sscanf(buf, "text %c %lf %lf %d %lf %lf %n", &font,
-				   &size, &angle, &align, &x, &y, &at) == 6 &&
-			    at > 0 && font == 'S') {
-				// The font of strokes, drawn stroke by stroke.
-				double *sg;
-				size_t n;
-
-				buf[strcspn(buf, "\n")] = 0;
-				n = stroke_text(buf + at, size, &sg);
-				printf("gsave %.3f %.3f translate %.3f rotate "
-				       "%.4f 0 translate %.4f setlinewidth "
-				       "newpath",
-				       x, y, angle,
-				       -stroke_width(buf + at, size) * align /
-					       2,
-				       STROKE_PEN * size);
-				for (size_t j = 0; j < n; j++) {
-					printf(" %.4f %.4f moveto %.4f %.4f lineto",
-					       sg[4 * j], sg[4 * j + 1],
-					       sg[4 * j + 2], sg[4 * j + 3]);
-				}
-				printf(" stroke grestore\n");
-				free(sg);
-			} else if (at > 0) {
-				buf[strcspn(buf, "\n")] = 0;
-				printf("/%s findfont %.3f scalefont setfont "
-				       "%.3f %.3f moveto gsave %.3f rotate ",
-				       font == 'I' ? "VecI" : "VecR", size, x,
-				       y, angle);
-				ps_string(buf + at);
-				printf(" dup stringwidth pop %d mul -2 div 0 "
-				       "rmoveto show grestore\n",
-				       align);
-			}
-		} else if (!strncmp(buf, "name", 4) && names) {
-			char name[512];
-			double b[4];
-
-			if (sscanf(buf, "name %511s %lf %lf %lf %lf", name,
-				   &b[0], &b[1], &b[2], &b[3]) == 5 &&
-			    b[2] - b[0] < 50) {
-				printf("gsave 0 setgray (%s) dup stringwidth pop 2 div neg "
-				       "%.4f add %.4f moveto show grestore\n",
-				       name, (b[0] + b[2]) / 2,
-				       (b[1] + b[3]) / 2);
-			}
-		}
+		nclear += !strncmp(buf, "clear", 5);
+		n++;
 	}
 	fclose(f);
 	free(buf);
+	printf("%.3f %.3f %.3f setrgbcolor\n", rgb[0], rgb[1], rgb[2]);
+	if (!nclear || outline) {
+		for (size_t i = 0; i < n; i++) {
+			record(line[i], rgb, outline, names, k, links, &pn);
+		}
+	} else {
+		// The box of the clip, about all the page shows.
+		printf("gsave clippath pathbbox grestore /Cy1 exch def "
+		       "/Cx1 exch def /Cy0 exch def /Cx0 exch def\n"
+		       "/Cbox { Cx0 Cy0 moveto Cx1 Cy0 lineto Cx1 Cy1 lineto "
+		       "Cx0 Cy1 lineto closepath } def\n");
+		for (size_t i = 0, j; i < n; i = j) {
+			int dark = 1;
+
+			if (!strncmp(line[i], "clear", 5)) {
+				// Its records clip the runs before it.
+				for (j = i + 1;
+				     j < n && strncmp(line[j], "dark", 4);
+				     j++) {
+				}
+				continue;
+			}
+			for (j = i; j < n && strncmp(line[j], "clear", 5);
+			     j++) {
+			}
+			printf("gsave\n");
+			for (size_t m = j; m < n; m++) {
+				dark = !strncmp(line[m], "dark", 4)  ? 1 :
+				       !strncmp(line[m], "clear", 5) ? 0 :
+								       dark;
+				if (!dark) {
+					clip_off(line[m]);
+				}
+			}
+			for (size_t m = i; m < j; m++) {
+				record(line[m], rgb, outline, names, k, links,
+				       &pn);
+			}
+			printf("grestore\n");
+		}
+	}
+	for (size_t i = 0; i < n; i++) {
+		free(line[i]);
+	}
+	free(line);
 }
 
 // The parts the files name: by name, their designators and boxes.

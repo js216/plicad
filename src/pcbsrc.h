@@ -302,7 +302,8 @@ int pcb_opening(const struct pcb *b, size_t q, size_t k, int bottom,
 double pcb_spot_dist(const struct pcb_spot *s, double x, double y);
 // The points of a pad a track joins it at: its center; but for a pad at
 // least twice as long as wide (a long pad) its two ends, each a half
-// width in from the end.  Returns their number, 1 or 2.
+// width in from the end, and any point of the line between them.
+// Returns the number of points given, 1 or 2.
 int pcb_pad_ends(const struct pcb_spot *s, double p[2][2]);
 // Whether pad k of part q is soldered: a pad with paste, or a plated
 // hole; a contact pad (nopaste) is not.  The via gap keeps vias off the

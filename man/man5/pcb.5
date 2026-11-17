@@ -146,9 +146,14 @@ default).
 An unplaced statement leaves a group's parts (every part whose name
 begins with the group and a dot, a page's or any other's) off the board
 until it is laid out: they take no footprint, so no pads, and the
-programs place, route, plot and check the board without them; a net
-with pins on them is whole among its placed pins alone, and
+programs place, route, plot and check the board without them.  A net
+with pins on them waits whole:
+.I pcbroute
+routes none of it and drops its copper from the lock, and
 .IR pcbcheck (1)
+does not fault it for being in pieces.  A plane net still gets a via
+at each placed pad, since each via joins the plane on its own.
+.I pcbcheck
 notes the group and each such net.
 .SS Blocks
 A board is laid out by groups, the groups of the schematic (outputs.ch1,
@@ -183,8 +188,7 @@ against each other only.
 In a layout round it, a block's pads keep the clearance from the vias of
 the other blocks.
 So a board is made inside out: the leaf blocks, then the groups of
-blocks, each its own section, then the board; and a block of the same
-statements, renamed, has the same layout, copper for copper.
+blocks, each its own section, then the board.
 .SS Lock
 The lock is what the programs resolved, beside the source: generated,
 never edited, but kept, so its diff is the review of an edit.
@@ -226,9 +230,16 @@ tells what is stale, and why: the statement changed, a pad's net
 changed, or a pad moved.
 The designators are for the reader: the programs read a part by its
 name, so a new annotation changes no place and no copper.
-The parts and the nets are in the order of their names, so the same
-source and lock give the same bytes.
+The parts and the nets are in the order of their names.
 Deleting a line, or the lock, resolves that anew.
+.PP
+Placement and routing are best effort, and nothing is promised of
+them.
+The same source and the same lock need not give the same places or the
+same copper, nor need two blocks of the same statements, renamed, and
+later placers and routers may be stochastic.
+The lock keeps what still matches, so a board of thousands of parts is
+laid out again only where an edit reaches.
 .SH EXAMPLES
 .nf
 fix outputs.ch1.jack.j at 93.5736 -141.224

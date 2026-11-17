@@ -37,7 +37,12 @@ The window
 .B \-w
 is the region drawn, by default all the files, the layers of a board
 whole (their drawing records, each line's width and each disk's radius
-counted); clear polarity is drawn white.
+counted).
+Clear polarity erases what its file drew before, as
+.IR vec (5)
+says, and nothing of the files under it: each run of a file's dark
+records is drawn clipped off every clear record after it, so a layer's
+silkscreen, cleared off the pads, leaves the copper under it showing.
 On a sheet, each port of the first file links to pages, as
 .IR schview (1)
 follows a click on it: its circle and its name to the first page of its

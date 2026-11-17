@@ -27,6 +27,10 @@ reads the board source,
 and a lock with the parts placed, and writes the lock with the copper.
 What is kept, by connection, is kept as it is; the rest is routed anew
 among the copper kept, which nothing moves.
+Routing is best effort
+.RI ( pcb (5)):
+the same source and lock need not give the same copper, and later
+routers may be stochastic.
 .PP
 Each pad of a net of a plane layer gets a via on a neck track, the
 nearest place clear of all else, its ring the via gap from the pads of
@@ -40,10 +44,14 @@ than a track, whatever the net's width, and its pad on the plane's own
 layer is relieved, cleared from the pour and joined to it by a neck out
 along the pad's longer side; any other pad on its plane's layer is in
 the pour.
+A net with pins on parts not placed yet (of an
+.B unplaced
+statement) waits whole: none of it is routed, and its copper leaves the
+lock; a plane net still gets its vias.
 Every other net is routed on the top layer as a tree of connections,
 each from a pad's center to another's (of a long pad, twice as long as
-wide or more, from its end nearest the other pad, a half width in from
-the end): the pins of its
+wide or more, from any point of the line between its ends, each a half
+width in from the pad's end): the pins of its
 .B fork
 statements first (the two last pins joined, then the first pin routed
 from the middle of that copper, by its length, on a grid laid through
@@ -54,7 +62,8 @@ statements, then the pins of its
 statements, then the nearest pad not yet joined to the nearest joined,
 by the cheapest path over a grid of 0.05 mm in eight ways laid through
 the first pad's center, keeping the clearance from all copper of other
-nets and the edge rule from the outline and the cutouts, their round
+nets (a run between two cells as well as the cells, and the lock's
+rounding) and the edge rule from the outline and the cutouts, their round
 corners round.
 The search keeps to one window of 256 by 256 cells (12.8 mm), laid
 about the middle of what it joins, allocated once and never grown, the
@@ -69,6 +78,10 @@ of cutouts; the sections make one track.
 A track leaves and enters a pad along its longer side (any way for a
 round or square pad) and turns only outside it; pads in line are joined
 by one straight track through their centers.
+A long pad is left or entered any of the four ways, at whichever point
+of its line makes the cheapest path: a pad beside it is joined straight
+into its side, square to the line, and one past its end along the line;
+a point where the track would break the edge rule is never taken.
 Each connection takes its own width, of a
 .B width
 .I PIN PIN W

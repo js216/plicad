@@ -25,6 +25,8 @@ Write and run in the same call: append with a here-document
 board.lock, then pcbcheck board.pcb < board.lock.
 .IP 4. 3
 Fix what the faults name, and run again.
+Placement and routing are best effort: the same source and lock need
+not give the same places or copper, so judge the board by its check.
 .IP 5. 3
 Stop when it checks clean: pcbcheck prints nothing and exits 0.
 .PD

@@ -494,10 +494,14 @@ static void check_copper(void)
 			}
 		}
 	}
-	// Each net one piece, and no piece of two nets.
+	// Each net one piece, and no piece of two nets; a net that waits
+	// whole for parts not placed (of no plane) may be in pieces.
 	for (size_t k = 0; k < B.nnet; k++) {
 		size_t root = (size_t)-1;
 
+		if (B.net[k].waits && B.net[k].plane < 0) {
+			continue;
+		}
 		for (size_t i = 0; i < nitems; i++) {
 			if (items[i].net != (int)k ||
 			    items[i].rect + (items[i].r > 0) == 0) {
@@ -838,8 +842,8 @@ static int on_fork(int n, int layer, double x, double y)
 	return 0;
 }
 
-// Each track ends at the center of a pad of its net on its layer, or at
-// a via of its net, or in its own plane on the plane's layer (a neck),
+// Each track ends at the center of a pad of its net on its layer (of a
+// long pad, on the line between its ends), or at a via of its net, or in its own plane on the plane's layer (a neck),
 // or on the copper between the two last pins of a fork of its net: a
 // route never ends on the side of a pad, or in the middle of another
 // track but a fork's.
@@ -876,14 +880,16 @@ static void check_ends(void)
 					     (s.layer < 0 ||
 					      s.layer == t->layer) &&
 					     hypot(s.x - x, s.y - y) < 1e-3;
-					for (int e2 = 0;
-					     e2 < np && !ok &&
-					     pcb_net_of(&B, q, k) == t->net &&
-					     (s.layer < 0 ||
-					      s.layer == t->layer);
-					     e2++) {
-						ok = hypot(p[e2][0] - x,
-							   p[e2][1] - y) < 1e-3;
+					// A long pad: any point of the line
+					// between its ends.
+					if (!ok && np == 2 &&
+					    pcb_net_of(&B, q, k) == t->net &&
+					    (s.layer < 0 ||
+					     s.layer == t->layer)) {
+						ok = pcb_seg_dist(
+							     x, y, p[0][0],
+							     p[0][1], p[1][0],
+							     p[1][1]) < 1e-3;
 					}
 				}
 			}
@@ -892,7 +898,7 @@ static void check_ends(void)
 				snprintf(
 					msg, sizeof msg,
 					"a track of %s ends off a pad's center "
-					"or end and off a via",
+					"or line and off a via",
 					B.net[t->net].name);
 				fault(msg, x, y);
 			}
@@ -1394,7 +1400,8 @@ static void rooms(void)
 }
 
 // Notes, not faults: each group not placed yet, and each net that waits
-// for it, checked so far among its placed parts alone.
+// for it: a plane net checked so far among its placed parts alone, any
+// other net not routed till the group is placed.
 static void notes(void)
 {
 	for (size_t s = 0; s < B.nstmt; s++) {

@@ -30,8 +30,8 @@ segment it is, to a cutout's round corners as round, but for the parts
 the rule excepts, the fault at the point of the copper nearest the edge
 (copper past the outline, or into a cutout, is a fault of its own: it
 runs past the edge);
-each track ends at the center of a pad of its net (of a long pad, at
-the center or at an end, as
+each track ends at the center of a pad of its net (of a long pad,
+anywhere on the line between its ends, as
 .IR pcbroute (1)
 joins it), at a via (or, a neck, in its own plane), or on the copper
 between the two last pins of a
@@ -105,7 +105,9 @@ room PART REF above MM below MM left MM right MM
 .RE
 .PP
 For each unplaced statement it prints a note, and one for each net that
-waits for its parts; notes are not faults.
+waits for its parts: a net of a plane is checked among its placed pads
+alone, any other is not routed yet and may be in pieces; notes are not
+faults.
 .PP
 .SH EXAMPLES
 .nf
