@@ -42,6 +42,11 @@ pads of their nets; then it moves out its way until its courtyard is
 clear of the parts on its side, of the keep-out of every hole
 .RI ( pcbfp (5))
 and of every plated hole, inside the board.
+A part placed of a thing stands next to it, its origin, or its pad of
+the pin said by
+.BR by ,
+on the middle of the thing (a part, or a group placed whole first)
+across the way.
 A part placed near a thing
 .RB ( near ,
 .IR pcb (5))
@@ -59,7 +64,12 @@ A place statement of no form of
 .IR pcb (5),
 or a fix or place statement whose rot is not 0, 90, 180 or 270,
 places nothing and is a fault, told once, naming the word that is
-wrong; a pin placed from that is not there is a fault, told once.
+wrong (a
+.B by
+of a pin not of the part, or not of an
+.B of
+statement, too); a pin placed from that is not there is a fault, told
+once.
 With
 .B \-v
 each placement is told on stderr with its line and rule; it and every

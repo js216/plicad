@@ -36,7 +36,8 @@ rule edge D [except PART...]
 footprint MPN FP                     the footprint of a part number
                                      (or of a type, for a part without)
 fix PART at X Y [rot R] [bottom]     where the mechanics put it
-place PART WAY of PART [GAP] [rot R] next to the part, centered
+place PART WAY of THING [GAP] [rot R] [by PIN]
+                                     next to the part or group, centered
 place PART WAY from PIN [rot R]     its pad of the pin's net by the pin
 place GROUP WAY from PIN             a block, whole, as one part of two sides
 place PART|GROUP near THING [WAY] [GAP] [rot R]
@@ -76,6 +77,21 @@ Without rot,
 .I PIN
 chooses, of the four turns, the one that brings its pad of the pin's
 net nearest the pin.
+.B place
+.I PART WAY
+.B of
+.I THING
+puts the part next to THING (a part's courtyard, or a group's: the box
+of its parts' courtyards), GAP mm off, its origin on THING's middle
+across the way; with
+.B by
+.I PIN
+(a pin of PART) its pad of that pin instead, so the amplifier's output
+drops straight into the middle of the pair below it:
+.PP
+.nf
+place outputs.ch1.gain.amp up of outputs.ch1.term rot 270 by outputs.ch1.gain.amp.out
+.fi
 .PP
 The width of the copper between two pins of a net is the width of a
 statement naming them, else the net's, else its class's

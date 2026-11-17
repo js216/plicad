@@ -16,8 +16,11 @@
 //
 // The statements, in mm and degrees:
 //   fix PART at X Y [rot R] [bottom]     where the mechanics put it
-//   place PART WAY of PART [GAP] [rot R] next to it, its courtyard GAP
-//                                        off (0), centered on it
+//   place PART WAY of THING [GAP] [rot R] [by PIN]
+//                                        next to THING (a part, or a
+//                                        group: its box), its courtyard
+//                                        GAP off (0), centered on it, or
+//                                        by PIN its pad of its pin
 //   place PART WAY from PIN [rot R]     its pad of the pin's net next
 //                                        to the pin, lying out WAY
 //   place GROUP WAY from PIN            a block whole, as one part of two
@@ -375,23 +378,57 @@ static int push_block(size_t b, int way)
 	return 1;
 }
 
-// Places part k against part a, the way of it, gap off, centered.
-static void place_of(size_t k, size_t a, int way, double gap, int rot)
+// The box of a thing placed against: the courtyard of the part, else
+// the box of the courtyards of the group's parts placed.
+static void thing_box(const char *th, double d[4])
+{
+	long a = part_named(th);
+
+	if (a >= 0) {
+		pcb_court(&B.part[a], d);
+		return;
+	}
+	d[0] = d[1] = 1e300;
+	d[2] = d[3] = -1e300;
+	for (size_t i = 0; i < B.npart; i++) {
+		double e[4];
+
+		if (!of_group(B.part[i].name, th) || !B.part[i].fp ||
+		    !B.part[i].placed) {
+			continue;
+		}
+		pcb_court(&B.part[i], e);
+		d[0] = fmin(d[0], e[0]);
+		d[1] = fmin(d[1], e[1]);
+		d[2] = fmax(d[2], e[2]);
+		d[3] = fmax(d[3], e[3]);
+	}
+}
+
+// Places part k against thing th (anchored on part a), the way of it,
+// gap off, centered across the way: its origin, or its pad by (-1 for
+// none).
+static void place_of(size_t k, const char *th, size_t a, int way, double gap,
+		     int rot, long by)
 {
 	struct pcb_part *q = &B.part[k];
+	struct pcb_spot own = { 0 };
 	double c[4], d[4];
 
 	q->rot = rot;
 	q->bottom = B.part[a].bottom;
 	q->x = q->y = 0;
 	pcb_court(q, c);
-	pcb_court(&B.part[a], d);
+	thing_box(th, d);
+	if (by >= 0) {
+		pcb_spot(&B, q, (size_t)by, &own);
+	}
 	q->x = way == 0 ? d[2] + gap - c[0] :
 	       way == 2 ? d[0] - gap - c[2] :
-			  (d[0] + d[2]) / 2;
+			  (d[0] + d[2]) / 2 - own.x;
 	q->y = way == 1 ? d[3] + gap - c[1] :
 	       way == 3 ? d[1] - gap - c[3] :
-			  (d[1] + d[3]) / 2;
+			  (d[1] + d[3]) / 2 - own.y;
 }
 
 // Places part k with its pad of the net of pin (a, ap) next to the pin,
@@ -527,12 +564,28 @@ static int turn_ok(const char *s)
 	       !strcmp(s, "270");
 }
 
+// The pad of part k that the by PIN of its place statement names, or
+// -1 if it names none of k's pins.
+static long by_pad(const struct pcb_stmt *st, size_t k)
+{
+	size_t a, ap;
+
+	for (int i = 0; i + 1 < st->n; i++) {
+		if (!strcmp(st->w[i], "by") &&
+		    pcb_pin(&B, st->w[i + 1], &a, &ap) && a == k) {
+			return (long)ap;
+		}
+	}
+	return -1;
+}
+
 // Whether a fix or place statement turns its part one of the four ways
 // and, a place statement, has a form of pcb(5); if not, the word that
 // is wrong is told.  Of near, near_thing tells the rest; of fix, place.
 static int form_ok(const struct pcb_stmt *st)
 {
-	int n = st->n;
+	int n = st->n, by = -1;
+	long k;
 	const char *of = n > 3 ? st->w[3] : "";
 	char what[1100];
 
@@ -545,11 +598,21 @@ static int form_ok(const struct pcb_stmt *st)
 			return 0;
 		}
 	}
+	for (int i = 0; i < st->n; i++) {
+		by = !strcmp(st->w[i], "by") ? i : by;
+	}
+	if (by >= 0 && (strcmp(st->w[0], "place") || strcmp(of, "of"))) {
+		form_fault(st, "'by' goes with 'of' only");
+		return 0;
+	}
 	if (strcmp(st->w[0], "place") || is_near(st)) {
 		return 1;
 	}
-	if (n >= 2 && !strcmp(st->w[n - 2], "rot")) {
-		n -= 2;
+	for (int i = 0; i < 2; i++) {
+		if (n >= 2 && (!strcmp(st->w[n - 2], "rot") ||
+			       !strcmp(st->w[n - 2], "by"))) {
+			n -= 2;
+		}
 	}
 	if (n < 2) {
 		form_fault(st, "missing the part");
@@ -572,6 +635,11 @@ static int form_ok(const struct pcb_stmt *st)
 	} else if (n > (*of == 'o' ? 6 : 5)) {
 		snprintf(what, sizeof what, "'%s' is one word too many",
 			 st->w[*of == 'o' ? 6 : 5]);
+		form_fault(st, what);
+	} else if (by >= 0 && (k = part_named(st->w[1])) >= 0 && B.part[k].fp &&
+		   by_pad(st, (size_t)k) < 0) {
+		snprintf(what, sizeof what, "'%s' is not a pin of %s",
+			 st->w[by + 1], st->w[1]);
 		form_fault(st, what);
 	} else {
 		return 1;
@@ -784,7 +852,9 @@ static int place(size_t k, int block_rot, int *way_out)
 	for (int i = 0; i + 1 < st->n; i++) {
 		if (!strcmp(st->w[i], "rot")) {
 			rot = atoi(st->w[i + 1]);
-			n = i;
+		}
+		if (!strcmp(st->w[i], "rot") || !strcmp(st->w[i], "by")) {
+			n = i < n ? i : n;
 		}
 	}
 	rot = block_rot >= 0 ? block_rot : rot;
@@ -820,18 +890,20 @@ static int place(size_t k, int block_rot, int *way_out)
 		how = "nearest room";
 	} else if (n >= 5 && !strcmp(st->w[3], "of")) {
 		double gap = GAP;
+		long by = by_pad(st, k);
 
 		way = way_word(st->w[2]);
 		a = (size_t)anchor[k];
 		if (way < 0) {
-			pcb_error(&B, st->line, "place PART WAY of PART [GAP]");
+			pcb_error(&B, st->line,
+				  "place PART WAY of THING [GAP]");
 			return 0;
 		}
 		if (n == 6) {
 			gap = atof(st->w[5]);
 		}
 		if (rot >= 0) {
-			place_of(k, a, way, gap, rot);
+			place_of(k, st->w[4], a, way, gap, rot, by);
 			how = "said";
 		} else {
 			double best = 1e300;
@@ -840,14 +912,14 @@ static int place(size_t k, int block_rot, int *way_out)
 			for (int r = 0; r < 360; r += 90) {
 				double len;
 
-				place_of(k, a, way, gap, r);
+				place_of(k, st->w[4], a, way, gap, r, by);
 				len = push(k, way) ? ratsnest(k) : 1e300;
 				if (len < best - 1e-9) {
 					best = len;
 					br = r;
 				}
 			}
-			place_of(k, a, way, gap, br);
+			place_of(k, st->w[4], a, way, gap, br, by);
 			how = "shortest ratsnest";
 		}
 	} else if (n >= 5 && !strcmp(st->w[3], "from")) {
@@ -894,7 +966,7 @@ static int place(size_t k, int block_rot, int *way_out)
 		place_at(k, a, ap, way, rot);
 	} else {
 		pcb_error(&B, st->line,
-			  "place PART WAY of PART, or WAY from PIN");
+			  "place PART WAY of THING, or WAY from PIN");
 		return 0;
 	}
 	q->placed = 1;
@@ -1191,6 +1263,19 @@ static int is_block(const char *group)
 	return 0;
 }
 
+// The part named, else the first part of the group; or -1.
+static long part_or_group(const char *th)
+{
+	long k = part_named(th);
+
+	for (size_t i = 0; k < 0 && i < B.npart; i++) {
+		if (of_group(B.part[i].name, th) && B.part[i].fp) {
+			k = (long)i;
+		}
+	}
+	return k;
+}
+
 // The part a near statement is placed against, for the order and the
 // lock: the part, the pin's part, the first part of the group; or -1
 // (a cutout, the edge).
@@ -1211,23 +1296,21 @@ static long near_anchor(const struct pcb_stmt *st)
 			return k;
 		}
 	}
-	for (size_t i = 0; i < B.npart; i++) {
-		if (of_group(B.part[i].name, st->w[3]) && B.part[i].fp) {
-			return (long)i;
-		}
-	}
-	return -1;
+	return part_or_group(st->w[3]);
 }
 
-// Whether the group a near statement of part k names is placed whole,
-// so k may be placed against it.
-static int near_ready(size_t k, const int *done)
+// Whether the group a near or of statement of part k names is placed
+// whole, so k may be placed against it.
+static int group_ready(size_t k, const int *done)
 {
 	const struct pcb_stmt *st = &B.stmt[stmt_of[k]];
+	const char *th = is_near(st)			       ? st->w[3] :
+			 st->n >= 5 && !strcmp(st->w[3], "of") ? st->w[4] :
+								 NULL;
 
-	for (size_t i = 0; is_near(st) && i < B.npart; i++) {
-		if (i != k && of_group(B.part[i].name, st->w[3]) &&
-		    B.part[i].fp && in_scope(i) && !done[i]) {
+	for (size_t i = 0; th && i < B.npart; i++) {
+		if (i != k && of_group(B.part[i].name, th) && B.part[i].fp &&
+		    in_scope(i) && !done[i]) {
 			return 0;
 		}
 	}
@@ -1382,9 +1465,10 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 		if (is_near(st)) {
 			anchor[k] = near_anchor(st);
 		} else if (st->n >= 5 && !strcmp(st->w[3], "of")) {
-			anchor[k] = part_named(st->w[4]);
+			anchor[k] = part_or_group(st->w[4]);
 			if (anchor[k] < 0) {
-				pcb_error(&B, st->line, "no part %s", st->w[4]);
+				pcb_error(&B, st->line, "no part or group %s",
+					  st->w[4]);
 				stmt_of[k] = -1;
 			}
 		} else if (!strcmp(st->w[0], "place")) {
@@ -1462,8 +1546,8 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 					continue;
 				}
 				if (pass ? (anchor[k] < 0 || done[anchor[k]]) &&
-						    near_ready((size_t)k,
-							       done) :
+						    group_ready((size_t)k,
+								done) :
 					   !strcmp(B.stmt[stmt_of[k]].w[0],
 						   "fix")) {
 					next = (long)k;

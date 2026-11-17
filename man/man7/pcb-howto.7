@@ -49,7 +49,11 @@ A clean make prints nothing: no fault, no note.
 .SH STATEMENTS
 .nf
 fix PART at X Y [rot R] [bottom]      only where the mechanics put it
-place PART WAY of PART [GAP] [rot R]  next to it, GAP mm apart (0)
+place PART WAY of THING [GAP] [rot R] [by PIN]
+                                      next to a part or group, GAP mm
+                                      apart (0), centered on it; by
+                                      PIN, its pad of the pin on the
+                                      middle, a pin in line with a pair
 place PART WAY from PIN [rot R]       its pad of the pin's net by the pin
 place PART|GROUP near THING [WAY] [GAP]  the nearest clear room by a
                                       part, group, pin, cutout N or edge
