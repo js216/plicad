@@ -344,6 +344,8 @@ static void command(const char *s)
 		// Drawn now, as all before it has left it.
 		snprintf(shot, sizeof shot, "%s", s + 5);
 		frame();
+	} else if (!strcmp(s, "fit")) {
+		fit();
 	} else if (!strcmp(s, "reload") && V->reload) {
 		vg_sel = -1;
 		V->reload();
