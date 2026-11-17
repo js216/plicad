@@ -1744,46 +1744,97 @@ static int overlap(const double a[4], const double c[4])
 	return a[0] < c[2] && c[0] < a[2] && a[1] < c[3] && c[1] < a[3];
 }
 
-// Whether a box of text on a side (bottom or not) is clear: of the
-// openings, and of the courtyards of the parts of its side but part q
-// (its own; b->npart for none), of the boxes of text of its side before
-// it (done, side), and inside the board by the edge rule.
-static int text_clear(const struct pcb *b, size_t q, int bottom,
-		      const double t[4], double (*done)[4], const int *side,
-		      size_t ndone)
+// The need of box t of text for room against box r of part p, when they
+// overlap: how far r must move out from side sd (0 above, 1 below, 2
+// left, 3 right) of courtyard c to clear t, HUGE_VAL if r is not past
+// that side (or sd is -1); the most need so far in need and its part in
+// who.  Returns whether the need is past help.
+static int need_of(const double t[4], const double r[4], const double *c,
+		   int sd, size_t p, double *need, size_t *who)
 {
-	if (t[0] < b->board[0] + b->edge || t[1] < b->board[1] + b->edge ||
-	    t[2] > b->board[2] - b->edge || t[3] > b->board[3] - b->edge) {
+	double e = HUGE_VAL;
+
+	if (!overlap(t, r)) {
 		return 0;
 	}
+	if (sd == 0 && r[1] >= c[3] - 1e-9) {
+		e = t[3] - r[1];
+	} else if (sd == 1 && r[3] <= c[1] + 1e-9) {
+		e = r[3] - t[1];
+	} else if (sd == 2 && r[2] <= c[0] + 1e-9) {
+		e = r[2] - t[0];
+	} else if (sd == 3 && r[0] >= c[2] - 1e-9) {
+		e = t[2] - r[0];
+	}
+	if (e > *need) {
+		*need = e;
+		*who = p;
+	}
+	return *need == HUGE_VAL;
+}
+
+// How far the things in the way of a box of text on a side (bottom or
+// not) must move out for it to be clear (text_need below, with sd -1:
+// 0 if clear, else HUGE_VAL): the openings, the courtyards of the parts
+// of its side but part q (its own; b->npart for none), the boxes of
+// text of its side placed (done, side, of the parts owner), and the
+// board inside the edge rule, which never moves.  The part in the way
+// most goes to who (b->npart for the edge).
+static double text_need(const struct pcb *b, size_t q, int bottom,
+			const double t[4], double (*done)[4], const int *side,
+			const size_t *owner, size_t ndone, const double *c,
+			int sd, size_t *who)
+{
+	double need = 0;
+	size_t w0;
+
+	who = who ? who : &w0;
+	*who = b->npart;
+	if (t[0] < b->board[0] + b->edge || t[1] < b->board[1] + b->edge ||
+	    t[2] > b->board[2] - b->edge || t[3] > b->board[3] - b->edge) {
+		return HUGE_VAL;
+	}
 	for (size_t i = 0; i < ndone; i++) {
-		if (side[i] == bottom && overlap(t, done[i])) {
-			return 0;
+		if (side[i] == bottom &&
+		    need_of(t, done[i], c, sd, owner ? owner[i] : b->npart,
+			    &need, who)) {
+			return need;
 		}
 	}
 	for (size_t p = 0; p < b->npart; p++) {
 		const struct pcb_part *o = &b->part[p];
-		double c[4], g[4];
+		double oc[4], g[4];
 
 		if (!o->placed || !o->fp) {
 			continue;
 		}
-		pcb_court(o, c);
-		if (p != q && o->bottom == bottom && overlap(t, c)) {
-			return 0;
+		pcb_court(o, oc);
+		if (p != q && o->bottom == bottom &&
+		    need_of(t, oc, c, sd, p, &need, who)) {
+			return need;
 		}
 		// The openings of a part far from the box are no matter.
-		g[0] = c[0] - 1;
-		g[1] = c[1] - 1;
-		g[2] = c[2] + 1;
-		g[3] = c[3] + 1;
+		g[0] = oc[0] - 1;
+		g[1] = oc[1] - 1;
+		g[2] = oc[2] + 1;
+		g[3] = oc[3] + 1;
 		for (size_t k = 0; overlap(t, g) && k < o->fp->npad; k++) {
-			if (pcb_opening(b, p, k, bottom, c) && overlap(t, c)) {
-				return 0;
+			if (pcb_opening(b, p, k, bottom, oc) &&
+			    need_of(t, oc, c, sd, p, &need, who)) {
+				return need;
 			}
 		}
 	}
-	return 1;
+	return need;
+}
+
+// Whether a box of text on a side is clear (text_need).
+static int text_clear(const struct pcb *b, size_t q, int bottom,
+		      const double t[4], double (*done)[4], const int *side,
+		      size_t ndone)
+{
+	return text_need(b, q, bottom, t, done, side, NULL, ndone, NULL, -1,
+			 NULL) == 0;
 }
 
 static void stroke(struct pcb_stroke **s, size_t *n, size_t q, int bottom,
@@ -1835,19 +1886,22 @@ static int ref_turned(const struct pcb_stmt *rs)
 	return 0;
 }
 
-// The lower left corner of a designator's box, bw by bh, where its ref
-// statement puts it by the courtyard c: on the side, at the gap, from
-// the start of the side (its left or top end), its middle or its end.
-static void ref_at(const struct pcb_stmt *rs, const double c[4], double bw,
+// Where a ref statement aligns its designator: 0 at the start of its
+// side, 1 in the middle, 2 at the end.
+static int ref_align(const struct pcb_stmt *rs)
+{
+	const char *al = rs->n > 3 ? rs->w[3] : "";
+
+	return !strcmp(al, "start") ? 0 : !strcmp(al, "end") ? 2 : 1;
+}
+
+// The lower left corner of a designator's box, bw by bh, by the
+// courtyard c: on the side sd, at the gap, from the start of the side
+// (its left or top end), its middle or its end (a, as ref_align).
+static void ref_at(const char *sd, int a, const double c[4], double bw,
 		   double bh, double at[2])
 {
-	const char *sd = rs->w[2];
-	const char *al = rs->n > 3 && strcmp(rs->w[3], "rot") &&
-					 strcmp(rs->w[3], "size") ?
-				 rs->w[3] :
-				 "middle";
 	int across = !strcmp(sd, "above") || !strcmp(sd, "below");
-	int a = !strcmp(al, "start") ? 0 : !strcmp(al, "end") ? 2 : 1;
 
 	if (across) {
 		at[0] = a == 0 ? c[0] :
@@ -1936,9 +1990,9 @@ static void place_box(const struct place *q, double t[4])
 
 // Writes the strokes of a text in its place: from the box's lower left,
 // its baseline a descender up; turned, reading upward; on the bottom,
-// read from below, mirrored about the box's middle.
+// read from below, mirrored about the box's middle; ref as the strokes'.
 static void text_strokes(struct pcb_stroke **s, size_t *n, size_t q, int bottom,
-			 const char *text, const struct place *at)
+			 const char *text, const struct place *at, int ref)
 {
 	double *sg, dn = stroke_descends(text) ? at->size / 3 : 0;
 	size_t ns = stroke_text(text, at->size, &sg);
@@ -1955,7 +2009,7 @@ static void text_strokes(struct pcb_stroke **s, size_t *n, size_t q, int bottom,
 				xy[e] = 2 * at->x + at->w - xy[e];
 			}
 		}
-		stroke(s, n, q, bottom, STROKE_PEN * at->size, xy, 1);
+		stroke(s, n, q, bottom, STROKE_PEN * at->size, xy, ref);
 	}
 	free(sg);
 }
@@ -2022,7 +2076,7 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 		at[q].size = ref_size(rs);
 		at[q].rot = ref_turned(rs);
 		ref_dims(ref, at[q].size, at[q].rot, &at[q].w, &at[q].h);
-		ref_at(rs, c, at[q].w, at[q].h, ra);
+		ref_at(rs->w[2], ref_align(rs), c, at[q].w, at[q].h, ra);
 		at[q].x = ra[0];
 		at[q].y = ra[1];
 		place_box(&at[q], done[ndone]);
@@ -2056,7 +2110,7 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 	for (size_t i = 0; i < nrule; i++) {
 		size_t q = order[i],
 		       np = ref_places(&b->part[q], b->part[q].ref, o);
-		size_t pick = 0;
+		size_t pick = np;
 
 		for (size_t k = 0; k < np; k++) {
 			double t[4];
@@ -2068,10 +2122,11 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 				break;
 			}
 		}
-		at[q] = o[pick]; // None clear: the first, which pcbcheck tells.
+		// None clear: the first, which pcbcheck tells.
+		has[q] = pick == np ? 2 : 1;
+		at[q] = o[pick == np ? 0 : pick];
 		place_box(&at[q], done[ndone]);
 		side[ndone++] = b->part[q].bottom;
-		has[q] = 1;
 	}
 	for (size_t q = 0; q < b->npart; q++) {
 		const struct pcb_part *p = &b->part[q];
@@ -2095,7 +2150,8 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 			}
 		}
 		if (has[q]) {
-			text_strokes(s, &n, q, p->bottom, p->ref, &at[q]);
+			text_strokes(s, &n, q, p->bottom, p->ref, &at[q],
+				     has[q]);
 		}
 	}
 	// The texts of the source, of no part.
@@ -2108,7 +2164,7 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 		    !(t = free_text(&b->stmt[i], &ta, &bottom))) {
 			continue;
 		}
-		text_strokes(s, &n, b->npart + i, bottom, t, &ta);
+		text_strokes(s, &n, b->npart + i, bottom, t, &ta, 1);
 		free(t);
 	}
 	free(done);
@@ -2119,6 +2175,132 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 	free(room);
 	free(has);
 	return n;
+}
+
+int pcb_ref_box(const struct pcb_stroke *s, size_t n, size_t q, double box[4])
+{
+	int any = 0;
+
+	for (size_t i = 0; i < n; i++) {
+		double h = s[i].w / 2;
+
+		if (s[i].part != q || !s[i].ref) {
+			continue;
+		}
+		if (!any) {
+			box[0] = box[1] = 1e300;
+			box[2] = box[3] = -1e300;
+		}
+		any = 1;
+		box[0] = fmin(box[0], fmin(s[i].x0, s[i].x1) - h);
+		box[1] = fmin(box[1], fmin(s[i].y0, s[i].y1) - h);
+		box[2] = fmax(box[2], fmax(s[i].x0, s[i].x1) + h);
+		box[3] = fmax(box[3], fmax(s[i].y0, s[i].y1) + h);
+	}
+	return any;
+}
+
+void pcb_ref_hint(const struct pcb *b, const struct pcb_stroke *s, size_t n,
+		  size_t q, char *buf, size_t len)
+{
+	static const char *const sides[] = { "above", "below", "left",
+					     "right" };
+	static const char *const ways[] = { "up", "down", "left", "right" };
+	static const char *const aligns[] = { " start", "", " end" };
+	static const int am[] = { 1, 0, 2 };
+	const struct pcb_part *p = &b->part[q];
+	const struct pcb_stmt *rs = ref_of(b, p->name);
+	double(*done)[4] = pcb_alloc((b->npart + 1) * sizeof *done);
+	int *side = pcb_alloc((b->npart + 1) * sizeof *side);
+	size_t *owner = pcb_alloc((b->npart + 1) * sizeof *owner);
+	size_t nd = 0, who = b->npart;
+	double c[4], size = rs ? ref_size(rs) : 0.5, w, h, best = HUGE_VAL;
+	int rot, order[4], bs = -1, ba = 1, k = 0;
+	char tried[40] = "";
+
+	pcb_court(p, c);
+	rot = rs ? ref_turned(rs) : c[3] - c[1] > c[2] - c[0];
+	for (size_t o = 0; o < b->npart; o++) {
+		if (o != q && pcb_ref_box(s, n, o, done[nd])) {
+			side[nd] = b->part[o].bottom;
+			owner[nd++] = o;
+		}
+	}
+	// The sides in the order tried: a ref statement's alone, else the
+	// long ones first; the search then takes all four.
+	for (int i = 0; i < 4; i++) {
+		order[i] = rot ? (i + 2) % 4 : i;
+	}
+	for (int i = 0; rs && i < 4; i++) {
+		if (!strcmp(rs->w[2], sides[order[i]])) {
+			int t = order[0];
+
+			order[0] = order[i];
+			order[i] = t;
+		}
+	}
+	for (int i = 0; i < (rs ? 1 : 4); i++) {
+		snprintf(tried + strlen(tried), sizeof tried - strlen(tried),
+			 "%s%s", i ? ", " : "", sides[order[i]]);
+	}
+	// At 0.5 mm, on each side, in the middle, at the start and the end.
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < 3; j++) {
+			struct place pl;
+			double at[2], t[4], e;
+			size_t wh;
+
+			pl.size = 0.5;
+			pl.rot = rot;
+			ref_dims(p->ref, pl.size, rot, &pl.w, &pl.h);
+			ref_at(sides[order[i]], am[j], c, pl.w, pl.h, at);
+			pl.x = at[0];
+			pl.y = at[1];
+			place_box(&pl, t);
+			e = text_need(b, q, p->bottom, t, done, side, owner, nd,
+				      c, order[i], &wh);
+			if (bs < 0 || e < best) {
+				best = e;
+				bs = order[i];
+				ba = am[j];
+				who = wh;
+			}
+		}
+	}
+	ref_dims(p->ref, rs ? size : 0.5, rot, &w, &h);
+	k = snprintf(buf, len, "; %s is %.2f x %.2f mm at %g (%s %s)", p->ref,
+		     w, h, rs ? size : 0.5, rs ? "tried" : "tried 0.8 to 0.5",
+		     tried);
+	k = k < 0 || (size_t)k >= len ? (int)len - 1 : k;
+	best = ceil(best * 10 - 1e-9) / 10;
+	if (best == 0) {
+		snprintf(buf + k, len - (size_t)k,
+			 "; try: ref %s %s%s%s size 0.5", p->name, sides[bs],
+			 aligns[ba], rot ? " rot 90" : "");
+	} else if (best <= 2) {
+		double oc[4], d;
+
+		pcb_court(&b->part[who], oc);
+		d = bs == 0 ? oc[1] - c[3] :
+		    bs == 1 ? c[1] - oc[3] :
+		    bs == 2 ? c[0] - oc[2] :
+			      oc[0] - c[2];
+		snprintf(buf + k, len - (size_t)k,
+			 "; try: place %s %s of %s %.1f (%.1f mm more %s)",
+			 b->part[who].name, ways[bs], p->name,
+			 ceil((fmax(d, 0) + best) * 10 - 1e-9) / 10, best,
+			 sides[bs]);
+	} else {
+		snprintf(buf + k, len - (size_t)k,
+			 "; nothing within 2 mm: move %s or a neighbor (%s)",
+			 p->name,
+			 who == b->npart ? "the board edge" :
+			 who == q	 ? "its own pads" :
+					   b->part[who].name);
+	}
+	free(done);
+	free(side);
+	free(owner);
 }
 
 char *pcb_by(const struct pcb *b, size_t k, const struct pcb_stmt *st)

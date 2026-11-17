@@ -302,50 +302,47 @@ static void check_parts(void)
 }
 
 // The silkscreen against the openings of the mask: one fault a part.
-// The box of the designator of part q among the strokes, if it has one.
-static int ref_box(const struct pcb_stroke *s, size_t n, size_t q, double b[4])
+// Whether the designator of part q found no room.
+static int no_room(const struct pcb_stroke *s, size_t n, size_t q)
 {
-	int any = 0;
-
 	for (size_t i = 0; i < n; i++) {
-		double h = s[i].w / 2;
-
-		if (s[i].part != q || !s[i].ref) {
-			continue;
+		if (s[i].part == q && s[i].ref == 2) {
+			return 1;
 		}
-		if (!any) {
-			b[0] = b[1] = 1e300;
-			b[2] = b[3] = -1e300;
-		}
-		any = 1;
-		b[0] = fmin(b[0], fmin(s[i].x0, s[i].x1) - h);
-		b[1] = fmin(b[1], fmin(s[i].y0, s[i].y1) - h);
-		b[2] = fmax(b[2], fmax(s[i].x0, s[i].x1) + h);
-		b[3] = fmax(b[3], fmax(s[i].y0, s[i].y1) + h);
 	}
-	return any;
+	return 0;
 }
 
 // No two designators of one side overlap.
 static void check_refs(const struct pcb_stroke *s, size_t n)
 {
-	char msg[2048];
+	char msg[2048], hint[600];
 
 	for (size_t q = 0; q < B.npart; q++) {
 		double a[4];
 
-		if (!ref_box(s, n, q, a)) {
+		if (!pcb_ref_box(s, n, q, a)) {
 			continue;
 		}
 		for (size_t o = q + 1; o < B.npart; o++) {
 			double c[4];
 
 			if (B.part[o].bottom == B.part[q].bottom &&
-			    ref_box(s, n, o, c) && a[0] < c[2] && c[0] < a[2] &&
-			    a[1] < c[3] && c[1] < a[3]) {
-				snprintf(msg, sizeof msg,
-					 "the designators of %s and %s overlap",
-					 label(&B.part[q]), label(&B.part[o]));
+			    pcb_ref_box(s, n, o, c) && a[0] < c[2] &&
+			    c[0] < a[2] && a[1] < c[3] && c[1] < a[3]) {
+				// The hint for the one with no room, else the
+				// later.
+				size_t h = no_room(s, n, q) &&
+							   !no_room(s, n, o) ?
+						   q :
+						   o;
+
+				pcb_ref_hint(&B, s, n, h, hint, sizeof hint);
+				snprintf(
+					msg, sizeof msg,
+					"the designators of %s and %s overlap%s",
+					label(&B.part[q]), label(&B.part[o]),
+					hint);
 				fault(msg, a[0], a[1]);
 			}
 		}
@@ -375,7 +372,7 @@ static void check_silk(void)
 {
 	struct pcb_stroke *s;
 	size_t n = pcb_silk(&B, &s), off = (size_t)-1;
-	char msg[2048];
+	char msg[2048], hint[600];
 
 	check_refs(s, n);
 	for (size_t i = 0; i < n; i++) {
@@ -401,10 +398,17 @@ static void check_silk(void)
 
 				if (pcb_opening(&B, q, k, bottom, o) &&
 				    stroke_in(&s[i], o)) {
+					*hint = 0;
+					if (s[i].ref && s[i].part < B.npart) {
+						pcb_ref_hint(&B, s, n,
+							     s[i].part, hint,
+							     sizeof hint);
+					}
 					snprintf(
 						msg, sizeof msg,
-						"the silkscreen of %s runs over pad %s",
-						silk_of(&s[i]), pad_name(q, k));
+						"the silkscreen of %s runs over pad %s%s",
+						silk_of(&s[i]), pad_name(q, k),
+						hint);
 					fault(msg, s[i].x0, s[i].y0);
 					while (i + 1 < n &&
 					       s[i + 1].part == s[i].part) {

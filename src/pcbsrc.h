@@ -263,7 +263,8 @@ int pcb_layer(const struct pcb *b, const char *name);
 struct pcb_stroke {
 	double w, x0, y0, x1, y1;
 	size_t part;
-	int ref; // A stroke of a text (a designator, a text statement).
+	int ref; // A stroke of a text (a designator, a text statement); 2
+		// of a designator that found no room.
 	int bottom;
 };
 // The silkscreen of the board, in the stroke font (stroke.h): the lines
@@ -281,6 +282,18 @@ struct pcb_stroke {
 // On the bottom a text reads from below.  Returns the number of strokes,
 // in *s.
 size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s);
+// The box of the designator of part q among the strokes, if it has one.
+int pcb_ref_box(const struct pcb_stroke *s, size_t n, size_t q, double box[4]);
+// What would give the designator of part q room among the strokes, for
+// a fault, into buf: "; REF is W x H mm at SIZE (tried SIDES)", then, of
+// its four sides at 0.5 mm (in the middle, at the start or the end), the
+// one that needs least: clear, "; try: ref PART SIDE [ALIGN] [rot 90]
+// size 0.5"; else, if the parts past that side need to move out 2 mm at
+// most, the part that needs most and the gap from it, to 0.1 mm, "; try:
+// place PART WAY of PART GAP (E mm more SIDE)"; else "; nothing within
+// 2 mm: move PART or a neighbor (NAME)", the part in the way.
+void pcb_ref_hint(const struct pcb *b, const struct pcb_stroke *s, size_t n,
+		  size_t q, char *buf, size_t len);
 // The opening of the solder mask round pad k of part q, as a box; 0 if
 // the pad is not on that side (bottom or not).
 int pcb_opening(const struct pcb *b, size_t q, size_t k, int bottom,
