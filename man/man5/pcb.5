@@ -241,11 +241,11 @@ output fed to the middle of the pair's track on one side and the jack's
 pin drawn from the middle of the other.
 .PP
 .nf
-block ch1.term
-place ch1.term up from ch1.jack.j.1
-place ch1.term.r2 left of ch1.term.r1
-fork ch1.gain.out ch1.gain.amp.out to ch1.term.r1.1 ch1.term.r2.1
-fork ch1.term.out ch1.jack.j.1 to ch1.term.r1.2 ch1.term.r2.2
+block outputs.ch1.term
+place outputs.ch1.term up from outputs.ch1.jack.j.1
+place outputs.ch1.term.r2 left of outputs.ch1.term.r1
+fork outputs.ch1.gain.out outputs.ch1.gain.amp.out to outputs.ch1.term.r1.1 outputs.ch1.term.r2.1
+fork outputs.ch1.term.out outputs.ch1.jack.j.1 to outputs.ch1.term.r1.2 outputs.ch1.term.r2.2
 .fi
 .SH SEE ALSO
 pcbplace(1), pcbroute(1), pcbcheck(1), pcbgerber(1), pcbfp(5)
