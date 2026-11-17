@@ -22,8 +22,11 @@
 //   place GROUP WAY from PIN            a block whole, as one part of two
 //                                        sides: its pads of the pin's net
 //                                        centered on the pin, toward it
-// The fixed parts are placed first, the rest in the order their
-// anchors allow.  A part
+//   place PART|GROUP near THING [WAY] [GAP] [rot R]
+//                                        the nearest room by THING (a part,
+//                                        group, pin, cutout [N] or edge)
+// No part moves for a designator (pcb_silk).  The fixed parts are
+// placed first, the rest in the order their anchors allow.  A part
 // without rot is turned the way, of four, that brings its pads nearest
 // to the pads of their nets already placed; then it is moved out the
 // way it lies until its courtyard is clear of all placed, of the
@@ -458,6 +461,202 @@ static void place_root(size_t k, const struct pcb_stmt *st, int rot, int n)
 	}
 }
 
+#define NEAR_STEP 0.1 // The step of the search of near.
+#define NEAR_FAR 1000 // Its steps out from what it is near, at most.
+
+static int is_near(const struct pcb_stmt *st)
+{
+	return !strcmp(st->w[0], "place") && st->n >= 4 &&
+	       !strcmp(st->w[2], "near");
+}
+
+// The parts of a group, a dot after its name.
+static int group_has(const char *g)
+{
+	for (size_t i = 0; i < B.npart; i++) {
+		if (of_group(B.part[i].name, g) && B.part[i].fp) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// What a near statement is near, as a box, and the words after it: the
+// way (-1 any) and the gap; inside is set for the edge, whose room is
+// inside it.  Returns 0, the fault told, if it is not so.
+static int near_thing(const struct pcb_stmt *st, int n, double t[4],
+		      int *way, double *gap, int *inside)
+{
+	const char *th = st->w[3];
+	int i = 4;
+	long k;
+	size_t a, ap;
+
+	*way = -1;
+	*gap = 0;
+	*inside = 0;
+	t[0] = t[1] = 1e300;
+	t[2] = t[3] = -1e300;
+	if (!strcmp(th, "edge")) {
+		memcpy(t, B.board, sizeof B.board);
+		*inside = 1;
+	} else if (!strcmp(th, "cutout")) {
+		int c = 1;
+
+		if (i < n && strspn(st->w[i], "0123456789") == strlen(st->w[i])) {
+			c = atoi(st->w[i++]);
+		}
+		if (c < 1 || (size_t)c > B.ncut) {
+			pcb_error(&B, st->line, "no cutout %d", c);
+			return 0;
+		}
+		memcpy(t, B.cut[c - 1], sizeof B.cut[0]);
+	} else if ((k = part_named(th)) >= 0 && B.part[k].fp) {
+		if (!B.part[k].placed) {
+			pcb_error(&B, st->line, "%s is not placed", th);
+			return 0;
+		}
+		pcb_court(&B.part[k], t);
+	} else if (pcb_pin(&B, th, &a, &ap)) {
+		struct pcb_spot sp;
+
+		if (!B.part[a].placed) {
+			pcb_error(&B, st->line, "%s is not placed", th);
+			return 0;
+		}
+		pcb_spot(&B, &B.part[a], ap, &sp);
+		t[0] = sp.x - sp.w / 2;
+		t[1] = sp.y - sp.h / 2;
+		t[2] = sp.x + sp.w / 2;
+		t[3] = sp.y + sp.h / 2;
+	} else if (group_has(th)) {
+		for (size_t q = 0; q < B.npart; q++) {
+			double c[4];
+
+			if (!of_group(B.part[q].name, th) || !B.part[q].placed ||
+			    !B.part[q].fp) {
+				continue;
+			}
+			pcb_court(&B.part[q], c);
+			t[0] = fmin(t[0], c[0]);
+			t[1] = fmin(t[1], c[1]);
+			t[2] = fmax(t[2], c[2]);
+			t[3] = fmax(t[3], c[3]);
+		}
+		if (t[2] < t[0]) {
+			pcb_error(&B, st->line, "no part of %s is placed", th);
+			return 0;
+		}
+	} else {
+		pcb_error(&B, st->line,
+			  "place PART|GROUP near PART|GROUP|PIN|cutout [N]|edge "
+			  "[WAY] [GAP]");
+		return 0;
+	}
+	if (i < n && way_word(st->w[i]) >= 0) {
+		*way = way_word(st->w[i++]);
+	}
+	if (i < n) {
+		char *e = NULL;
+
+		*gap = strtod(st->w[i], &e);
+		i += *e || !(*gap >= 0) ? 0 : 1;
+	}
+	if (i != n) {
+		pcb_error(&B, st->line,
+			  "place PART|GROUP near PART|GROUP|PIN|cutout [N]|edge "
+			  "[WAY] [GAP]");
+		return 0;
+	}
+	return 1;
+}
+
+// Whether what moves stands clear: part k, or block b if 0 or more.
+static int set_clear(size_t k, long b)
+{
+	return b >= 0 ? block_clear((size_t)b) : clear(k);
+}
+
+// Moves part k, or block b, by (dx, dy).
+static void set_move(size_t k, long b, double dx, double dy)
+{
+	for (size_t i = 0; i < B.npart; i++) {
+		if (b >= 0 ? block_of[i] == b : i == k) {
+			B.part[i].x += dx;
+			B.part[i].y += dy;
+		}
+	}
+}
+
+// Carries out a near statement for part k, or block b (its root k): the
+// nearest spot where the courtyard (of a block, the box of its parts'
+// courtyards) is clear, searching outward from what it is near, at the
+// gap from it at least, on the side the way says or any; along the
+// side, from its middle out.  Of the edge, the spot is inside it.
+// Returns 0 if none is.
+static int near_search(size_t k, long b, const struct pcb_stmt *st, int n)
+{
+	double t[4], c[4] = { 1e300, 1e300, -1e300, -1e300 }, gap;
+	int way, inside;
+
+	if (!near_thing(st, n, t, &way, &gap, &inside)) {
+		return 0;
+	}
+	for (size_t i = 0; i < B.npart; i++) {
+		double e[4];
+
+		if (b >= 0 ? block_of[i] != b : i != k) {
+			continue;
+		}
+		pcb_court(&B.part[i], e);
+		c[0] = fmin(c[0], e[0]);
+		c[1] = fmin(c[1], e[1]);
+		c[2] = fmax(c[2], e[2]);
+		c[3] = fmax(c[3], e[3]);
+	}
+	for (int di = 0; di <= NEAR_FAR; di++) {
+		double d = gap + di * NEAR_STEP;
+		double reach = fmax(t[2] - t[0], t[3] - t[1]) / 2 +
+			       fmax(c[2] - c[0], c[3] - c[1]);
+
+		for (int ti = 0; ti * NEAR_STEP / 2 <= reach; ti++) {
+			double along = (ti % 2 ? 1 : -1) * ((ti + 1) / 2) *
+				       NEAR_STEP;
+
+			for (int sd = 0; sd < 4; sd++) {
+				double x, y;
+
+				if (way >= 0 && sd != way) {
+					continue;
+				}
+				// The lower left of the box where it would
+				// stand: past the side, or inside the edge.
+				x = (t[0] + t[2] - (c[2] - c[0])) / 2 + along;
+				y = (t[1] + t[3] - (c[3] - c[1])) / 2 + along;
+				if (sd == 0) {
+					x = inside ? t[2] - d - (c[2] - c[0]) :
+						     t[2] + d;
+				} else if (sd == 2) {
+					x = inside ? t[0] + d :
+						     t[0] - d - (c[2] - c[0]);
+				} else if (sd == 1) {
+					y = inside ? t[3] - d - (c[3] - c[1]) :
+						     t[3] + d;
+				} else {
+					y = inside ? t[1] + d :
+						     t[1] - d - (c[3] - c[1]);
+				}
+				set_move(k, b, x - c[0], y - c[1]);
+				if (set_clear(k, b)) {
+					return 1;
+				}
+				set_move(k, b, c[0] - x, c[1] - y);
+			}
+		}
+	}
+	return 0;
+}
+
 // Carries out the statement of part k, turned as block_rot says if it
 // is 0 or more (the root of a block, whose turn its lock has); a block's
 // root is not pushed here (the block is, whole), and its way goes to
@@ -491,6 +690,22 @@ static int place(size_t k, int block_rot, int *way_out)
 		q->rot = rot < 0 ? 0 : rot;
 		q->bottom = !strcmp(st->w[st->n - 1], "bottom");
 		how = "fixed";
+	} else if (is_near(st)) {
+		q->rot = rot < 0 ? 0 : rot;
+		q->bottom = 0;
+		q->x = q->y = 0;
+		q->placed = 1;
+		if (way_out) {
+			*way_out = -1;
+			return 1; // A block's root: the block searches whole.
+		}
+		if (!near_search(k, -1, st, n)) {
+			q->placed = 0;
+			pcb_error(&B, st->line, "no room for %s (%s) near %s",
+				  q->name, pcb_ref(q), st->w[3]);
+			return 0;
+		}
+		how = "nearest room";
 	} else if (n >= 5 && !strcmp(st->w[3], "of")) {
 		double gap = GAP;
 
@@ -701,6 +916,19 @@ static int place_block(size_t b)
 	if (bl->whole) {
 		center_block(b, &B.stmt[stmt_of[r]], way);
 	}
+	if (is_near(&B.stmt[stmt_of[r]])) {
+		const struct pcb_stmt *st = &B.stmt[stmt_of[r]];
+		int n = st->n;
+
+		for (int i = 0; i + 1 < st->n; i++) {
+			n = !strcmp(st->w[i], "rot") ? i : n;
+		}
+		if (!near_search(r, (long)b, st, n)) {
+			pcb_error(&B, st->line, "no room for block %s near %s",
+				  bl->group, st->w[3]);
+		}
+		return 1;
+	}
 	// A fixed root is the mechanics': the block stays where it puts it,
 	// and what it comes on is a fault.
 	if (way >= 0 && !block_clear(b) && !push_block(b, way)) {
@@ -863,6 +1091,49 @@ static int is_block(const char *group)
 	return 0;
 }
 
+// The part a near statement is placed against, for the order and the
+// lock: the part, the pin's part, the first part of the group; or -1
+// (a cutout, the edge).
+static long near_anchor(const struct pcb_stmt *st)
+{
+	char name[1024], *dot;
+	long k = part_named(st->w[3]);
+
+	if (k >= 0) {
+		return k;
+	}
+	snprintf(name, sizeof name, "%s", st->w[3]);
+	dot = strrchr(name, '.');
+	if (dot) {
+		*dot = 0;
+		k = part_named(name);
+		if (k >= 0) {
+			return k;
+		}
+	}
+	for (size_t i = 0; i < B.npart; i++) {
+		if (of_group(B.part[i].name, st->w[3]) && B.part[i].fp) {
+			return (long)i;
+		}
+	}
+	return -1;
+}
+
+// Whether the group a near statement of part k names is placed whole,
+// so k may be placed against it.
+static int near_ready(size_t k, const int *done)
+{
+	const struct pcb_stmt *st = &B.stmt[stmt_of[k]];
+
+	for (size_t i = 0; is_near(st) && i < B.npart; i++) {
+		if (i != k && of_group(B.part[i].name, st->w[3]) &&
+		    B.part[i].fp && in_scope(i) && !done[i]) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
 // Carries out each statement place GROUP WAY from PIN that this pass
 // lays out: of the group laid out alone, or of a block in it.  The
 // group's part that no statement places is its root, placed by the
@@ -875,9 +1146,9 @@ static void place_groups(void)
 		long b = -1, root = -1;
 		size_t a, ap, n = 0;
 
-		if (strcmp(st->w[0], "place") || st->n < 5 ||
-		    strcmp(st->w[3], "from") || part_named(st->w[1]) >= 0 ||
-		    !is_block(st->w[1])) {
+		if (strcmp(st->w[0], "place") ||
+		    !(is_near(st) || (st->n >= 5 && !strcmp(st->w[3], "from"))) ||
+		    part_named(st->w[1]) >= 0 || !is_block(st->w[1])) {
 			continue;
 		}
 		for (size_t i = 0; i < nblocks; i++) {
@@ -893,11 +1164,16 @@ static void place_groups(void)
 				n++;
 			}
 		}
+		if (is_near(st) && n == 1) {
+			stmt_of[root] = (long)s;
+			anchor[root] = near_anchor(st);
+			continue;
+		}
 		if (n != 1 || !pcb_pin(&B, st->w[4], &a, &ap)) {
 			pcb_error(
 				&B, st->line,
-				"place GROUP WAY from PIN: the group needs one "
-				"part placed by no statement, and the pin");
+				"place GROUP WAY from PIN, or near THING: the "
+				"group needs one part placed by no statement");
 			continue;
 		}
 		stmt_of[root] = (long)s;
@@ -976,8 +1252,8 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 			continue;
 		}
 		k = st->n >= 2 ? part_named(st->w[1]) : -1;
-		if (k < 0 && is_block(st->w[1]) && st->n >= 5 &&
-		    !strcmp(st->w[0], "place") && !strcmp(st->w[3], "from")) {
+		if (k < 0 && is_block(st->w[1]) && !strcmp(st->w[0], "place") &&
+		    (is_near(st) || (st->n >= 5 && !strcmp(st->w[3], "from")))) {
 			continue; // A block placed whole: place_groups.
 		}
 		if (k < 0 || !B.part[k].fp) {
@@ -994,7 +1270,9 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 			continue;
 		}
 		stmt_of[k] = (long)s;
-		if (st->n >= 5 && !strcmp(st->w[3], "of")) {
+		if (is_near(st)) {
+			anchor[k] = near_anchor(st);
+		} else if (st->n >= 5 && !strcmp(st->w[3], "of")) {
 			anchor[k] = part_named(st->w[4]);
 			if (anchor[k] < 0) {
 				pcb_error(&B, st->line, "no part %s", st->w[4]);
@@ -1079,7 +1357,8 @@ static int pass(const char *file, char **lib, size_t nlib, const char *group,
 				    (b >= 0 && blocks[b].root != (long)k)) {
 					continue;
 				}
-				if (pass ? anchor[k] < 0 || done[anchor[k]] :
+				if (pass ? (anchor[k] < 0 || done[anchor[k]]) &&
+						   near_ready((size_t)k, done) :
 					   !strcmp(B.stmt[stmt_of[k]].w[0],
 						   "fix")) {
 					next = (long)k;

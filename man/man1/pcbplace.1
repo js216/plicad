@@ -38,6 +38,14 @@ pads of their nets; then it moves out its way until its courtyard is
 clear of the parts on its side, of the keep-out of every hole
 .RI ( pcbfp (5))
 and of every plated hole, inside the board.
+A part placed near a thing
+.RB ( near ,
+.IR pcb (5))
+takes the nearest spot where its courtyard is clear, out from the
+thing, at its gap at least, the way said or any; a block placed near a
+thing moves whole to the nearest spot where all its parts stand clear.
+No part moves for a designator: the designators find their room among
+the parts as placed.
 A group laid out alone whose root is fixed keeps clear of the parts
 fixed outside it, as they stand from its root.
 What is not moved, a part fixed or kept from the lock or a block fixed

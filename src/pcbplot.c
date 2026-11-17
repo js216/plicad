@@ -222,11 +222,12 @@ static void silk(int bottom)
 	P->begin(bottom ? "bottomsilk" : "topsilk",
 		 bottom ? "Legend,Bot" : "Legend,Top");
 	for (size_t i = 0; i < n; i++) {
-		if (B->part[s[i].part].bottom == bottom) {
+		if (s[i].bottom == bottom) {
 			const double xy[4] = { s[i].x0, s[i].y0, s[i].x1,
 					       s[i].y1 };
 
-			P->part(B->part[s[i].part].name);
+			P->part(s[i].part < B->npart ? B->part[s[i].part].name :
+						       NULL);
 			P->line(s[i].w, xy, 2);
 			P->part(NULL);
 		}

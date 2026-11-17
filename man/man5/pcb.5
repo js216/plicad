@@ -30,6 +30,8 @@ fix PART at X Y [rot R] [bottom]     where the mechanics put it
 place PART WAY of PART [GAP] [rot R] next to the part, centered
 place PART WAY from PIN [rot R]     its pad of the pin's net by the pin
 place GROUP WAY from PIN             a block, whole, as one part of two sides
+place PART|GROUP near THING [WAY] [GAP] [rot R]
+                                     in the nearest room by THING
 width NET W                          its tracks
 width PIN PIN W                      the copper between two of its pins
 path NET PIN PIN...                  its pins wired in this order
@@ -38,6 +40,7 @@ unplaced GROUP			   its parts not on the board yet
 block GROUP                          the group laid out alone
 ref PART SIDE [ALIGN] [rot 90] [size H]
                                    its designator by its courtyard
+text TEXT at X Y [size H] [bottom]   text on the silkscreen
 note TEXT                            for the readers
 .fi
 .RE
@@ -62,8 +65,38 @@ turned to read upward with rot 90, and H mm tall (0.5 to 0.8, 0.8 by
 default), in the stroke font of
 .IR vec (5),
 its pen 0.15 of H wide (0.12 mm at 0.8), its box grown by the
-descender for a text that has one; a part without one has its designator where the placer finds
-room.
+descender for a text that has one.
+A designator with no ref statement reads along its courtyard's long
+side (turned to read upward for a part taller than wide), on whichever
+long side has room, as large as fits, from 0.8 mm down to 0.5 by 0.1,
+and at that size as near the courtyard as fits, from the gap the placer
+leaves out by 0.1 mm to 0.95, centered on the side; failing both long
+sides, a short side.
+Room is clear of the mask openings and of the courtyards of the other
+parts of its side, of the designators of its side placed before it,
+and inside the board by the edge rule; the designators with the fewest
+places clear (designators aside) choose first, each taking its room,
+and one with no room takes its first place, which
+.IR pcbcheck (1)
+tells.
+Every program computes them alike, and no part moves for them.
+.PP
+A near statement puts a part, or a block whole (its one part that no
+statement places is its root), at the nearest spot where its courtyard
+(a block's, the box of its parts' courtyards) is clear, searching out
+from THING by 0.1 mm: THING is a part, a group (the box of its parts'
+courtyards), a pin (its pad), a cutout (cutout N, the Nth of the
+source, the first if N is not said) or the edge (the outline, the room
+inside it); WAY keeps to that side of it, and GAP (in mm, 0 by default)
+is the least distance from it; along a side, the spot nearest its
+middle comes first.
+Without rot a part stands unturned.
+.PP
+A text statement writes TEXT (its words, to the word at) on the top
+silkscreen, or the bottom's (reading from below), in the stroke font of
+.IR vec (5),
+the left end of its baseline at X Y and its capitals H mm high (0.8 by
+default).
 .PP
 An unplaced statement leaves a group's parts (every part whose name
 begins with the group and a dot, a page's or any other's) off the board

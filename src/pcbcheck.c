@@ -352,16 +352,48 @@ static void check_refs(const struct pcb_stroke *s, size_t n)
 	}
 }
 
+// The silkscreen of stroke s, for a message: its part, or a text
+// statement's text.
+static const char *silk_of(const struct pcb_stroke *s)
+{
+	static char buf[1200];
+
+	if (s->part < B.npart) {
+		return label(&B.part[s->part]);
+	}
+	{
+		const struct pcb_stmt *st = &B.stmt[s->part - B.npart];
+		char *t = pcb_words(st->w + 1, st->n - 1);
+
+		snprintf(buf, sizeof buf, "the text %s", t);
+		free(t);
+	}
+	return buf;
+}
+
 static void check_silk(void)
 {
 	struct pcb_stroke *s;
-	size_t n = pcb_silk(&B, &s);
+	size_t n = pcb_silk(&B, &s), off = (size_t)-1;
 	char msg[2048];
 
 	check_refs(s, n);
 	for (size_t i = 0; i < n; i++) {
-		int bottom = B.part[s[i].part].bottom;
+		int bottom = s[i].bottom;
 
+		// A text statement's on the board, off its cutouts: once.
+		if (s[i].part >= B.npart && s[i].part != off &&
+		    pcb_edge_dist(&B, 0,
+				  (const double[4]){ s[i].x0, s[i].y0, s[i].x1,
+						     s[i].y1 },
+				  s[i].w / 2, NULL) < 0) {
+			snprintf(msg, sizeof msg,
+				 "the silkscreen of %s is off the board or "
+				 "over a cutout",
+				 silk_of(&s[i]));
+			fault(msg, s[i].x0, s[i].y0);
+			off = s[i].part;
+		}
 		for (size_t q = 0; q < B.npart; q++) {
 			for (size_t k = 0;
 			     B.part[q].placed && k < B.part[q].fp->npad; k++) {
@@ -372,8 +404,7 @@ static void check_silk(void)
 					snprintf(
 						msg, sizeof msg,
 						"the silkscreen of %s runs over pad %s",
-						label(&B.part[s[i].part]),
-						pad_name(q, k));
+						silk_of(&s[i]), pad_name(q, k));
 					fault(msg, s[i].x0, s[i].y0);
 					while (i + 1 < n &&
 					       s[i + 1].part == s[i].part) {
@@ -937,8 +968,9 @@ static void check_lock(void)
 			const struct pcb_stmt *st = &B.stmt[s];
 			size_t n = st->n >= 2 ? strlen(st->w[1]) : 0;
 
-			if (!strcmp(st->w[0], "place") && st->n >= 5 &&
-			    !strcmp(st->w[3], "from") &&
+			if (!strcmp(st->w[0], "place") &&
+			    ((st->n >= 5 && !strcmp(st->w[3], "from")) ||
+			     (st->n >= 4 && !strcmp(st->w[2], "near"))) &&
 			    !strncmp(p->name, st->w[1], n) && n &&
 			    p->name[n] == '.') {
 				by = pcb_by(&B, q, st);

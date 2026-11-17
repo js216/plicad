@@ -983,6 +983,17 @@ static int ref_words(char **w, int n)
 	return k == n;
 }
 
+// A place of a text on the silkscreen: the lower left of its box, the
+// box's size, the capital height of its text, and whether it is turned
+// to read upward.
+struct place {
+	double x, y, w, h, size;
+	int rot;
+};
+
+static char *free_text(const struct pcb_stmt *st, struct place *at,
+		       int *bottom);
+
 // Reads one statement of the source that the reader itself carries out:
 // the netlist, the board, layers, rules, footprints and widths.  The
 // rest are kept for the programs.
@@ -1110,6 +1121,18 @@ static void statement(struct pcb *b, char **w, int n, int line, char **dirs,
 	}
 	if (!strcmp(w[0], "note")) {
 		return;
+	}
+	if (!strcmp(w[0], "text")) {
+		struct pcb_stmt ts = { w, n, line };
+		struct place ta;
+		int bottom;
+		char *t = free_text(&ts, &ta, &bottom);
+
+		if (!t) {
+			pcb_error(b, line, "text TEXT at X Y [size H] [bottom]");
+			return;
+		}
+		free(t);
 	}
 	if (!strcmp(w[0], "ref") && !ref_words(w, n)) {
 		pcb_error(b, line,
@@ -1715,14 +1738,14 @@ static int overlap(const double a[4], const double c[4])
 	return a[0] < c[2] && c[0] < a[2] && a[1] < c[3] && c[1] < a[3];
 }
 
-// Whether a designator's box is clear: of the openings and of the
-// courtyards of the other parts of its side, of the designators of its
-// side before it, and inside the board.
-static int text_clear(const struct pcb *b, size_t q, const double t[4],
-		      double (*done)[4], const int *side, size_t ndone)
+// Whether a box of text on a side (bottom or not) is clear: of the
+// openings, and of the courtyards of the parts of its side but part q
+// (its own; b->npart for none), of the boxes of text of its side before
+// it (done, side), and inside the board by the edge rule.
+static int text_clear(const struct pcb *b, size_t q, int bottom,
+		      const double t[4], double (*done)[4], const int *side,
+		      size_t ndone)
 {
-	int bottom = b->part[q].bottom;
-
 	if (t[0] < b->board[0] + b->edge || t[1] < b->board[1] + b->edge ||
 	    t[2] > b->board[2] - b->edge || t[3] > b->board[3] - b->edge) {
 		return 0;
@@ -1734,7 +1757,7 @@ static int text_clear(const struct pcb *b, size_t q, const double t[4],
 	}
 	for (size_t p = 0; p < b->npart; p++) {
 		const struct pcb_part *o = &b->part[p];
-		double c[4];
+		double c[4], g[4];
 
 		if (!o->placed || !o->fp) {
 			continue;
@@ -1743,7 +1766,12 @@ static int text_clear(const struct pcb *b, size_t q, const double t[4],
 		if (p != q && o->bottom == bottom && overlap(t, c)) {
 			return 0;
 		}
-		for (size_t k = 0; k < o->fp->npad; k++) {
+		// The openings of a part far from the box are no matter.
+		g[0] = c[0] - 1;
+		g[1] = c[1] - 1;
+		g[2] = c[2] + 1;
+		g[3] = c[3] + 1;
+		for (size_t k = 0; overlap(t, g) && k < o->fp->npad; k++) {
 			if (pcb_opening(b, p, k, bottom, c) && overlap(t, c)) {
 				return 0;
 			}
@@ -1752,11 +1780,12 @@ static int text_clear(const struct pcb *b, size_t q, const double t[4],
 	return 1;
 }
 
-static void stroke(struct pcb_stroke **s, size_t *n, size_t q, double w,
-		   const double xy[4], int ref)
+static void stroke(struct pcb_stroke **s, size_t *n, size_t q, int bottom,
+		   double w, const double xy[4], int ref)
 {
 	*s = pcb_grow(*s, *n, sizeof **s);
 	(*s)[*n].ref = ref;
+	(*s)[*n].bottom = bottom;
 	(*s)[*n].w = w;
 	(*s)[*n].x0 = xy[0];
 	(*s)[*n].y0 = xy[1];
@@ -1829,27 +1858,220 @@ static void ref_at(const struct pcb_stmt *rs, const double c[4], double bw,
 	}
 }
 
+#define RULE_SIZES 4 // The sizes a designator by rule tries: 0.8 to 0.5.
+#define RULE_GAPS 9 // The gaps it tries: SILK_GAP, out by 0.1 mm.
+#define RULE_PLACES (4 * RULE_SIZES * RULE_GAPS)
+
+// The box of a designator's text of capital height h, turned or not.
+static void ref_dims(const char *ref, double h, int rot, double *w, double *bh)
+{
+	double tw = stroke_width(ref, h), dn = stroke_descends(ref) ? h / 3 : 0;
+
+	*w = rot ? h + dn : tw;
+	*bh = rot ? tw : h + dn;
+}
+
+// The places of a designator with no ref statement, in the order it
+// takes them: its text along the courtyard's long side (turned for a
+// part taller than wide); on the long sides first, then on the short
+// ones; on either of a pair, as large as fits, from full size down to
+// 0.5 mm, and at that size as near the courtyard as fits, centered on
+// the side.  Returns their number.
+static size_t ref_places(const struct pcb_part *p, const char *ref,
+			 struct place *o)
+{
+	double c[4];
+	int rot;
+	size_t n = 0;
+
+	pcb_court(p, c);
+	rot = c[3] - c[1] > c[2] - c[0];
+	for (int pair = 0; pair < 2; pair++) {
+		for (int z = 0; z < RULE_SIZES; z++) {
+			for (int g = 0; g < RULE_GAPS; g++) {
+				for (int side = 0; side < 2; side++) {
+					struct place *q = &o[n++];
+					double gap = SILK_GAP + 0.1 * g;
+					// Across the long axis (the long sides)
+					// or along it (the short).
+					int across = rot ? pair : !pair;
+
+					q->size = SILK_H - 0.1 * z;
+					q->rot = rot;
+					ref_dims(ref, q->size, rot, &q->w,
+						 &q->h);
+					if (across) {
+						q->x = (c[0] + c[2] - q->w) / 2;
+						q->y = side ? c[1] - gap - q->h :
+							      c[3] + gap;
+					} else {
+						q->y = (c[1] + c[3] - q->h) / 2;
+						q->x = side ? c[2] + gap :
+							      c[0] - gap - q->w;
+					}
+				}
+			}
+		}
+	}
+	return n;
+}
+
+// The box of a place, its pen round it.
+static void place_box(const struct place *q, double t[4])
+{
+	double pen = STROKE_PEN * q->size;
+
+	t[0] = q->x - pen;
+	t[1] = q->y - pen;
+	t[2] = q->x + q->w + pen;
+	t[3] = q->y + q->h + pen;
+}
+
+// Writes the strokes of a text in its place: from the box's lower left,
+// its baseline a descender up; turned, reading upward; on the bottom,
+// read from below, mirrored about the box's middle.
+static void text_strokes(struct pcb_stroke **s, size_t *n, size_t q,
+			 int bottom, const char *text, const struct place *at)
+{
+	double *sg, dn = stroke_descends(text) ? at->size / 3 : 0;
+	size_t ns = stroke_text(text, at->size, &sg);
+
+	for (size_t k = 0; k < ns; k++) {
+		double xy[4];
+
+		for (size_t e = 0; e < 4; e += 2) {
+			double lx = sg[4 * k + e], ly = sg[4 * k + e + 1] + dn;
+
+			xy[e] = at->x + (at->rot ? at->w - ly : lx);
+			xy[e + 1] = at->y + (at->rot ? lx : ly);
+			if (bottom) {
+				xy[e] = 2 * at->x + at->w - xy[e];
+			}
+		}
+		stroke(s, n, q, bottom, STROKE_PEN * at->size, xy, 1);
+	}
+	free(sg);
+}
+
+// The words of a text statement: text TEXT at X Y [size H] [bottom];
+// its place goes to at, its side to bottom, and its text to the caller
+// to free.  Returns NULL if they are not so.
+static char *free_text(const struct pcb_stmt *st, struct place *at,
+		       int *bottom)
+{
+	int k = st->n - 1, a;
+	double v[3];
+	char *t;
+
+	*bottom = k >= 0 && !strcmp(st->w[k], "bottom");
+	k -= *bottom;
+	at->size = SILK_H;
+	if (k >= 1 && !strcmp(st->w[k - 1], "size")) {
+		if (!number(st->w[k], &v[2]) || !(v[2] > 0)) {
+			return NULL;
+		}
+		at->size = v[2];
+		k -= 2;
+	}
+	a = k - 2;
+	if (a < 2 || strcmp(st->w[a], "at") || !number(st->w[a + 1], &v[0]) ||
+	    !number(st->w[a + 2], &v[1])) {
+		return NULL;
+	}
+	t = pcb_words(st->w + 1, a - 1);
+	at->x = v[0];
+	at->rot = 0;
+	ref_dims(t, at->size, 0, &at->w, &at->h);
+	at->y = v[1] - (stroke_descends(t) ? at->size / 3 : 0);
+	return t;
+}
+
 size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 {
-	double(*done)[4] = pcb_alloc((b->npart + 1) * sizeof *done);
-	int *side = pcb_alloc((b->npart + 1) * sizeof *side);
-	size_t n = 0, ndone = 0;
+	double(*done)[4] = pcb_alloc((b->npart + b->nstmt + 1) * sizeof *done);
+	int *side = pcb_alloc((b->npart + b->nstmt + 1) * sizeof *side);
+	struct place *at = pcb_alloc((b->npart + 1) * sizeof *at);
+	struct place *o = pcb_alloc(RULE_PLACES * sizeof *o);
+	size_t *order = pcb_alloc((b->npart + 1) * sizeof *order);
+	size_t *room = pcb_alloc((b->npart + 1) * sizeof *room);
+	char *has = pcb_alloc(b->npart + 1);
+	size_t n = 0, ndone = 0, nrule = 0;
 
 	*s = NULL;
+	// A ref statement says where; those first take their places.
 	for (size_t q = 0; q < b->npart; q++) {
 		const struct pcb_part *p = &b->part[q];
 		const char *ref = p->ref ? p->ref : "";
 		const struct pcb_stmt *rs = ref_of(b, p->name);
-		double h = rs ? ref_size(rs) : SILK_H, pen = STROKE_PEN * h;
-		double c[4], t[4], tw = stroke_width(ref, h);
-		double dn = stroke_descends(ref) ? h / 3 : 0; // The descender.
-		double at[12][2], bw = tw, bh = h + dn;
-		int pick = 0, rot = 0;
+		double c[4], ra[2];
 
-		if (!p->placed || !p->fp) {
+		if (!p->placed || !p->fp || !*ref) {
 			continue;
 		}
-		for (size_t i = 0; i < p->fp->nsilk; i++) {
+		if (!rs) {
+			order[nrule++] = q;
+			continue;
+		}
+		pcb_court(p, c);
+		at[q].size = ref_size(rs);
+		at[q].rot = ref_turned(rs);
+		ref_dims(ref, at[q].size, at[q].rot, &at[q].w, &at[q].h);
+		ref_at(rs, c, at[q].w, at[q].h, ra);
+		at[q].x = ra[0];
+		at[q].y = ra[1];
+		place_box(&at[q], done[ndone]);
+		side[ndone++] = p->bottom;
+		has[q] = 1;
+	}
+	// The rest by rule: the most cramped first, the places each has
+	// clear of all but the designators counted, each taking its room.
+	for (size_t i = 0; i < nrule; i++) {
+		const struct pcb_part *p = &b->part[order[i]];
+		size_t np = ref_places(p, p->ref, o);
+
+		room[order[i]] = 0;
+		for (size_t k = 0; k < np; k++) {
+			double t[4];
+
+			place_box(&o[k], t);
+			room[order[i]] += (size_t)text_clear(b, order[i],
+							     p->bottom, t, NULL,
+							     NULL, 0);
+		}
+	}
+	for (size_t i = 1; i < nrule; i++) {
+		for (size_t j = i; j > 0 && room[order[j]] < room[order[j - 1]];
+		     j--) {
+			size_t t = order[j];
+
+			order[j] = order[j - 1];
+			order[j - 1] = t;
+		}
+	}
+	for (size_t i = 0; i < nrule; i++) {
+		size_t q = order[i], np = ref_places(&b->part[q], b->part[q].ref,
+						      o);
+		size_t pick = 0;
+
+		for (size_t k = 0; k < np; k++) {
+			double t[4];
+
+			place_box(&o[k], t);
+			if (text_clear(b, q, b->part[q].bottom, t, done, side,
+				       ndone)) {
+				pick = k;
+				break;
+			}
+		}
+		at[q] = o[pick]; // None clear: the first, which pcbcheck tells.
+		place_box(&at[q], done[ndone]);
+		side[ndone++] = b->part[q].bottom;
+		has[q] = 1;
+	}
+	for (size_t q = 0; q < b->npart; q++) {
+		const struct pcb_part *p = &b->part[q];
+
+		for (size_t i = 0; p->placed && p->fp && i < p->fp->nsilk; i++) {
 			const struct fp_line *ln = &p->fp->silk[i];
 
 			for (size_t j = 0; j + 1 < ln->n; j++) {
@@ -1863,73 +2085,33 @@ size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s)
 				xy[1] += p->y;
 				xy[2] += p->x;
 				xy[3] += p->y;
-				stroke(s, &n, q, ln->w, xy, 0);
+				stroke(s, &n, q, p->bottom, ln->w, xy, 0);
 			}
 		}
-		if (!*ref) {
+		if (has[q]) {
+			text_strokes(s, &n, q, p->bottom, p->ref, &at[q]);
+		}
+	}
+	// The texts of the source, of no part.
+	for (size_t i = 0; i < b->nstmt; i++) {
+		struct place ta;
+		int bottom;
+		char *t;
+
+		if (strcmp(b->stmt[i].w[0], "text") ||
+		    !(t = free_text(&b->stmt[i], &ta, &bottom))) {
 			continue;
 		}
-		// The lower left corners of the places: the four sides, then
-		// the four 1 mm and 2 mm farther out.
-		pcb_court(p, c);
-		if (rs) {
-			rot = ref_turned(rs);
-			bw = rot ? h + dn : tw;
-			bh = rot ? tw : h + dn;
-			ref_at(rs, c, bw, bh, at[0]);
-		}
-		for (int i = 0; !rs && i < 12; i++) {
-			double g = SILK_GAP + i / 4;
-
-			at[i][0] = i % 4 < 2  ? (c[0] + c[2] - tw) / 2 :
-				   i % 4 == 2 ? c[0] - g - tw :
-						c[2] + g;
-			at[i][1] = i % 4 == 0 ? c[3] + g :
-				   i % 4 == 1 ? c[1] - g - bh :
-						(c[1] + c[3] - bh) / 2;
-		}
-		for (int i = 11; !rs && i >= 0; i--) {
-			t[0] = at[i][0] - pen;
-			t[1] = at[i][1] - pen;
-			t[2] = at[i][0] + tw + pen;
-			t[3] = at[i][1] + bh + pen;
-			if (text_clear(b, q, t, done, side, ndone)) {
-				pick = i;
-			}
-		}
-		t[0] = at[pick][0] - pen;
-		t[1] = at[pick][1] - pen;
-		t[2] = at[pick][0] + bw + pen;
-		t[3] = at[pick][1] + bh + pen;
-		memcpy(done[ndone], t, sizeof t);
-		side[ndone++] = p->bottom;
-		{
-			double *sg;
-			size_t ns = stroke_text(ref, h, &sg);
-
-			for (size_t k = 0; k < ns; k++) {
-				double xy[4];
-
-				// From the box's lower left, the baseline a
-				// descender up.
-				for (size_t e = 0; e < 4; e += 2) {
-					double lx = sg[4 * k + e];
-					double ly = sg[4 * k + e + 1] + dn;
-
-					// Turned, it reads upward in its box.
-					xy[e] = at[pick][0] + (rot ? bw - ly : lx);
-					xy[e + 1] = at[pick][1] + (rot ? lx : ly);
-					if (p->bottom) {
-						xy[e] = 2 * at[pick][0] + bw - xy[e];
-					}
-				}
-				stroke(s, &n, q, pen, xy, 1);
-			}
-			free(sg);
-		}
+		text_strokes(s, &n, b->npart + i, bottom, t, &ta);
+		free(t);
 	}
 	free(done);
 	free(side);
+	free(at);
+	free(o);
+	free(order);
+	free(room);
+	free(has);
 	return n;
 }
 

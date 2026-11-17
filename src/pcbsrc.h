@@ -257,19 +257,29 @@ int pcb_add_link(struct pcb *b, int n, const char *a, const char *bb, double w);
 const char *pcb_ref(const struct pcb_part *q);
 // The layer of a name, or -1.
 int pcb_layer(const struct pcb *b, const char *name);
-// A stroke of the silkscreen on the board: its width, its ends, and the
-// part it belongs to.
+// A stroke of the silkscreen on the board: its width, its ends, the
+// part it belongs to (of a text statement, the number of parts and the
+// statement's index), and its side.
 struct pcb_stroke {
 	double w, x0, y0, x1, y1;
 	size_t part;
-	int ref; // A stroke of the designator, not of the footprint.
+	int ref; // A stroke of a text (a designator, a text statement).
+	int bottom;
 };
-// The silkscreen of the board: the lines of each placed part's footprint
-// and its designator, in the stroke font (stroke.h).  A designator stands by its part's courtyard, at
-// the first of above, below, left and right that is clear of the mask
-// openings, of the courtyards of other parts and of the designators
-// before it on its side, and inside the board; else above.  On the
-// bottom it reads from below.  Returns the number of strokes, in *s.
+// The silkscreen of the board, in the stroke font (stroke.h): the lines
+// of each placed part's footprint, its designator, and the text of each
+// text statement (its baseline's left end at X Y, its capitals H high).
+// A designator of a ref statement stands where it says.  Any other reads
+// along its courtyard's long side (turned for a part taller than wide),
+// on whichever long side has room, as large as fits from full size down
+// to 0.5 mm, at that size as near the courtyard as fits; failing both
+// long sides, a short side.  Room is clear of the mask openings and the
+// courtyards of the other parts of its side, of the designators of its
+// side placed before it, and inside the board by the edge rule; the
+// designators with the fewest places clear choose first; with none
+// clear, a designator takes its first place.  Nothing moves for them.
+// On the bottom a text reads from below.  Returns the number of strokes,
+// in *s.
 size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s);
 // The opening of the solder mask round pad k of part q, as a box; 0 if
 // the pad is not on that side (bottom or not).
