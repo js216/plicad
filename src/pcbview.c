@@ -275,7 +275,9 @@ static void draw_names(const struct vg_file *f)
 	vg_draw(f, clear_run, name_ink);
 	glColorMask(1, 1, 1, 1);
 	glStencilFunc(GL_NOTEQUAL, 1, 1);
+	glStencilMask(0); // The ink leaves the stencil as it is.
 	vg_draw(f, dark_run, name_ink);
+	glStencilMask(~0U);
 	glColorMask(0, 0, 0, 0);
 	glStencilFunc(GL_ALWAYS, 0, 1);
 	vg_draw(f, clear_run, name_ink);
@@ -291,6 +293,8 @@ static void names_of(const struct layer *l, double depth)
 
 	glDepthRange(depth, depth);
 	glDepthMask(GL_FALSE);
+	// The copper left the stencil set where it is dark.
+	glClear(GL_STENCIL_BUFFER_BIT);
 	for (int b = 0; b < NAMES; b++) {
 		// The least size of the text of the file, on the screen.
 		if (ldexp(1, b - 8) * vg_zoom < READ) {
