@@ -1342,19 +1342,18 @@ void add_vary(struct ranges *g, size_t tol, int hi, const char *rec)
 	PUSH(g->vary, g->nvary, g->capvary, v);
 }
 
-// The words w[from .. n - 1] with a blank between each two, a new
-// string.
-static char *joined(char **w, size_t from, size_t n)
+// The n words w with a blank between each two, a new string.
+static char *joined(char **w, size_t n)
 {
 	size_t room = 1;
 	char *out = NULL;
 	size_t k = 0;
 
-	for (size_t i = from; i < n; i++) {
+	for (size_t i = 0; i < n; i++) {
 		room += strlen(w[i]) + 1;
 	}
 	out = xmalloc(room);
-	for (size_t i = from; i < n; i++) {
+	for (size_t i = 0; i < n; i++) {
 		size_t m = strlen(w[i]);
 
 		if (k) {
@@ -1409,12 +1408,13 @@ int range_record(struct ranges *g, char **w, size_t n, const char *where)
 		for (size_t i = 0; i < g->ntol; i++) {
 			t = strcmp(g->tol[i].name, name) == 0 ? i : t;
 		}
-		if (t == NONE || (strcmp(end, "-") != 0 && strcmp(end, "+")) ||
+		if (t == NONE ||
+		    (strcmp(end, "-") != 0 && strcmp(end, "+") != 0) ||
 		    r.k >= n) {
 			die("%s: expected vary NAME -|+ RECORD, after tol NAME",
 			    where);
 		}
-		rec = joined(w, r.k, n);
+		rec = joined(w + r.k, n - r.k);
 		add_vary(g, t, end[0] == '+', rec);
 		free(rec);
 		return 1;

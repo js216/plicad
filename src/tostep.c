@@ -520,13 +520,12 @@ static struct bern bern_mul(const struct bern *f, const struct bern *g)
 	return h;
 }
 
-static struct bern bern_sum(const struct bern *f, const struct bern *g,
-			    double k)
+static struct bern bern_sum(struct bern f, const struct bern *g, double k)
 {
-	struct bern h = *f;
+	struct bern h = f;
 
-	for (int i = 0; i <= f->deg; i++) {
-		for (int j = 0; j < f->dim; j++) {
+	for (int i = 0; i <= f.deg; i++) {
+		for (int j = 0; j < f.dim; j++) {
 			h.c[i][j] += k * g->c[i][j];
 		}
 	}
@@ -651,27 +650,34 @@ static void pipe_patch(const struct surf *s, const struct spine *sp,
 		}
 		a = bern_mul(&sp->n, &den); // N den, and W den last.
 		b = bern_mul(&sp->w, &num);
-		col[j] = bern_sum(&a, &b, s->r2);
+		col[j] = bern_sum(a, &b, s->r2);
 		col[j].dim = 4;
 	}
 }
 
+// A point of a pipe by its ring: the parameter u of the ring and the
+// angle f round it.
+struct ring_pt {
+	double u, f;
+};
+
 // The parameter u near ref and the angle f round the ring from -m of
-// the point p of pipe s, for m = sign n.
-static void ring_angle(const struct surf *s, struct vec p, double ref, int sign,
-		       double *u, double *f)
+// the point p of pipe s.
+static struct ring_pt ring_angle(const struct surf *s, struct vec p, double ref,
+				 struct vec m)
 {
 	struct vec y = frame_y(s->n, s->x);
 	struct line3 c;
 	struct vec t;
-	struct vec m = mul(s->n, sign);
 	struct vec q;
+	struct ring_pt r = { 0, 0 };
 
-	*u = angle_near(pipe_foot(s, p), ref);
-	c = pipe_ring(s, *u);
-	t = unit(add(mul(s->x, -s->r * sin(*u)), mul(y, s->r3 * cos(*u))));
+	r.u = angle_near(pipe_foot(s, p), ref);
+	c = pipe_ring(s, r.u);
+	t = unit(add(mul(s->x, -s->r * sin(r.u)), mul(y, s->r3 * cos(r.u))));
 	q = sub(p, c.o);
-	*f = atan2(dot(q, cross(m, t)), -dot(q, m));
+	r.f = atan2(dot(q, cross(m, t)), -dot(q, m));
+	return r;
 }
 
 // The reach of face fi of pipe sh along u and round its ring, from
@@ -697,11 +703,11 @@ static struct pipe_reach face_reach_pipe(const struct shape *sh, size_t fi)
 			struct vec p = edge_at(e, i / (double)PIPE_PTS);
 
 			for (int side = 0; side < 2; side++) {
-				double u = 0;
-				double f = 0;
-
-				ring_angle(s, p, fm.ref.u, side ? -1 : 1, &u,
-					   &f);
+				struct ring_pt rp =
+					ring_angle(s, p, fm.ref.u,
+						   mul(s->n, side ? -1 : 1));
+				double u = rp.u;
+				double f = rp.f;
 				x.u.lo = fmin(x.u.lo, u);
 				x.u.hi = fmax(x.u.hi, u);
 				x.f[side].lo = fmin(x.f[side].lo, f);
@@ -712,13 +718,19 @@ static struct pipe_reach face_reach_pipe(const struct shape *sh, size_t fi)
 	return x;
 }
 
+// The rows and columns of a net of control points.
+struct net_size {
+	size_t rows, cols;
+};
+
 // Prints the control points of the net and returns the id of the first;
 // row i holds those of the s of point i, their weights in w.
 static unsigned long net_points(unsigned long *id, double (*net)[4],
-				size_t rows, size_t cols, double *w,
-				const char *name)
+				struct net_size sz, double *w, const char *name)
 {
 	unsigned long first = *id + 1;
+	size_t rows = sz.rows;
+	size_t cols = sz.cols;
 
 	for (size_t i = 0; i < rows; i++) {
 		for (size_t j = 0; j < cols; j++) {
@@ -737,99 +749,82 @@ static unsigned long net_points(unsigned long *id, double (*net)[4],
 	return first;
 }
 
-// Prints the list of n knots or multiplicities k.
-static void knot_list(const double *k, size_t n, int whole)
+// Prints the list of n knots k.
+static void knot_list(const double *k, size_t n)
 {
 	printf("(");
 	for (size_t i = 0; i < n; i++) {
 		printf("%s", i ? "," : "");
-		if (whole) {
-			printf("%d", (int)k[i]);
-		} else {
-			real(k[i]);
-		}
+		real(k[i]);
 	}
 	printf(")");
 }
 
-// Prints the surface of face fi of sh, a pipe, as a rational B-spline
-// surface that holds the face, and returns its id; *same gets whether
-// its normal is the outward one of the face.  Its normal, s x g, runs
-// toward the center of the ring, against that of the pipe.
-static unsigned long pipe_surf(unsigned long *id, const struct shape *sh,
-			       size_t fi, int *same)
+// Prints the list of n multiplicities k, whole numbers.
+static void mult_list(const double *k, size_t n)
 {
-	const struct sface *fc = &sh->f[fi];
-	const struct surf *s = &fc->s;
-	struct pipe_reach x = face_reach_pipe(sh, fi);
-	int side = fmax(fabs(x.f[1].lo), fabs(x.f[1].hi)) <
-		   fmax(fabs(x.f[0].lo), fabs(x.f[0].hi));
-	struct span f = x.f[side];
-	struct span u = { x.u.lo - PIPE_PAD, x.u.hi + PIPE_PAD };
-	struct vec m = mul(s->n, side ? -1 : 1);
-	size_t np = 0;
-	double du = 0;
-	double lo = HUGE_VAL;
-	double hi = 0;
-	struct span g;
-	double cut = 0;
-	size_t ng = 0;
-	size_t rows = 0;
-	size_t cols = 0;
-	double(*net)[4] = NULL;
-	double *w = NULL;
-	unsigned long first = 0;
-	double uk[PIPE_PIECES + 1];
-	double um[PIPE_PIECES + 1];
-	double vk[3];
-	double vm[3];
+	printf("(");
+	for (size_t i = 0; i < n; i++) {
+		printf("%s%d", i ? "," : "", (int)k[i]);
+	}
+	printf(")");
+}
 
-	if (fmax(fabs(f.lo), fabs(f.hi)) > PI - (2 * RING_PAD)) {
-		die("tostep: face %s of a pipe runs round its tube", fc->name);
-	}
-	if (u.hi - u.lo > 2 * PI) {
-		u.lo = ((x.u.lo + x.u.hi) / 2) - PI;
-		u.hi = u.lo + (2 * PI);
-	}
-	du = ceil((u.hi - u.lo) / PIPE_PIECE);
-	np = du < 1 ? 1 : du > PIPE_PIECES ? PIPE_PIECES : (size_t)du;
-	du = (u.hi - u.lo) / (double)np;
-	for (size_t i = 0; i < np; i++) {
-		struct spine sp = spine_piece(s, u.lo + (du * (double)i), du);
+// The net of a pipe face: its span of u and pieces along it, each du
+// long; the way m the ring's angle is measured from; the span g of the
+// tangent of half the angle, in ng pieces, cut between them; the rows
+// and columns of control points.
+struct pipe_net {
+	struct span u;
+	size_t np;
+	double du;
+	struct vec m;
+	struct span g;
+	size_t ng;
+	double cut;
+	struct net_size sz;
+};
+
+// The least and the most speed of the spine of pipe s along the pieces
+// of pn, padded.
+static struct span spine_speeds(const struct surf *s, const struct pipe_net *pn)
+{
+	struct span sp = { HUGE_VAL, 0 };
+
+	for (size_t i = 0; i < pn->np; i++) {
+		struct spine pc =
+			spine_piece(s, pn->u.lo + (pn->du * (double)i), pn->du);
 
 		for (int k = 0; k <= PIPE_PTS; k++) {
-			double l = len(bern_at(&sp.d, k / (double)PIPE_PTS));
+			double l = len(bern_at(&pc.d, k / (double)PIPE_PTS));
 
-			lo = fmin(lo, l);
-			hi = fmax(hi, l);
+			sp.lo = fmin(sp.lo, l);
+			sp.hi = fmax(sp.hi, l);
 		}
 	}
-	lo *= 1 - SPEED_PAD;
-	hi *= 1 + SPEED_PAD;
-	f.lo = fmax(f.lo - RING_PAD, -PI + RING_PAD);
-	f.hi = fmin(f.hi + RING_PAD, PI - RING_PAD);
-	g.lo = (f.lo < 0 ? hi : lo) * tan(f.lo / 2);
-	g.hi = (f.hi > 0 ? hi : lo) * tan(f.hi / 2);
-	ng = g.lo < 0 && g.hi > 0 ? 2 : 1;
-	cut = ng == 2 ? -g.lo / (g.hi - g.lo) : 1;
-	rows = (PIPE_DEG * np) + 1;
-	cols = (2 * ng) + 1;
-	net = xcalloc(NET_ROWS * NET_COLS, sizeof(*net));
-	w = xmalloc((rows * cols + 1) * sizeof(*w));
-	for (size_t i = 0; i < np; i++) {
-		struct spine sp = spine_piece(s, u.lo + (du * (double)i), du);
+	sp.lo *= 1 - SPEED_PAD;
+	sp.hi *= 1 + SPEED_PAD;
+	return sp;
+}
 
-		for (size_t k = 0; k < ng; k++) {
-			struct span gk = { k ? 0 : g.lo,
-					   ng == 2 && !k ? 0 : g.hi };
+// The control points of the net pn of pipe s into net.
+static void fill_net(const struct surf *s, const struct pipe_net *pn,
+		     double (*net)[4])
+{
+	for (size_t i = 0; i < pn->np; i++) {
+		struct spine sp =
+			spine_piece(s, pn->u.lo + (pn->du * (double)i), pn->du);
+
+		for (size_t k = 0; k < pn->ng; k++) {
+			struct span gk = { k ? 0 : pn->g.lo,
+					   pn->ng == 2 && !k ? 0 : pn->g.hi };
 			struct bern col[3];
 
-			pipe_patch(s, &sp, m, gk, col);
-			for (int j = 0; j < 3; j++) {
-				for (int r = 0; r <= PIPE_DEG; r++) {
-					size_t at = (((2 * k) + (size_t)j) *
-						     NET_ROWS) +
-						    (PIPE_DEG * i) + (size_t)r;
+			pipe_patch(s, &sp, pn->m, gk, col);
+			for (size_t j = 0; j < 3; j++) {
+				for (size_t r = 0; r <= PIPE_DEG; r++) {
+					size_t at = (((2 * k) + j) * NET_ROWS) +
+						    (PIPE_DEG * i) + r;
 
 					memcpy(net[at], col[j].c[r],
 					       sizeof(net[at]));
@@ -837,17 +832,26 @@ static unsigned long pipe_surf(unsigned long *id, const struct shape *sh,
 			}
 		}
 	}
-	first = net_points(id, net, rows, cols, w, fc->name);
+}
+
+// Prints the surface of net pn, its points from first, their weights
+// w, and returns its id.
+static unsigned long print_pipe(unsigned long *id, const struct pipe_net *pn,
+				unsigned long first, const double *w)
+{
+	size_t np = pn->np;
+	size_t ng = pn->ng;
+	size_t rows = pn->sz.rows;
+	size_t cols = pn->sz.cols;
+	double uk[PIPE_PIECES + 1];
+	double um[PIPE_PIECES + 1];
+	double vk[3] = { 0, ng == 2 ? pn->cut : 1, 1 };
+	double vm[3] = { 3, ng == 2 ? 2 : 3, 3 };
+
 	for (size_t i = 0; i <= np; i++) {
 		uk[i] = (double)i;
 		um[i] = i == 0 || i == np ? PIPE_DEG + 1 : PIPE_DEG;
 	}
-	vk[0] = 0;
-	vk[1] = ng == 2 ? cut : 1;
-	vk[2] = 1;
-	vm[0] = 3;
-	vm[1] = ng == 2 ? 2 : 3;
-	vm[2] = 3;
 	printf("#%lu=(BOUNDED_SURFACE()B_SPLINE_SURFACE(%d,2,(", ++*id,
 	       PIPE_DEG);
 	for (size_t i = 0; i < rows; i++) {
@@ -858,13 +862,13 @@ static unsigned long pipe_surf(unsigned long *id, const struct shape *sh,
 		printf(")");
 	}
 	printf("),.UNSPECIFIED.,.F.,.F.,.F.)B_SPLINE_SURFACE_WITH_KNOTS(");
-	knot_list(um, np + 1, 1);
+	mult_list(um, np + 1);
 	printf(",");
-	knot_list(vm, ng + 1, 1);
+	mult_list(vm, ng + 1);
 	printf(",");
-	knot_list(uk, np + 1, 0);
+	knot_list(uk, np + 1);
 	printf(",");
-	knot_list(vk, ng == 2 ? 3 : 2, 0);
+	knot_list(vk, ng == 2 ? 3 : 2);
 	printf(",.UNSPECIFIED.)GEOMETRIC_REPRESENTATION_ITEM()"
 	       "RATIONAL_B_SPLINE_SURFACE((");
 	for (size_t i = 0; i < rows; i++) {
@@ -876,8 +880,75 @@ static unsigned long pipe_surf(unsigned long *id, const struct shape *sh,
 		printf(")");
 	}
 	printf("))REPRESENTATION_ITEM('')SURFACE());\n");
+	return *id;
+}
+
+// The pieces of span u: as many as PIPE_PIECE long, 1 to PIPE_PIECES.
+static size_t pipe_pieces(struct span u)
+{
+	double du = ceil((u.hi - u.lo) / PIPE_PIECE);
+
+	if (du < 1) {
+		return 1;
+	}
+	return du > PIPE_PIECES ? PIPE_PIECES : (size_t)du;
+}
+
+// The net of face fc of pipe s, of reach x, into pn.
+static void pipe_net_of(const struct sface *fc, const struct pipe_reach *x,
+			struct pipe_net *pn)
+{
+	const struct surf *s = &fc->s;
+	int side = fmax(fabs(x->f[1].lo), fabs(x->f[1].hi)) <
+		   fmax(fabs(x->f[0].lo), fabs(x->f[0].hi));
+	struct span f = x->f[side];
+	struct span sp = { 0, 0 };
+
+	pn->u.lo = x->u.lo - PIPE_PAD;
+	pn->u.hi = x->u.hi + PIPE_PAD;
+	pn->m = mul(s->n, side ? -1 : 1);
+	if (fmax(fabs(f.lo), fabs(f.hi)) > PI - (2 * RING_PAD)) {
+		die("tostep: face %s of a pipe runs round its tube", fc->name);
+	}
+	if (pn->u.hi - pn->u.lo > 2 * PI) {
+		pn->u.lo = ((x->u.lo + x->u.hi) / 2) - PI;
+		pn->u.hi = pn->u.lo + (2 * PI);
+	}
+	pn->np = pipe_pieces(pn->u);
+	pn->du = (pn->u.hi - pn->u.lo) / (double)pn->np;
+	sp = spine_speeds(s, pn);
+	f.lo = fmax(f.lo - RING_PAD, -PI + RING_PAD);
+	f.hi = fmin(f.hi + RING_PAD, PI - RING_PAD);
+	pn->g.lo = (f.lo < 0 ? sp.hi : sp.lo) * tan(f.lo / 2);
+	pn->g.hi = (f.hi > 0 ? sp.hi : sp.lo) * tan(f.hi / 2);
+	pn->ng = pn->g.lo < 0 && pn->g.hi > 0 ? 2 : 1;
+	pn->cut = pn->ng == 2 ? -pn->g.lo / (pn->g.hi - pn->g.lo) : 1;
+	pn->sz.rows = (PIPE_DEG * pn->np) + 1;
+	pn->sz.cols = (2 * pn->ng) + 1;
+}
+
+// Prints the surface of face fi of sh, a pipe, as a rational B-spline
+// surface that holds the face, and returns its id; *same gets whether
+// its normal is the outward one of the face.  Its normal, s x g, runs
+// toward the center of the ring, against that of the pipe.
+static unsigned long pipe_surf(unsigned long *id, const struct shape *sh,
+			       size_t fi, int *same)
+{
+	const struct sface *fc = &sh->f[fi];
+	struct pipe_reach x = face_reach_pipe(sh, fi);
+	struct pipe_net pn;
+	double(*net)[4] = NULL;
+	double *w = NULL;
+	unsigned long first = 0;
+
+	pipe_net_of(fc, &x, &pn);
+	net = xcalloc((size_t)NET_ROWS * NET_COLS, sizeof(*net));
+	w = xmalloc(((pn.sz.rows * pn.sz.cols) + 1) * sizeof(*w));
+	fill_net(&fc->s, &pn, net);
+	first = net_points(id, net, pn.sz, w, fc->name);
+	print_pipe(id, &pn, first, w);
 	*same = fc->sense < 0;
-	free(net);
+	free((void *)net);
 	free(w);
 	return *id;
 }

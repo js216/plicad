@@ -625,11 +625,20 @@ static void pipe_hit(const struct pipe_ray *pr, double t, int turn, double *r,
 	}
 }
 
-// The points of the ray for the root at u, the angle of the ring.
-static void pipe_ring_hits(const struct pipe_ray *pr, double u, int turn,
+// A root of H (pipe_poly): u, the angle of its ring, and whether it is a
+// turning point.
+struct ring_root {
+	double u;
+	int turn;
+};
+
+// The points of the ray for the root q.
+static void pipe_ring_hits(const struct pipe_ray *pr, struct ring_root q,
 			   double *r, size_t *n, int *tangent)
 {
 	const struct surf *s = pr->s;
+	double u = q.u;
+	int turn = q.turn;
 	struct vec c = v3(s->r * cos(u), s->r3 * sin(u), 0);
 	struct vec c1 = v3(-s->r * sin(u), s->r3 * cos(u), 0);
 	struct vec qc = sub(pr->q, c);
@@ -690,8 +699,9 @@ static size_t line_pipe(struct line3 ray, double tmax, const struct surf *s,
 				       r, turn);
 
 		for (size_t i = 0; i < m; i++) {
-			pipe_ring_hits(&pr, us + (2 * atan(r[i])), turn[i], t,
-				       &n, tangent);
+			struct ring_root q = { us + (2 * atan(r[i])), turn[i] };
+
+			pipe_ring_hits(&pr, q, t, &n, tangent);
 		}
 	}
 	for (size_t i = 0; i < n; i++) {

@@ -3,11 +3,11 @@
 // Copyright (c) 2026 Jakob Kastelic
 
 // See vecgl.h.
-#define _POSIX_C_SOURCE 200809L // For getline.
 #define GL_GLEXT_PROTOTYPES
 
 #include "vecgl.h"
 #include "stroke.h"
+#include "util.h"
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <math.h>
@@ -16,129 +16,152 @@
 #include <string.h>
 
 #define PI 3.14159265358979323846
+#define FAR 1e300 // Past any box: where one to grow starts.
+// The half widths, in pixels, of a hairline and of the rim of a polygon.
+#define HAIR (-0.75)
+#define RIM (-0.5)
+
+enum {
+	HALF_TURN = 180, // Degrees.
+	// The room first made, for the floats of the points and the corners
+	// of the segments, and for the numbers of a record.
+	ROOM = 65536,
+	XY_ROOM = 1024,
+	TRI_FLOATS = 6, // A triangle's points, two floats each.
+	// A segment's corners, and the floats of a corner: of both ends in
+	// one buffer, of the half width and the corner in the other.
+	SEG_CORNERS = 6,
+	SEG_ENDS = 4,
+	SEG_HC = 2,
+	TEXT_FIELDS = 5, // The numbers before the text of a text record.
+	LINE_LEN = 256 // Room for a line looked at for the layer.
+};
+
+// Whether s starts with pre.
+static int starts(const char *s, const char *pre)
+{
+	return !strncmp(s, pre, strlen(pre));
+}
 
 // The names of the parts and of the nets, and the class of each net
 // (NULL for none).
-static char **parts, **nets, **classes;
-static size_t nparts, nnets, nclasses;
 
 static void *more(void *p, size_t n)
 {
 	p = p ? realloc(p, n) : malloc(n);
 	if (!p) {
-		fprintf(stderr, "out of memory\n");
+		(void)fprintf(stderr, "out of memory\n");
 		exit(2);
 	}
 	return p;
 }
 
-int vg_part(const char *s)
+// A copy of s.
+static char *copy(const char *s)
 {
-	for (size_t i = 0; i < nparts; i++) {
-		if (!strcmp(parts[i], s)) {
+	size_t n = strlen(s) + 1;
+	char *c = more(NULL, n);
+
+	memcpy(c, s, n);
+	return c;
+}
+
+int vg_part(struct vg *vg, const char *s)
+{
+	for (size_t i = 0; i < vg->nparts; i++) {
+		if (!strcmp(vg->parts[i], s)) {
 			return (int)i;
 		}
 	}
-	parts = more(parts, (nparts + 1) * sizeof *parts);
-	parts[nparts] = more(NULL, strlen(s) + 1);
-	strcpy(parts[nparts], s);
-	return (int)nparts++;
+	vg->parts = (char **)more((void *)vg->parts,
+				  (vg->nparts + 1) * sizeof *vg->parts);
+	vg->parts[vg->nparts] = copy(s);
+	return (int)vg->nparts++;
 }
 
-const char *vg_part_name(int i)
+const char *vg_part_name(struct vg *vg, int i)
 {
-	return i >= 0 && (size_t)i < nparts ? parts[i] : "";
+	return i >= 0 && (size_t)i < vg->nparts ? vg->parts[i] : "";
 }
 
-int vg_net(const char *s)
+int vg_net(struct vg *vg, const char *s)
 {
-	for (size_t i = 0; i < nnets; i++) {
-		if (!strcmp(nets[i], s)) {
+	for (size_t i = 0; i < vg->nnets; i++) {
+		if (!strcmp(vg->nets[i], s)) {
 			return (int)i;
 		}
 	}
-	nets = more(nets, (nnets + 1) * sizeof *nets);
-	nets[nnets] = more(NULL, strlen(s) + 1);
-	strcpy(nets[nnets], s);
-	return (int)nnets++;
+	vg->nets = (char **)more((void *)vg->nets,
+				 (vg->nnets + 1) * sizeof *vg->nets);
+	vg->classes = (char **)more((void *)vg->classes,
+				    (vg->nnets + 1) * sizeof *vg->classes);
+	vg->nets[vg->nnets] = copy(s);
+	vg->classes[vg->nnets] = NULL; // None until a net record gives one.
+	return (int)vg->nnets++;
 }
 
-const char *vg_net_name(int i)
+const char *vg_net_name(struct vg *vg, int i)
 {
-	return i >= 0 && (size_t)i < nnets ? nets[i] : "";
+	return i >= 0 && (size_t)i < vg->nnets ? vg->nets[i] : "";
 }
 
-int vg_net_record(char *s)
+int vg_net_record(struct vg *vg, char *s)
 {
 	char *c = s + strcspn(s, " ");
-	int i;
+	int i = 0;
 
 	if (*c) {
 		*c++ = 0;
 	}
-	i = vg_net(s);
-	classes = more(classes, nnets * sizeof *classes);
-	for (size_t k = nclasses; k < nnets; k++) {
-		classes[k] = NULL;
-	}
-	nclasses = nnets;
-	if (!strncmp(c, "class ", 6) && c[6] && !classes[i]) {
-		c += 6;
+	i = vg_net(vg, s);
+	if (starts(c, "class ") && c[strlen("class ")] && !vg->classes[i]) {
+		c += strlen("class ");
 		c[strcspn(c, " ")] = 0;
-		classes[i] = more(NULL, strlen(c) + 1);
-		strcpy(classes[i], c);
+		vg->classes[i] = copy(c);
 	}
 	return i;
 }
 
-const char *vg_net_class(int i)
+const char *vg_net_class(struct vg *vg, int i)
 {
-	return i >= 0 && (size_t)i < nclasses ? classes[i] : NULL;
+	return i >= 0 && (size_t)i < vg->nnets ? vg->classes[i] : NULL;
 }
 
-// The file being read: its triangles' points, its segments (six points
-// a segment, of both ends, the half width and the corner), the state of
-// its records, the open run, the record's box, the element it may join.
-static float *pt, *sv;
-static size_t npt, capt, nsv, capsv;
-static struct vg_file *F;
-static struct vg_run state, cur;
-static double rb[4];
-static long open_elem;
-static int sheet; // The file has a page: it is a sheet.
-static struct vg_file *files[64]; // Those read, for centering a part.
-static size_t nfiles;
-
-static void point(const double *p)
+static void point(struct vg *vg, const double *p)
 {
-	if (npt + 2 > capt) {
-		capt = capt ? 2 * capt : 1 << 16;
-		pt = more(pt, capt * sizeof *pt);
+	if (vg->npt + 2 > vg->capt) {
+		vg->capt = vg->capt ? 2 * vg->capt : ROOM;
+		vg->pt = more(vg->pt, vg->capt * sizeof *vg->pt);
 	}
-	pt[npt++] = (float)p[0];
-	pt[npt++] = (float)p[1];
+	vg->pt[vg->npt++] = (float)p[0];
+	vg->pt[vg->npt++] = (float)p[1];
 	for (int i = 0; i < 4; i++) {
-		rb[i] = i < 2 ? fmin(rb[i], p[i % 2]) : fmax(rb[i], p[i % 2]);
+		vg->rb[i] = i < 2 ? fmin(vg->rb[i], p[i % 2]) :
+				    fmax(vg->rb[i], p[i % 2]);
 	}
 }
 
-static void segment(const double *a, const double *b, double hw)
+static void segment(struct vg *vg, const double *a, const double *b, double hw)
 {
-	if (nsv + 36 > capsv) {
-		capsv = capsv ? 2 * capsv : 1 << 16;
-		sv = more(sv, capsv * sizeof *sv);
+	if (vg->nsv + SEG_CORNERS > vg->capsv) {
+		vg->capsv = vg->capsv ? 2 * vg->capsv : ROOM;
+		vg->sv = more(vg->sv, vg->capsv * SEG_ENDS * sizeof *vg->sv);
+		vg->hc = more(vg->hc, vg->capsv * SEG_HC * sizeof *vg->hc);
 	}
-	for (int c = 0; c < 6; c++) {
-		const float s[6] = { (float)a[0], (float)a[1], (float)b[0],
-				     (float)b[1], (float)hw,   (float)c };
+	for (int c = 0; c < SEG_CORNERS; c++) {
+		const float ends[SEG_ENDS] = { (float)a[0], (float)a[1],
+					       (float)b[0], (float)b[1] };
+		const float hc[SEG_HC] = { (float)hw, (float)c };
 
-		memcpy(sv + nsv, s, sizeof s);
-		nsv += 6;
+		memcpy(vg->sv + (vg->nsv * SEG_ENDS), ends, sizeof ends);
+		memcpy(vg->hc + (vg->nsv * SEG_HC), hc, sizeof hc);
+		vg->nsv++;
 	}
 	// A half width below 0 is in pixels, not in the units of the box.
 	for (int i = 0; i < 2; i++) {
-		rb[i] = fmin(rb[i], fmin(a[i], b[i]) - fmax(hw, 0));
-		rb[i + 2] = fmax(rb[i + 2], fmax(a[i], b[i]) + fmax(hw, 0));
+		vg->rb[i] = fmin(vg->rb[i], fmin(a[i], b[i]) - fmax(hw, 0));
+		vg->rb[i + 2] =
+			fmax(vg->rb[i + 2], fmax(a[i], b[i]) + fmax(hw, 0));
 	}
 }
 
@@ -148,25 +171,28 @@ static void segment(const double *a, const double *b, double hw)
 
 // Cuts a polygon into triangles by its ears; the rest of one not simple
 // as a fan.
-static void polygon(const double *p, int n)
+static void polygon(struct vg *vg, const double *p, int n)
 {
-	int *v = more(NULL, (size_t)n * sizeof *v), m = n, cut = 1;
+	int *v = more(NULL, (size_t)n * sizeof *v);
+	int m = n;
+	int cut = 1;
 	double area = 0;
 
 	for (int i = 0; i < n; i++) {
 		v[i] = i;
-		area += cross(p, &p[2 * i], &p[2 * ((i + 1) % n)]);
+		area += cross(p, &p[2 * (size_t)i],
+			      &p[2 * (size_t)((i + 1) % n)]);
 	}
 	while (m > 3 && cut) {
 		cut = 0;
 		for (int i = 0; i < m && m > 3; i++) {
-			const double *a = &p[2 * v[(i + m - 1) % m]];
-			const double *b = &p[2 * v[i]],
-				     *c = &p[2 * v[(i + 1) % m]];
+			const double *a = &p[2 * (size_t)v[(i + m - 1) % m]];
+			const double *b = &p[2 * (size_t)v[i]];
+			const double *c = &p[2 * (size_t)v[(i + 1) % m]];
 			int ear = cross(a, b, c) * area > 0;
 
 			for (int k = 0; ear && k < m; k++) {
-				const double *q = &p[2 * v[k]];
+				const double *q = &p[2 * (size_t)v[k]];
 
 				ear = q == a || q == b || q == c ||
 				      cross(a, b, q) * area < 0 ||
@@ -174,9 +200,9 @@ static void polygon(const double *p, int n)
 				      cross(c, a, q) * area < 0;
 			}
 			if (ear) {
-				point(a);
-				point(b);
-				point(c);
+				point(vg, a);
+				point(vg, b);
+				point(vg, c);
 				memmove(&v[i], &v[i + 1],
 					(size_t)(m - i - 1) * sizeof *v);
 				m--;
@@ -185,92 +211,109 @@ static void polygon(const double *p, int n)
 		}
 	}
 	for (int i = 1; i + 1 < m; i++) {
-		point(&p[2 * v[0]]);
-		point(&p[2 * v[i]]);
-		point(&p[2 * v[i + 1]]);
+		point(vg, &p[2 * (size_t)v[0]]);
+		point(vg, &p[2 * (size_t)v[i]]);
+		point(vg, &p[2 * (size_t)v[i + 1]]);
 	}
 	free(v);
 }
 
 // Ends the open run if the state has changed, and opens one of it.
-static void run(void)
+static void run(struct vg *vg)
 {
-	if (state.dark == cur.dark && state.zone == cur.zone &&
-	    state.edge == cur.edge && state.via == cur.via &&
-	    state.part == cur.part && state.net == cur.net &&
-	    state.text == cur.text && state.frame == cur.frame) {
+	if (vg->state.dark == vg->cur.dark && vg->state.zone == vg->cur.zone &&
+	    vg->state.edge == vg->cur.edge && vg->state.via == vg->cur.via &&
+	    vg->state.part == vg->cur.part && vg->state.net == vg->cur.net &&
+	    vg->state.text == vg->cur.text &&
+	    vg->state.frame == vg->cur.frame) {
 		return;
 	}
-	cur.count = (int)(npt / 2) - cur.first;
-	cur.scount = (int)(nsv / 6) - cur.sfirst;
-	if (cur.count || cur.scount) {
-		F->run = more(F->run, (F->nrun + 1) * sizeof *F->run);
-		F->run[F->nrun++] = cur;
+	vg->cur.count = (int)(vg->npt / 2) - vg->cur.first;
+	vg->cur.scount = (int)vg->nsv - vg->cur.sfirst;
+	if (vg->cur.count || vg->cur.scount) {
+		vg->file->run =
+			more(vg->file->run,
+			     (vg->file->nrun + 1) * sizeof *vg->file->run);
+		vg->file->run[vg->file->nrun++] = vg->cur;
 	}
-	cur = state;
-	cur.first = (int)(npt / 2);
-	cur.sfirst = (int)(nsv / 6);
+	vg->cur = vg->state;
+	vg->cur.first = (int)(vg->npt / 2);
+	vg->cur.sfirst = (int)vg->nsv;
 }
 
 // Takes the record just drawn into the elements of its part: a text is
 // one by itself; on a sheet (a file with a page) the drawings one after
 // another are one, the body; on a board each record is one, but lines
 // one after another (an outline).
-static void element(char kind)
+static void element(struct vg *vg, char kind)
 {
-	int join = state.part >= 0 && kind != 't' && (sheet || kind == 'l');
-	struct vg_elem *e = open_elem >= 0 ? &F->elem[open_elem] : NULL;
+	int join = vg->state.part >= 0 && kind != 't' &&
+		   (vg->sheet || kind == 'l');
+	struct vg_elem *e =
+		vg->open_elem >= 0 ? &vg->file->elem[vg->open_elem] : NULL;
 
-	if (state.part >= 0 && rb[2] >= rb[0] && state.dark) {
-		if (join && e && e->part == state.part) {
+	if (vg->state.part >= 0 && vg->rb[2] >= vg->rb[0] && vg->state.dark) {
+		if (join && e && e->part == vg->state.part) {
 			for (int i = 0; i < 4; i++) {
-				e->b[i] = i < 2 ? fmin(e->b[i], rb[i]) :
-						  fmax(e->b[i], rb[i]);
+				e->b[i] = i < 2 ? fmin(e->b[i], vg->rb[i]) :
+						  fmax(e->b[i], vg->rb[i]);
 			}
 		} else {
-			F->elem =
-				more(F->elem, (F->nelem + 1) * sizeof *F->elem);
-			F->elem[F->nelem].part = state.part;
-			memcpy(F->elem[F->nelem].b, rb, sizeof rb);
-			open_elem = join ? (long)F->nelem : -1;
-			F->nelem++;
+			vg->file->elem = more(vg->file->elem,
+					      (vg->file->nelem + 1) *
+						      sizeof *vg->file->elem);
+			vg->file->elem[vg->file->nelem].part = vg->state.part;
+			memcpy(vg->file->elem[vg->file->nelem].b, vg->rb,
+			       sizeof vg->rb);
+			vg->open_elem = join ? (long)vg->file->nelem : -1;
+			vg->file->nelem++;
 		}
 	}
 	for (int i = 0; i < 4; i++) {
-		F->box[i] = i < 2 ? fmin(F->box[i], rb[i]) :
-				    fmax(F->box[i], rb[i]);
-		rb[i] = i < 2 ? 1e300 : -1e300;
+		vg->file->box[i] = i < 2 ? fmin(vg->file->box[i], vg->rb[i]) :
+					   fmax(vg->file->box[i], vg->rb[i]);
+		vg->rb[i] = i < 2 ? FAR : -FAR;
 	}
 }
 
 // A text record: segments of the pen of the stroke font, its size the
 // capital height.
-static void text(const char *line)
+static void text(struct vg *vg, const char *line)
 {
-	double size, angle, x, y, w, c, sn, *sg;
-	int align, at = 0;
-	size_t n;
+	double size = NAN;
+	double angle = NAN;
+	double x = NAN;
+	double y = NAN;
+	double w = NAN;
+	double c = NAN;
+	double sn = NAN;
+	double *sg = NULL;
+	const char *r = line;
+	int align = 0;
+	int at = 0;
+	size_t n = 0;
 
-	if (sscanf(line, "text %lf %lf %d %lf %lf %n", &size, &angle, &align,
-		   &x, &y, &at) != 5 ||
+	if (scan(&r, "text %lf %lf %d %lf %lf %n", &size, &angle, &align, &x,
+		 &y, &at) != TEXT_FIELDS ||
 	    !at) {
 		return;
 	}
-	c = cos(angle * PI / 180);
-	sn = sin(angle * PI / 180);
+	c = cos(angle * PI / HALF_TURN);
+	sn = sin(angle * PI / HALF_TURN);
 	n = stroke_text(line + at, size, &sg);
 	w = stroke_width(line + at, size);
 	x -= c * w * align / 2;
 	y -= sn * w * align / 2;
-	run();
+	run(vg);
 	for (size_t k = 0; k < n; k++) {
-		double a[2], b[2];
+		double a[2];
+		double b[2];
 
-		a[0] = x + sg[4 * k] * c - sg[4 * k + 1] * sn;
-		a[1] = y + sg[4 * k] * sn + sg[4 * k + 1] * c;
-		b[0] = x + sg[4 * k + 2] * c - sg[4 * k + 3] * sn;
-		b[1] = y + sg[4 * k + 2] * sn + sg[4 * k + 3] * c;
-		segment(a, b, STROKE_PEN * size / 2);
+		a[0] = x + sg[4 * k] * c - sg[(4 * k) + 1] * sn;
+		a[1] = y + sg[4 * k] * sn + sg[(4 * k) + 1] * c;
+		b[0] = x + sg[(4 * k) + 2] * c - sg[(4 * k) + 3] * sn;
+		b[1] = y + sg[(4 * k) + 2] * sn + sg[(4 * k) + 3] * c;
+		segment(vg, a, b, STROKE_PEN * size / 2);
 	}
 	free(sg);
 }
@@ -282,136 +325,180 @@ static void upload(unsigned *buf, const float *p, size_t n)
 	glBufferData(GL_ARRAY_BUFFER, (long)(n * 4), p, GL_STATIC_DRAW);
 }
 
-void vg_load(struct vg_file *f, const char *path, double via)
+void vg_load(struct vg *vg, struct vg_file *f, const char *path, double via)
 {
 	FILE *in = fopen(path, "r");
 
 	if (!in) {
-		fprintf(stderr, "%s: cannot read\n", path);
+		(void)fprintf(stderr, "%s: cannot read\n", path);
 		exit(2);
 	}
-	vg_load_stream(f, in, via);
-	fclose(in);
+	vg_load_stream(vg, f, in, via);
+	(void)fclose(in);
 }
 
-void vg_free(struct vg_file *f)
+void vg_free(struct vg *vg, struct vg_file *f)
 {
 	if (f->buf || f->sbuf) {
 		glDeleteBuffers(1, &f->buf);
 		glDeleteBuffers(1, &f->sbuf);
+		glDeleteBuffers(1, &f->hbuf);
 	}
 	free(f->run);
 	free(f->elem);
 	memset(f, 0, sizeof *f);
 	// No longer one of the files that name parts.
-	for (size_t i = 0; i < nfiles; i++) {
-		if (files[i] == f) {
-			files[i--] = files[--nfiles];
+	for (size_t i = 0; i < vg->nfiles; i++) {
+		if (vg->files[i] == f) {
+			vg->files[i--] = vg->files[--vg->nfiles];
 		}
 	}
 }
 
-void vg_load_stream(struct vg_file *f, FILE *in, double via)
+// Starts reading f: no runs, the state of a file's start.
+static void start_file(struct vg *vg, struct vg_file *f)
+{
+	memset(f, 0, sizeof *f);
+	vg->file = f;
+	vg->sheet = 0;
+	vg->npt = vg->nsv = 0;
+	vg->open_elem = -1;
+	memset(&vg->state, 0, sizeof vg->state);
+	vg->state.dark = 1;
+	vg->state.part = -1;
+	vg->state.net = -1;
+	vg->cur = vg->state;
+	for (int i = 0; i < 4; i++) {
+		f->box[i] = vg->rb[i] = i < 2 ? FAR : -FAR;
+	}
+}
+
+// The index of the part of a part record, s the text after "part ":
+// NAME [REF], the name keying the part; cuts s at its name.
+static int part_record(struct vg *vg, char *s)
+{
+	s[strcspn(s, " ")] = 0;
+	return vg_part(vg, s);
+}
+
+// A record that sets the state (or a text, drawn as it is read).
+static void state_record(struct vg *vg, char *line)
+{
+	char kind = line[0];
+
+	if (starts(line, "page ")) {
+		vg->sheet = 1;
+		vg->state.frame = 1;
+	} else if (!strcmp(line, "dark") || !strcmp(line, "clear")) {
+		vg->state.dark = kind == 'd';
+	} else if (starts(line, "zone ") || !strcmp(line, "end")) {
+		vg->state.zone = kind == 'z';
+	} else if (starts(line, "part")) {
+		vg->state.part =
+			line[4] ? part_record(vg, line + strlen("part ")) : -1;
+		vg->state.frame = 0;
+		vg->open_elem = -1;
+	} else if (starts(line, "net") && (!line[3] || line[3] == ' ')) {
+		vg->state.net = line[3] ? vg_net_record(vg, line + 4) : -1;
+		vg->state.frame = 0;
+	} else if (starts(line, "text ")) {
+		vg->state.text = 1;
+		text(vg, line);
+		vg->state.text = 0;
+		element(vg, 't');
+	}
+}
+
+// The numbers of s into *xy, with room for *cap; returns their number.
+static int numbers(const char *s, double **xy, size_t *cap)
+{
+	char *end = NULL;
+	double v = NAN;
+	int n = 0;
+
+	while ((v = strtod(s, &end)), end != s) {
+		if ((size_t)n + 1 > *cap) {
+			*cap = *cap ? 2 * *cap : XY_ROOM;
+			*xy = more(*xy, *cap * sizeof **xy);
+		}
+		(*xy)[n++] = v;
+		s = end;
+	}
+	return n;
+}
+
+// A polygon of n numbers: its triangles, a rim of a pixel along its edge
+// (for the edge the smoothness of a stroke; the box stays the
+// polygon's), and a zone's outline, for drawing the zones as outlines.
+static void poly_record(struct vg *vg, const double *xy, int n)
+{
+	double keep[4];
+
+	polygon(vg, xy, n / 2);
+	memcpy(keep, vg->rb, sizeof keep);
+	for (int k = 0; k < n; k += 2) {
+		segment(vg, &xy[k], &xy[(k + 2) % n], RIM);
+	}
+	memcpy(vg->rb, keep, sizeof keep);
+	vg->state.edge = vg->state.zone && vg->state.dark;
+	run(vg);
+	for (int k = 0; vg->state.edge && k < n; k += 2) {
+		segment(vg, &xy[k], &xy[(k + 2) % n], HAIR);
+	}
+	vg->state.edge = 0;
+}
+
+// A disk, line or poly record, with room *xy for its numbers.
+static void drawing(struct vg *vg, const char *line, double via, double **xy,
+		    size_t *cap)
+{
+	char kind = line[0];
+	char *s = NULL;
+	double w = 0;
+	int n = 0;
+
+	w = kind == 'l' ? strtod(line + 4, &s) : 0;
+	n = numbers(kind == 'l' ? s : line + 4, xy, cap);
+	vg->state.via = kind == 'd' && n == 3 && (*xy)[2] <= via;
+	run(vg);
+	if (kind == 'd' && n == 3) {
+		segment(vg, *xy, *xy, (*xy)[2]);
+	} else if (kind == 'l') {
+		for (int k = 2; k + 1 < n || k == 2; k += 2) {
+			segment(vg, &(*xy)[k - 2], &(*xy)[k < n ? k : 0],
+				w > 0 && !vg->hair ? w / 2 : HAIR);
+		}
+	} else if (n / 2 >= 3) {
+		poly_record(vg, *xy, n);
+	}
+	element(vg, kind);
+}
+
+void vg_load_stream(struct vg *vg, struct vg_file *f, FILE *in, double via)
 {
 	char *line = NULL;
-	size_t cap = 0, capxy = 0;
+	size_t cap = 0;
+	size_t capxy = 0;
 	double *xy = NULL;
 
-	memset(f, 0, sizeof *f);
-	F = f;
-	sheet = 0;
-	npt = nsv = 0;
-	open_elem = -1;
-	memset(&state, 0, sizeof state);
-	state.dark = 1;
-	state.part = -1;
-	state.net = -1;
-	cur = state;
-	for (int i = 0; i < 4; i++) {
-		f->box[i] = rb[i] = i < 2 ? 1e300 : -1e300;
-	}
+	start_file(vg, f);
 	while (getline(&line, &cap, in) > 0) {
-		char kind = line[0], *s = line + 4, *end;
-		int n = 0;
-		double w = 0, v;
-
 		line[strcspn(line, "\n")] = 0;
-		if (!strncmp(line, "page ", 5)) {
-			sheet = 1;
-			state.frame = 1;
-		} else if (!strcmp(line, "dark") || !strcmp(line, "clear")) {
-			state.dark = kind == 'd';
-		} else if (!strncmp(line, "zone ", 5) || !strcmp(line, "end")) {
-			state.zone = kind == 'z';
-		} else if (!strncmp(line, "part", 4)) {
-			// part NAME [REF]: the name keys the part.
-			if (line[4]) {
-				line[5 + strcspn(line + 5, " ")] = 0;
-			}
-			state.part = line[4] ? vg_part(line + 5) : -1;
-			state.frame = 0;
-			open_elem = -1;
-		} else if (!strncmp(line, "net", 3) &&
-			   (!line[3] || line[3] == ' ')) {
-			state.net = line[3] ? vg_net_record(line + 4) : -1;
-			state.frame = 0;
-		} else if (!strncmp(line, "text ", 5)) {
-			state.text = 1;
-			text(line);
-			state.text = 0;
-			element('t');
+		state_record(vg, line);
+		if (starts(line, "disk ") || starts(line, "line ") ||
+		    starts(line, "poly ")) {
+			drawing(vg, line, via, &xy, &capxy);
 		}
-		if (strncmp(line, "disk ", 5) && strncmp(line, "line ", 5) &&
-		    strncmp(line, "poly ", 5)) {
-			continue;
-		}
-		w = kind == 'l' ? strtod(s, &s) : 0;
-		while ((v = strtod(s, &end)), end != s) {
-			if ((size_t)n + 1 > capxy) {
-				capxy = capxy ? 2 * capxy : 1024;
-				xy = more(xy, capxy * sizeof *xy);
-			}
-			xy[n++] = v;
-			s = end;
-		}
-		state.via = kind == 'd' && n == 3 && xy[2] <= via;
-		run();
-		if (kind == 'd' && n == 3) {
-			segment(xy, xy, xy[2]);
-		} else if (kind == 'l') {
-			for (int k = 2; k + 1 < n || k == 2; k += 2) {
-				segment(&xy[k - 2], &xy[k < n ? k : 0],
-					w > 0 && !vg_hair ? w / 2 : -0.75);
-			}
-		} else if (n >= 6) {
-			double keep[4];
-
-			polygon(xy, n / 2);
-			// A rim of a pixel along its edge, for the edge the
-			// smoothness of a stroke; the box stays the polygon's.
-			memcpy(keep, rb, sizeof keep);
-			for (int k = 0; k < n; k += 2) {
-				segment(&xy[k], &xy[(k + 2) % n], -0.5);
-			}
-			memcpy(rb, keep, sizeof keep);
-			// A zone's outline, for drawing the zones as outlines.
-			state.edge = state.zone && state.dark;
-			run();
-			for (int k = 0; state.edge && k < n; k += 2) {
-				segment(&xy[k], &xy[(k + 2) % n], -0.75);
-			}
-			state.edge = 0;
-		}
-		element(kind);
 	}
-	state.part = -2; // No run is of this state: the open one ends.
-	run();
-	upload(&f->buf, pt, npt);
-	upload(&f->sbuf, sv, nsv);
-	f->ntri = npt / 6;
-	f->nseg = nsv / 36;
-	if (f->nelem && nfiles < 64) {
-		files[nfiles++] = f; // It names parts.
+	vg->state.part = -2; // No run is of this state: the open one ends.
+	run(vg);
+	upload(&f->buf, vg->pt, vg->npt);
+	upload(&f->sbuf, vg->sv, vg->nsv * SEG_ENDS);
+	upload(&f->hbuf, vg->hc, vg->nsv * SEG_HC);
+	f->ntri = vg->npt / TRI_FLOATS;
+	f->nseg = vg->nsv / SEG_CORNERS;
+	if (f->nelem && vg->nfiles < VG_FILES) {
+		vg->files[vg->nfiles++] = f; // It names parts.
 	}
 	free(line);
 	free(xy);
@@ -420,22 +507,26 @@ void vg_load_stream(struct vg_file *f, FILE *in, double via)
 void vg_layer(const char *path, char *name, size_t size)
 {
 	FILE *in = fopen(path, "r");
-	char buf[256];
+	char buf[LINE_LEN];
 
 	*name = 0;
 	while (in && fgets(buf, sizeof buf, in)) {
-		if (!strncmp(buf, "layer ", 6)) {
-			snprintf(name, size, "%.*s",
-				 (int)strcspn(buf + 6, " \n"), buf + 6);
+		if (starts(buf, "layer ")) {
+			const char *s = buf + strlen("layer ");
+			size_t n = strcspn(s, " \n");
+
+			n = n < size ? n : size - 1;
+			memcpy(name, s, n);
+			name[n] = 0;
 			break;
 		}
-		if (!strncmp(buf, "disk ", 5) || !strncmp(buf, "line ", 5) ||
-		    !strncmp(buf, "poly ", 5) || !strncmp(buf, "text ", 5)) {
+		if (starts(buf, "disk ") || starts(buf, "line ") ||
+		    starts(buf, "poly ") || starts(buf, "text ")) {
 			break; // A drawing: the layer comes before.
 		}
 	}
 	if (in) {
-		fclose(in);
+		(void)fclose(in);
 	}
 }
 
@@ -484,11 +575,8 @@ static const char *const fs =
 	"  gl_FragColor = brighter > 0.0 ? vec4(gl_Color.rgb * a, a) :\n"
 	"                                  vec4(gl_Color.rgb, a);\n"
 	"}\n";
-static GLuint prog;
-static GLint u_view, u_zoom, u_solid, u_brighter, a_seg, a_hc;
-int vg_solid, vg_hair, vg_brighter;
 
-static void shader(GLenum kind, const char *src)
+static void shader(struct vg *vg, GLenum kind, const char *src)
 {
 	GLuint sh = glCreateShader(kind);
 	GLint ok = 0;
@@ -497,49 +585,49 @@ static void shader(GLenum kind, const char *src)
 	glCompileShader(sh);
 	glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
 	if (!ok) {
-		fprintf(stderr, "a shader does not compile\n");
+		(void)fprintf(stderr, "a shader does not compile\n");
 		exit(2);
 	}
-	glAttachShader(prog, sh);
+	glAttachShader(vg->prog, sh);
 }
 
-void vg_draw(const struct vg_file *f, int (*want)(const struct vg_run *),
-	     void (*each)(const struct vg_run *))
+void vg_draw(struct vg *vg, const struct vg_file *f,
+	     int (*want)(struct vg *vg, const struct vg_run *),
+	     void (*each)(struct vg *vg, const struct vg_run *))
 {
 	for (size_t i = 0; i < f->nrun; i++) {
 		const struct vg_run *r = &f->run[i];
 
-		if (!want(r)) {
+		if (!want(vg, r)) {
 			continue;
 		}
-		each(r);
+		each(vg, r);
 		if (r->count) {
 			glBindBuffer(GL_ARRAY_BUFFER, f->buf);
 			glVertexPointer(2, GL_FLOAT, 0, NULL);
 			glDrawArrays(GL_TRIANGLES, r->first, r->count);
 		}
 		if (r->scount) {
-			glUseProgram(prog);
-			glUniform2f(u_view, (float)vg_w, (float)vg_h);
-			glUniform1f(u_zoom, (float)vg_zoom);
-			glUniform1f(u_solid, (float)vg_solid);
-			glUniform1f(u_brighter, (float)vg_brighter);
-			if (vg_brighter) {
+			glUseProgram(vg->prog);
+			glUniform2f(vg->u_view, (float)vg->w, (float)vg->h);
+			glUniform1f(vg->u_zoom, (float)vg->zoom);
+			glUniform1f(vg->u_solid, (float)vg->solid);
+			glUniform1f(vg->u_brighter, (float)vg->brighter);
+			if (vg->brighter) {
 				glBlendEquation(GL_MAX);
 			}
+			glEnableVertexAttribArray((GLuint)vg->a_seg);
+			glEnableVertexAttribArray((GLuint)vg->a_hc);
 			glBindBuffer(GL_ARRAY_BUFFER, f->sbuf);
-			glEnableVertexAttribArray((GLuint)a_seg);
-			glEnableVertexAttribArray((GLuint)a_hc);
-			glVertexAttribPointer((GLuint)a_seg, 4, GL_FLOAT,
-					      GL_FALSE, 6 * sizeof(float),
-					      NULL);
-			glVertexAttribPointer((GLuint)a_hc, 2, GL_FLOAT,
-					      GL_FALSE, 6 * sizeof(float),
-					      (void *)(4 * sizeof(float)));
+			glVertexAttribPointer((GLuint)vg->a_seg, SEG_ENDS,
+					      GL_FLOAT, GL_FALSE, 0, NULL);
+			glBindBuffer(GL_ARRAY_BUFFER, f->hbuf);
+			glVertexAttribPointer((GLuint)vg->a_hc, SEG_HC,
+					      GL_FLOAT, GL_FALSE, 0, NULL);
 			glDrawArrays(GL_TRIANGLES, r->sfirst, r->scount);
 			glBlendEquation(GL_FUNC_ADD);
-			glDisableVertexAttribArray((GLuint)a_seg);
-			glDisableVertexAttribArray((GLuint)a_hc);
+			glDisableVertexAttribArray((GLuint)vg->a_seg);
+			glDisableVertexAttribArray((GLuint)vg->a_hc);
 			glUseProgram(0);
 		}
 	}
@@ -557,7 +645,7 @@ void vg_pick(const struct vg_file *f, double x, double y, double tol, int *best,
 		// A box the point is in, the smallest first, comes before one
 		// it is only near, the nearest first.
 		double a = dx > 0 || dy > 0 ?
-				   NEAR * (1 + sqrt(dx * dx + dy * dy)) :
+				   NEAR * (1 + sqrt((dx * dx) + (dy * dy))) :
 				   (b[2] - b[0]) * (b[3] - b[1]);
 
 		if (x >= b[0] - tol && x <= b[2] + tol && y >= b[1] - tol &&
@@ -568,15 +656,15 @@ void vg_pick(const struct vg_file *f, double x, double y, double tol, int *best,
 	}
 }
 
-void vg_part_box(int part, double b[4])
+void vg_part_box(struct vg *vg, int part, double b[4])
 {
-	b[0] = b[1] = 1e300;
-	b[2] = b[3] = -1e300;
-	for (size_t i = 0; part >= 0 && i < nfiles; i++) {
-		for (size_t k = 0; k < files[i]->nelem; k++) {
-			for (int j = 0; files[i]->elem[k].part == part && j < 4;
-			     j++) {
-				double e = files[i]->elem[k].b[j];
+	b[0] = b[1] = FAR;
+	b[2] = b[3] = -FAR;
+	for (size_t i = 0; part >= 0 && i < vg->nfiles; i++) {
+		for (size_t k = 0; k < vg->files[i]->nelem; k++) {
+			for (int j = 0;
+			     vg->files[i]->elem[k].part == part && j < 4; j++) {
+				double e = vg->files[i]->elem[k].b[j];
 
 				b[j] = j < 2 ? fmin(b[j], e) : fmax(b[j], e);
 			}
@@ -584,17 +672,17 @@ void vg_part_box(int part, double b[4])
 	}
 }
 
-void vg_init(void)
+void vg_init(struct vg *vg)
 {
-	prog = glCreateProgram();
-	shader(GL_VERTEX_SHADER, vs);
-	shader(GL_FRAGMENT_SHADER, fs);
-	glLinkProgram(prog);
-	u_view = glGetUniformLocation(prog, "view");
-	u_zoom = glGetUniformLocation(prog, "zoom");
-	u_solid = glGetUniformLocation(prog, "solid");
-	u_brighter = glGetUniformLocation(prog, "brighter");
+	vg->prog = glCreateProgram();
+	shader(vg, GL_VERTEX_SHADER, vs);
+	shader(vg, GL_FRAGMENT_SHADER, fs);
+	glLinkProgram(vg->prog);
+	vg->u_view = glGetUniformLocation(vg->prog, "view");
+	vg->u_zoom = glGetUniformLocation(vg->prog, "zoom");
+	vg->u_solid = glGetUniformLocation(vg->prog, "solid");
+	vg->u_brighter = glGetUniformLocation(vg->prog, "brighter");
 
-	a_seg = glGetAttribLocation(prog, "seg");
-	a_hc = glGetAttribLocation(prog, "hc");
+	vg->a_seg = glGetAttribLocation(vg->prog, "seg");
+	vg->a_hc = glGetAttribLocation(vg->prog, "hc");
 }

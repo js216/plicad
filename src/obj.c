@@ -217,18 +217,9 @@ static struct vec point(const struct floats *a, long i)
 	return v3((double)p[0], (double)p[1], (double)p[2]);
 }
 
-// Adds the triangle of corners c to the last part.
-static void add_tri(struct reader *r, const struct corner *c)
+// Makes room in part p for one more triangle.
+static void grow_tris(struct obj_part *p)
 {
-	struct obj_part *p = &r->f->p[r->f->n - 1];
-	struct vec q[3];
-	struct vec n;
-
-	for (int k = 0; k < 3; k++) {
-		q[k] = point(&r->v, c[k].v);
-	}
-	n = cross(sub(q[1], q[0]), sub(q[2], q[0]));
-	n = len(n) > 0 ? unit(n) : v3(0, 0, 1);
 	if (p->nt == p->cap) {
 		p->cap = p->cap ? 2 * p->cap : TRIS_START;
 		p->pos = xrealloc(p->pos, p->cap * TRI_FLOATS * sizeof(float));
@@ -240,6 +231,12 @@ static void add_tri(struct reader *r, const struct corner *c)
 			p->grade = xrealloc(p->grade, p->cap * sizeof(float));
 		}
 	}
+}
+
+// Gives the next triangle of part p the grade and the color of the
+// group of r, if any; the triangles before it get none.
+static void add_grade_color(const struct reader *r, struct obj_part *p)
+{
 	if (r->group && r->grade >= 0 && !p->grade) {
 		p->grade = xmalloc(p->cap * sizeof(float));
 		for (size_t i = 0; i < p->nt; i++) {
@@ -260,6 +257,22 @@ static void add_tri(struct reader *r, const struct corner *c)
 			p->col[(3 * p->nt) + k] = r->group ? r->grgb[k] : -1;
 		}
 	}
+}
+
+// Adds the triangle of corners c to the last part.
+static void add_tri(struct reader *r, const struct corner *c)
+{
+	struct obj_part *p = &r->f->p[r->f->n - 1];
+	struct vec q[3];
+	struct vec n;
+
+	for (int k = 0; k < 3; k++) {
+		q[k] = point(&r->v, c[k].v);
+	}
+	n = cross(sub(q[1], q[0]), sub(q[2], q[0]));
+	n = len(n) > 0 ? unit(n) : v3(0, 0, 1);
+	grow_tris(p);
+	add_grade_color(r, p);
 	for (size_t k = 0; k < 3; k++) {
 		struct vec m = c[k].n >= 0 ? point(&r->vn, c[k].n) : n;
 		float *a = &p->pos[(TRI_FLOATS * p->nt) + (3 * k)];

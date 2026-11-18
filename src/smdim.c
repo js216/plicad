@@ -129,6 +129,7 @@
 #define MARK_STEP 0.03 // The grid of the places of the mark of a face.
 
 enum {
+	WORDS_START = 16, // The first room for words, as PUSH gives.
 	RINGS = 12, // The rings of places tried for a callout.
 	LEVELS = 3, // The levels of spot_free.
 	NOTE_LINES = 3, // The most lines of a callout.
@@ -662,7 +663,12 @@ static size_t param_of(struct view *v, const char *name)
 		}
 	}
 	c = xstrdup(name);
-	PUSH(v->param, v->nparam, v->capparam, c);
+	if (v->nparam == v->capparam) {
+		v->capparam = v->capparam ? 2 * v->capparam : WORDS_START;
+		v->param = (char **)xrealloc((void *)v->param,
+					     v->capparam * sizeof(*v->param));
+	}
+	v->param[v->nparam++] = c;
 	return v->nparam - 1;
 }
 
@@ -679,6 +685,29 @@ static void add_move(struct view *v, size_t *head, struct move m)
 // parameter and at the high end, as smview gives them.  A line takes the
 // mean of the moves of its ends, a hole that of its center, and each
 // side of a coat that of its two corners.
+// The range m of the n points d of the segments of the line or curve
+// record last read: each segment moved as the middle of its ends.
+static void range_segs(struct view *v, const struct reader *r, struct move *m,
+		       struct pt (*d)[RANGE_PTS], size_t n)
+{
+	size_t sides = v->last == 'l' ? 1 : v->last_n;
+
+	if (!m->unknown && n != (v->last == 'l' ? 2 : v->last_n)) {
+		die("%s:%u: a range moves the points of its record", r->what,
+		    r->line);
+	}
+	for (size_t k = 0; k < sides; k++) {
+		for (int e = 0; e < 2 && !m->unknown; e++) {
+			struct pt a = d[e][k];
+			struct pt b = d[e][(k + 1) % n];
+
+			m->d[e].x = (a.x + b.x) / 2;
+			m->d[e].y = (a.y + b.y) / 2;
+		}
+		add_move(v, &v->seg[v->nseg - sides + k].moves, *m);
+	}
+}
+
 static void read_range(struct view *v, struct reader *r)
 {
 	struct move m = {
@@ -714,22 +743,7 @@ static void read_range(struct view *v, struct reader *r)
 		m.d[1] = d[1][0];
 		add_move(v, &v->hole[v->nhole - 1].moves, m);
 	} else if (v->last == 'l' || v->last == 'c') {
-		size_t sides = v->last == 'l' ? 1 : v->last_n;
-
-		if (!m.unknown && n != (v->last == 'l' ? 2 : v->last_n)) {
-			die("%s:%u: a range moves the points of its record",
-			    r->what, r->line);
-		}
-		for (size_t k = 0; k < sides; k++) {
-			for (int e = 0; e < 2 && !m.unknown; e++) {
-				struct pt a = d[e][k];
-				struct pt b = d[e][(k + 1) % n];
-
-				m.d[e].x = (a.x + b.x) / 2;
-				m.d[e].y = (a.y + b.y) / 2;
-			}
-			add_move(v, &v->seg[v->nseg - sides + k].moves, m);
-		}
+		range_segs(v, r, &m, d, n);
 	}
 }
 
@@ -825,34 +839,44 @@ static void add_mark(struct view *v, const char *mat, struct rect box)
 // Reads the n corners of a coat of material mat from r into v: its
 // sides, its box if it is a rectangle square to the paper, and its mark;
 // of a coat of a face, its mark alone.
+// Reads the n corners of a coat into fc.
+static void read_corners(struct reader *r, struct face_coat *fc, long n)
+{
+	for (long i = 0; i < n; i++) {
+		struct pt q = point(r);
+
+		PUSH(fc->p, fc->n, fc->cap, q);
+	}
+}
+
 static void coat_corners(struct view *v, struct reader *r, const char *mat,
 			 long n)
 {
 	int face = r->n - r->k == (size_t)(2 * n) + 1 &&
 		   strcmp(r->w[r->n - 1], "face") == 0;
 	struct face_coat fc = { xstrdup(mat), NULL, 0, 0 };
-	struct pt first = point(r);
-	struct pt last = first;
-	struct rect box = { first.x, first.y, first.x, first.y };
+	struct pt first;
+	struct pt last;
+	struct rect box;
 	int square = 1;
 
-	PUSH(fc.p, fc.n, fc.cap, first);
-	for (long i = 1; i < n; i++) {
-		struct pt q = point(r);
-
-		rect_add(&box, q);
-		PUSH(fc.p, fc.n, fc.cap, q);
-		if (!face) {
-			add_coat_side(v, last, q, mat);
-		}
-		square = square &&
-			 (fabs(q.x - last.x) < ONE || fabs(q.y - last.y) < ONE);
-		last = q;
-	}
+	read_corners(r, &fc, n);
 	if (face) {
 		r->k++;
 		PUSH(v->face, v->nface, v->capface, fc);
 		return;
+	}
+	first = fc.p[0];
+	last = first;
+	box = (struct rect){ first.x, first.y, first.x, first.y };
+	for (size_t i = 1; i < fc.n; i++) {
+		struct pt q = fc.p[i];
+
+		rect_add(&box, q);
+		add_coat_side(v, last, q, mat);
+		square = square &&
+			 (fabs(q.x - last.x) < ONE || fabs(q.y - last.y) < ONE);
+		last = q;
 	}
 	free(fc.mat);
 	free(fc.p);
@@ -1063,7 +1087,12 @@ static int split_record(struct reader *r, char *l)
 	r->n = 0;
 	r->k = 0;
 	while ((f = split_first(&l)) != NULL) {
-		PUSH(r->w, r->n, r->cap, f);
+		if (r->n == r->cap) {
+			r->cap = r->cap ? 2 * r->cap : WORDS_START;
+			r->w = (char **)xrealloc((void *)r->w,
+						 r->cap * sizeof(*r->w));
+		}
+		r->w[r->n++] = f;
 	}
 	return r->n && r->w[0][0] != '#';
 }
@@ -1152,7 +1181,7 @@ static void read_input(char *input)
 		}
 		free(copy);
 	}
-	free(r.w);
+	free((void *)r.w);
 	if (!have) {
 		die("stdin: no view");
 	}
@@ -1205,9 +1234,28 @@ static void fill_box(struct rect *box, const struct fill *f, struct pt p,
 // Prints the fill records on the paper: a fill of the faces of a part
 // that a section cuts with the angle and the gap of its section lines,
 // and its region, as a hatch, for the texts that lie on it.
-static void print_fills(struct view *v)
+// Prints fill record f, at p on the paper.
+static void print_fill(const struct view *v, const struct fill *f, struct pt p)
 {
 	static const int angles[ANGLES] = { 45, 135, 30, 120, 60, 150 };
+
+	if (f->cut) {
+		printf("fill hatch %d %.4f\n", angles[(f->cut - 1) % ANGLES],
+		       hatch_gap(v));
+	} else if (f->n == 0) {
+		printf("%s\n", f->op == 'f' ? "fill" : "z");
+	} else if (f->n == 2) {
+		printf("%c %.4f %.4f\n", f->op, p.x, p.y);
+	} else if (f->n == FILL_NUMS) {
+		printf("a %.4f %.4f %.4f %.3f %.3f\n", p.x, p.y, f->x[2] * v->k,
+		       f->x[3], f->x[4]);
+	} else {
+		die("stdin: a malformed %c record", f->op);
+	}
+}
+
+static void print_fills(struct view *v)
+{
 	struct rect box = { HUGE_VAL, HUGE_VAL, -HUGE_VAL, -HUGE_VAL };
 	int cut = 0;
 
@@ -1230,19 +1278,7 @@ static void print_fills(struct view *v)
 			cut = f->cut > 0;
 		}
 		fill_box(&box, f, p, f->n == FILL_NUMS ? f->x[2] * v->k : 0);
-		if (f->cut) {
-			printf("fill hatch %d %.4f\n",
-			       angles[(f->cut - 1) % ANGLES], hatch_gap(v));
-		} else if (f->n == 0) {
-			printf("%s\n", f->op == 'f' ? "fill" : "z");
-		} else if (f->n == 2) {
-			printf("%c %.4f %.4f\n", f->op, p.x, p.y);
-		} else if (f->n == FILL_NUMS) {
-			printf("a %.4f %.4f %.4f %.3f %.3f\n", p.x, p.y,
-			       f->x[2] * v->k, f->x[3], f->x[4]);
-		} else {
-			die("stdin: a malformed %c record", f->op);
-		}
+		print_fill(v, f, p);
 	}
 }
 
@@ -1257,13 +1293,10 @@ static void print_mark(const struct view *v, const struct hole *h)
 	       h->c.y + r);
 }
 
-// Moves the view to the paper, and prints its lines, arcs and marks;
-// a line or an arc shorter than DOT, which would print with no length,
-// goes.
-static void print_curves(struct view *v)
+// Moves the lines of the view to the paper and prints them; a line
+// shorter than DOT goes.
+static void print_segs(struct view *v)
 {
-	struct pt far = { v->box.x1, v->box.y1 };
-
 	size_t n = 0;
 
 	for (size_t i = 0; i < v->nseg; i++) {
@@ -1280,7 +1313,14 @@ static void print_curves(struct view *v)
 		}
 	}
 	v->nseg = n;
-	n = 0;
+}
+
+// Moves the arcs of the view to the paper and prints them; an arc
+// shorter than DOT goes.
+static void print_arcs(struct view *v)
+{
+	size_t n = 0;
+
 	for (size_t i = 0; i < v->narc; i++) {
 		struct arc *a = &v->arc[i];
 
@@ -1295,6 +1335,19 @@ static void print_curves(struct view *v)
 		}
 	}
 	v->narc = n;
+}
+
+// Moves the view to the paper, and prints its lines, arcs and marks;
+// a line or an arc shorter than DOT, which would print with no length,
+// goes.
+static void print_curves(struct view *v)
+{
+	struct pt far = { v->box.x1, v->box.y1 };
+
+	size_t n = 0;
+
+	print_segs(v);
+	print_arcs(v);
 	for (size_t i = 0; i < v->nface; i++) {
 		for (size_t k = 0; k < v->face[i].n; k++) {
 			v->face[i].p[k] = to_paper(v, v->face[i].p[k]);
@@ -1791,9 +1844,20 @@ static size_t lin_moves(const struct view *v, int axis, double p, size_t **out)
 
 // The move along the axis of the list of moves from head at end e of
 // the range of parameter k, 0 if none; dies on one unknown.
-static double move_of(const struct view *v, size_t head, size_t k, int e,
-		      int axis, const struct reader *r)
+// A move asked for: of parameter k, at end e, along the axis.
+struct move_key {
+	size_t k;
+	int e;
+	int axis;
+};
+
+static double move_of(const struct view *v, size_t head,
+		      const struct move_key *mk, const struct reader *r)
 {
+	size_t k = mk->k;
+	int e = mk->e;
+	int axis = mk->axis;
+
 	for (size_t i = head; i != NONE; i = v->move[i].next) {
 		const struct move *m = &v->move[i];
 
@@ -1832,12 +1896,13 @@ static struct span lin_range(const struct view *v, const struct reader *r,
 		double hi = 0;
 
 		for (int e = 0; e < 2; e++) {
+			struct move_key mk = { k, e, axis };
+
 			for (size_t i = 0; i < na; i++) {
 				for (size_t j = 0; j < nb; j++) {
-					double d = sg * (move_of(v, mb[j], k, e,
-								 axis, r) -
-							 move_of(v, ma[i], k, e,
-								 axis, r));
+					double d = sg *
+						   (move_of(v, mb[j], &mk, r) -
+						    move_of(v, ma[i], &mk, r));
 
 					lo = fmin(lo, d);
 					hi = fmax(hi, d);
@@ -2357,6 +2422,7 @@ static void place_note(struct view *v, struct note *nt)
 	}
 	if (!c.t) {
 		no_room(v, nt, &c);
+		return;
 	}
 	v->far += c.len > REACH || v->level > 1;
 	draw_note(v, nt, c.s, c.t);
@@ -3019,7 +3085,7 @@ static void rules(struct view *v, int lin)
 			v->at = NULL;
 		}
 		free(copy);
-		free(r.w);
+		free((void *)r.w);
 	}
 }
 
@@ -3073,7 +3139,7 @@ static void free_view(struct view *v)
 	for (size_t i = 0; i < v->nparam; i++) {
 		free(v->param[i]);
 	}
-	free(v->param);
+	free((void *)v->param);
 	for (size_t i = 0; i < v->ncoat; i++) {
 		free(v->coat[i].mat);
 	}

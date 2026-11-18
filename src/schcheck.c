@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { LINE = 1 << 16, WORDS = 4096 };
+enum { LINE = 1U << 16U, WORDS = 4096, MSG_LEN = 2100 };
 
 // A pin of a part: its part's designator, and its net (NULL for none).
 struct pin {
@@ -27,12 +27,17 @@ struct pin {
 	const char *net;
 };
 
-static struct pin *pins;
-static size_t npins;
-static char **nets;
-static size_t nnets;
-static const char *file;
-static int faults;
+// The check under way: the pins and the nets so far, the file and its
+// line, and whether a fault has come.
+struct check {
+	struct pin *pins;
+	size_t npins;
+	char **nets;
+	size_t nnets;
+	const char *file;
+	int line;
+	int faults;
+};
 
 // Splits a line into words at blanks, up to a #.
 static size_t split(char *s, char **w)
@@ -52,28 +57,31 @@ static size_t split(char *s, char **w)
 	}
 }
 
-// Notes a pin of a part, REF.PIN, on a net or none.
-static void add_pin(const char *refpin, const char *net)
+// Notes a pin of a part, REF.PIN, on no net; returns it, for its net.
+static struct pin *add_pin(struct check *ck, const char *refpin)
 {
 	const char *dot = strrchr(refpin, '.');
 	size_t n = dot ? (size_t)(dot - refpin) : strlen(refpin);
+	struct pin *p = NULL;
 
-	pins = xrealloc(pins, (npins + 1) * sizeof *pins);
-	pins[npins].ref = xmalloc(n + 1);
-	memcpy(pins[npins].ref, refpin, n);
-	pins[npins].ref[n] = 0;
-	pins[npins++].net = net;
+	ck->pins = xrealloc(ck->pins, (ck->npins + 1) * sizeof *ck->pins);
+	p = &ck->pins[ck->npins++];
+	p->ref = xmalloc(n + 1);
+	memcpy(p->ref, refpin, n);
+	p->ref[n] = 0;
+	p->net = NULL;
+	return p;
 }
 
-static void fault(const char *msg)
+static void fault(struct check *ck, const char *msg)
 {
-	printf("%s: %s\n", file, msg);
-	faults = 1;
+	printf("%s: %s\n", ck->file, msg);
+	ck->faults = 1;
 }
 
 // The first pin of the net record w[0] .. w[n-1], past its words global
-// and class CLASS; a second class is a fault of line line.
-static size_t first_pin(char **w, size_t n, int line)
+// and class CLASS; a second class is a fault of the line.
+static size_t first_pin(struct check *ck, char **w, size_t n)
 {
 	size_t first = 2;
 	const char *c = NULL;
@@ -82,87 +90,97 @@ static size_t first_pin(char **w, size_t n, int line)
 		first++;
 	}
 	for (; first + 1 < n && !strcmp(w[first], "class"); first += 2) {
-		if (c && strcmp(c, w[first + 1])) {
+		if (c && strcmp(c, w[first + 1]) != 0) {
 			printf("%s:%d: net %.1000s is of class %.1000s and of "
 			       "class %.1000s\n",
-			       file, line, w[1], c, w[first + 1]);
-			faults = 1;
+			       ck->file, ck->line, w[1], c, w[first + 1]);
+			ck->faults = 1;
 		}
 		c = w[first + 1];
 	}
 	return first;
 }
 
-// Reads the netlist: its nets and their pins, and the pins on none.
-static void read_netlist(FILE *in)
+// Takes the net record w[0] .. w[n-1]: the net, and its pins.
+static void read_net(struct check *ck, char **w, size_t n)
 {
-	char *buf = xmalloc(LINE), **w = xmalloc(WORDS * sizeof *w), msg[2100];
-	int line = 0;
+	size_t first = first_pin(ck, w, n);
+	char *name = xstrdup(w[1]);
+
+	ck->nets = (char **)xrealloc((void *)ck->nets,
+				     (ck->nnets + 1) * sizeof *ck->nets);
+	ck->nets[ck->nnets++] = name;
+	if (n - first == 1) {
+		char msg[MSG_LEN];
+
+		xsnprintf(msg, "net %.1000s has one pin alone, %.1000s", name,
+			  w[first]);
+		fault(ck, msg);
+	}
+	for (size_t i = first; i < n; i++) {
+		add_pin(ck, w[i])->net = name;
+	}
+}
+
+// Reads the netlist: its nets and their pins, and the pins on none.
+static void read_netlist(struct check *ck, FILE *in)
+{
+	char *buf = xmalloc(LINE);
+	char **w = (char **)xmalloc(WORDS * sizeof *w);
 
 	while (fgets(buf, LINE, in)) {
 		size_t n = split(buf, w);
 
-		line++;
+		ck->line++;
 		if (n >= 2 && !strcmp(w[0], "net")) {
-			size_t first = first_pin(w, n, line);
-			char *name = xstrdup(w[1]);
-
-			nets = xrealloc(nets, (nnets + 1) * sizeof *nets);
-			nets[nnets++] = name;
-			if (n - first == 1) {
-				snprintf(
-					msg, sizeof msg,
-					"net %.1000s has one pin alone, %.1000s",
-					name, w[first]);
-				fault(msg);
-			}
-			for (size_t i = first; i < n; i++) {
-				add_pin(w[i], name);
-			}
+			read_net(ck, w, n);
 		} else if (n == 3 && !strcmp(w[0], "pin")) {
-			if (strcmp(w[2], "nc")) {
-				snprintf(
-					msg, sizeof msg,
-					"%.1000s is on no net, and not marked nc",
-					w[1]);
-				fault(msg);
+			if (strcmp(w[2], "nc") != 0) {
+				char msg[MSG_LEN];
+
+				xsnprintf(msg,
+					  "%.1000s is on no net, and not "
+					  "marked nc",
+					  w[1]);
+				fault(ck, msg);
 			}
-			add_pin(w[1], NULL);
+			add_pin(ck, w[1]);
 		}
 	}
 	free(buf);
-	free(w);
+	free((void *)w);
 }
 
 // Each part of two pins or more, all of them on one net.
-static void check_parts(void)
+static void check_parts(struct check *ck)
 {
-	char *done = xmalloc(npins + 1);
+	const struct pin *pins = ck->pins;
+	char *done = xmalloc(ck->npins + 1);
 
-	memset(done, 0, npins + 1);
-	for (size_t i = 0; i < npins; i++) {
+	memset(done, 0, ck->npins + 1);
+	for (size_t i = 0; i < ck->npins; i++) {
 		size_t count = 0;
 		int one = 1;
 
 		if (done[i]) {
 			continue;
 		}
-		for (size_t j = i; j < npins; j++) {
-			if (strcmp(pins[j].ref, pins[i].ref)) {
+		for (size_t j = i; j < ck->npins; j++) {
+			if (strcmp(pins[j].ref, pins[i].ref) != 0) {
 				continue;
 			}
 			done[j] = 1;
 			count++;
-			one &= pins[i].net && pins[j].net &&
-			       !strcmp(pins[j].net, pins[i].net);
+			one = one && pins[i].net && pins[j].net &&
+			      !strcmp(pins[j].net, pins[i].net);
 		}
 		if (count >= 2 && one) {
-			char msg[2100];
+			char msg[MSG_LEN];
 
-			snprintf(msg, sizeof msg,
-				 "%.1000s has all its pins on net %.1000s",
-				 pins[i].ref, pins[i].net);
-			fault(msg);
+			xsnprintf(msg,
+				  "%.1000s has all its pins on net %.1000s",
+				  pins[i].ref, pins[i].net);
+			fault(ck, msg);
 		}
 	}
 	free(done);
@@ -170,29 +188,33 @@ static void check_parts(void)
 
 int main(int argc, char **argv)
 {
-	FILE *in = stdin;
+	struct check ck = { NULL, 0, NULL, 0, "stdin", 0, 0 };
 
 	if (argc > 2 || (argc == 2 && argv[1][0] == '-')) {
-		fprintf(stderr, "usage: schcheck [FILE.nl]\n");
+		(void)fprintf(stderr, "usage: schcheck [FILE.nl]\n");
 		return 2;
 	}
-	file = argc == 2 ? argv[1] : "stdin";
-	if (argc == 2 && !(in = fopen(argv[1], "r"))) {
-		fprintf(stderr, "%s: cannot read\n", argv[1]);
-		return 2;
+	if (argc == 2) {
+		FILE *in = fopen(argv[1], "r");
+
+		if (!in) {
+			(void)fprintf(stderr, "%s: cannot read\n", argv[1]);
+			return 2;
+		}
+		ck.file = argv[1];
+		read_netlist(&ck, in);
+		(void)fclose(in);
+	} else {
+		read_netlist(&ck, stdin);
 	}
-	read_netlist(in);
-	if (in != stdin) {
-		fclose(in);
+	check_parts(&ck);
+	for (size_t i = 0; i < ck.npins; i++) {
+		free(ck.pins[i].ref);
 	}
-	check_parts();
-	for (size_t i = 0; i < npins; i++) {
-		free(pins[i].ref);
+	free(ck.pins);
+	for (size_t i = 0; i < ck.nnets; i++) {
+		free(ck.nets[i]);
 	}
-	free(pins);
-	for (size_t i = 0; i < nnets; i++) {
-		free(nets[i]);
-	}
-	free(nets);
-	return faults;
+	free((void *)ck.nets);
+	return ck.faults;
 }

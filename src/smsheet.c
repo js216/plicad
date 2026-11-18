@@ -1099,6 +1099,27 @@ static void read_points(struct rec *r, struct cursor *c)
 
 // Reads a record of a view to draw: the word k, and the rest in c.
 // Returns 0 for a word that names none.
+// The pass of record r, read on at c: of a curve, by its kind and
+// visibility.
+static void rec_pass(struct rec *r, struct cursor *c)
+{
+	if (r->op <= O_Z) {
+		r->pass = P_FILL;
+	} else if (r->op <= O_ARC || r->op == O_POLY) {
+		char kv[2] = { 0, 0 };
+
+		kv[0] = word(c)[0];
+		kv[1] = word(c)[0];
+		r->pass = curve_pass(kv);
+	} else if (r->op == O_HATCH) {
+		r->pass = P_HATCH;
+	} else if (r->op == O_CLEAR) {
+		r->pass = P_COUNT;
+	} else if (r->op == O_THIN) {
+		r->pass = P_THIN;
+	}
+}
+
 static int read_rec(struct view *v, struct cursor *c, const char *k)
 {
 	struct rec r = { 0, P_MARK, { 0 }, 'l', NULL, NULL, 0, 0 };
@@ -1118,21 +1139,7 @@ static int read_rec(struct view *v, struct cursor *c, const char *k)
 		r.x[0] = num(c);
 		r.x[1] = num(c);
 	}
-	if (r.op <= O_Z) {
-		r.pass = P_FILL;
-	} else if (r.op <= O_ARC || r.op == O_POLY) {
-		char kv[2] = { 0, 0 };
-
-		kv[0] = word(c)[0];
-		kv[1] = word(c)[0];
-		r.pass = curve_pass(kv);
-	} else if (r.op == O_HATCH) {
-		r.pass = P_HATCH;
-	} else if (r.op == O_CLEAR) {
-		r.pass = P_COUNT;
-	} else if (r.op == O_THIN) {
-		r.pass = P_THIN;
-	}
+	rec_pass(&r, c);
 	for (size_t i = 0; i < ops[r.op].n; i++) {
 		if (r.op == O_TEXT && i == 3) {
 			r.align = word(c)[0];
@@ -2031,6 +2038,23 @@ static void draw_poly(const struct rec *r)
 
 // Draws the records of view v that belong to pass p.  A hidden line
 // too short for two dashes of the usual length gets two of its own.
+// Draws record r, a poly or a call of its operator.
+static void draw_rec(const struct rec *r)
+{
+	if (r->op == O_POLY) {
+		draw_poly(r);
+		return;
+	}
+	for (size_t k = 0; k < ops[r->op].n; k++) {
+		printf("%.4f ", r->x[k]);
+	}
+	if (r->op == O_FLAG) {
+		ps_string(r->s, strlen(r->s));
+		printf(" ");
+	}
+	printf("%s\n", ops[r->op].ps);
+}
+
 static void draw_pass(const struct view *v, int p)
 {
 	const struct rec *open = NULL;
@@ -2063,18 +2087,7 @@ static void draw_pass(const struct view *v, int p)
 			       rec_length(r) * DASH_PART,
 			       rec_length(r) * (1 - (2 * DASH_PART)));
 		}
-		if (r->op == O_POLY) {
-			draw_poly(r);
-		} else {
-			for (size_t k = 0; k < ops[r->op].n; k++) {
-				printf("%.4f ", r->x[k]);
-			}
-			if (r->op == O_FLAG) {
-				ps_string(r->s, strlen(r->s));
-				printf(" ");
-			}
-			printf("%s\n", ops[r->op].ps);
-		}
+		draw_rec(r);
 		if (p == P_HIDDEN && rec_length(r) < DASH_SHORT) {
 			printf("%s\n", pens[p]);
 		}

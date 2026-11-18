@@ -7,10 +7,10 @@ LIB := util font stroke geom expr fold brep bsolid contact shape stream integ \
 	isect split merge mesh obj scene moves clash bvh coat insert asm sview \
 	schsrc pcbsrc pcbplot vgview vecgl
 
-CFLAGS := -std=c99 -pedantic-errors -Werror -Wall -Wextra \
-	-Wshadow -Wconversion -Wundef -Wformat=2 -Wcast-qual -Wwrite-strings \
-	-Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition \
-	-Wvla -Wlogical-op -Wduplicated-cond \
+CFLAGS := -std=c99 -D_XOPEN_SOURCE=700 -pedantic-errors -Werror \
+	-Wall -Wextra -Wshadow -Wconversion -Wundef -Wformat=2 -Wcast-qual \
+	-Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes \
+	-Wold-style-definition -Wvla -Wlogical-op -Wduplicated-cond \
 	-fsanitize=undefined -fsanitize-trap=all \
 	-fno-omit-frame-pointer -g -O2 -MMD -MP
 
@@ -65,7 +65,7 @@ tidy:
 tidy-objs: $(patsubst src/%.c,build/tidy/%.o,$(SRCS))
 
 build/tidy/%.o: src/%.c
-	clang -std=c99 -c $< -o $@
+	clang -std=c99 -D_XOPEN_SOURCE=700 -c $< -o $@
 
 clean:
 	rm -rf build

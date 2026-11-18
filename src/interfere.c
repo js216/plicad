@@ -372,14 +372,14 @@ static double blank_drift(const struct part *p, size_t t, int hi)
 		for (size_t k = p->fe_start[f]; k < p->fe_start[f + 1]; k++) {
 			const struct edge *e = &p->edges[p->fe[k]];
 
-			for (int end = 0; end < 4; end++) {
-				size_t v = end & 1 ? e->v1 : e->v0;
-				double z = end & 2 ? -p->t : 0;
+			for (unsigned end = 0; end < 4; end++) {
+				size_t v = end & 1U ? e->v1 : e->v0;
+				double z = end & 2U ? -p->t : 0;
 				struct vec a = fmap(p, f, p->verts[v].x,
 						    p->verts[v].y, z);
 				struct vec b = fmap(&q, f, q.verts[v].x,
 						    q.verts[v].y,
-						    end & 2 ? -q.t : 0);
+						    end & 2U ? -q.t : 0);
 
 				most = fmax(most, len(sub(b, a)));
 			}

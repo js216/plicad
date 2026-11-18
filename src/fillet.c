@@ -554,15 +554,15 @@ static double face_radius(const struct sface *f, struct vec p)
 	return f->s.kind == SF_CONE ? f->s.r + (f->s.r2 * h) : f->s.r;
 }
 
-// Dies if face f of edge e, a cylinder or a cone, moved out by d along
+// Dies if face fc of edge e, a cylinder or a cone, moved out by d along
 // its outward normal, has no radius left where the center of the ball
 // runs, near cm: the round is larger than the face, as at a corner of a
 // drafted profile that narrows toward one end.  m is the middle of the
 // edge, where the radius of the face is told.
-static void corner_too_small(const struct stage *g, size_t e, size_t f,
-			     double d, struct vec m, struct vec cm)
+static void corner_too_small(const struct stage *g, size_t e,
+			     const struct sface *fc, double d, struct vec m,
+			     struct vec cm)
 {
-	const struct sface *fc = &g->sh->f[f];
 	double dn = d * fc->sense;
 	double slant = fc->s.kind == SF_CONE ? hypot(1, fc->s.r2) : 1;
 	char msg[MSG_LEN];
@@ -577,6 +577,37 @@ static void corner_too_small(const struct stage *g, size_t e, size_t f,
 		  fc->name, face_radius(fc, m), m.x + 0.0, m.y + 0.0,
 		  m.z + 0.0);
 	edge_fail(g, e, msg);
+}
+
+// The surface of round b of the stage, round its curve of the center:
+// a pipe round an ellipse, a cylinder round a line, a torus round a
+// circle.
+static void blend_surf(const struct stage *g, struct blend *b)
+{
+	if (b->c.kind == CV_ELLIPSE) {
+		b->s.kind = SF_PIPE;
+		b->s.n = b->c.n;
+		b->s.x = b->c.x;
+		b->s.r = b->c.a;
+		b->s.r3 = b->c.b;
+		b->s.r2 = g->r;
+		if (pipe_folds(b)) {
+			edge_fail(g, b->e,
+				  "folds its tube over itself: the radius "
+				  "passes that of the curve of its center");
+		}
+	} else if (b->c.kind == CV_LINE) {
+		b->s.kind = SF_CYL;
+		b->s.n = b->c.x;
+		b->s.x = unit(sub(curve_at(&b->ca, 0), b->c.o));
+		b->s.r = g->r;
+	} else {
+		b->s.kind = SF_TORUS;
+		b->s.n = b->c.n;
+		b->s.x = b->c.x;
+		b->s.r = b->c.a;
+		b->s.r2 = g->r;
+	}
 }
 
 // The round of edge e of the stage: its curves and its surface, without
@@ -603,8 +634,8 @@ static void make_blend(struct stage *g, size_t e)
 	b.e = e;
 	if (!offset_surf(sh, x->fa, d, &oa) ||
 	    !offset_surf(sh, x->fb, d, &ob)) {
-		corner_too_small(g, e, x->fa, d, m, cm);
-		corner_too_small(g, e, x->fb, d, m, cm);
+		corner_too_small(g, e, &sh->f[x->fa], d, m, cm);
+		corner_too_small(g, e, &sh->f[x->fb], d, m, cm);
 		edge_fail(g, e,
 			  "leaves nothing of a face, or a face is no plane, "
 			  "cylinder or cone");
@@ -624,8 +655,8 @@ static void make_blend(struct stage *g, size_t e)
 		}
 	}
 	if (pick == NONE) {
-		corner_too_small(g, e, x->fa, d, m, cm);
-		corner_too_small(g, e, x->fb, d, m, cm);
+		corner_too_small(g, e, &sh->f[x->fa], d, m, cm);
+		corner_too_small(g, e, &sh->f[x->fb], d, m, cm);
 		edge_fail(g, e, "follows no line, circle or ellipse");
 	}
 	b.c = cand[pick];
@@ -644,30 +675,7 @@ static void make_blend(struct stage *g, size_t e)
 	}
 	b.s.o = b.c.o;
 	b.sense = x->kind == K_CONVEX ? 1 : -1;
-	if (b.c.kind == CV_ELLIPSE) {
-		b.s.kind = SF_PIPE;
-		b.s.n = b.c.n;
-		b.s.x = b.c.x;
-		b.s.r = b.c.a;
-		b.s.r3 = b.c.b;
-		b.s.r2 = g->r;
-		if (pipe_folds(&b)) {
-			edge_fail(g, e,
-				  "folds its tube over itself: the radius "
-				  "passes that of the curve of its center");
-		}
-	} else if (b.c.kind == CV_LINE) {
-		b.s.kind = SF_CYL;
-		b.s.n = b.c.x;
-		b.s.x = unit(sub(curve_at(&b.ca, 0), b.c.o));
-		b.s.r = g->r;
-	} else {
-		b.s.kind = SF_TORUS;
-		b.s.n = b.c.n;
-		b.s.x = b.c.x;
-		b.s.r = b.c.a;
-		b.s.r2 = g->r;
-	}
+	blend_surf(g, &b);
 	g->blend_of[e] = g->nb;
 	PUSH(g->b, g->nb, g->capb, b);
 }
@@ -1574,14 +1582,19 @@ static void check_touch(const struct stage *g, const struct blend *b, int on_a)
 	int self = on_a ? TAIL_A : TAIL_B;
 	// A curve that runs past the edge of f into a sliver at a miter
 	// (miter_past) lies on f up to that edge.
-	double lo = b->past[0] == self ? b->tpast[0] :
-		    on_a	       ? b->ta[0] :
-					 b->tb[0];
-	double hi = b->past[1] == self ? b->tpast[1] :
-		    on_a	       ? b->ta[1] :
-					 b->tb[1];
-	double in = (hi - lo) * INSIDE;
-	struct cpiece pc = { *c, lo + in, hi - in };
+	double lo = on_a ? b->ta[0] : b->tb[0];
+	double hi = on_a ? b->ta[1] : b->tb[1];
+	double in = 0;
+	struct cpiece pc;
+
+	if (b->past[0] == self) {
+		lo = b->tpast[0];
+	}
+	if (b->past[1] == self) {
+		hi = b->tpast[1];
+	}
+	in = (hi - lo) * INSIDE;
+	pc = (struct cpiece){ *c, lo + in, hi - in };
 
 	if (meets_edge(g, &pc, f, b->e)) {
 		edge_fail(g, b->e, "leaves no room on a face");
@@ -1792,11 +1805,12 @@ static void new_loop(const struct stage *g, const struct sloop *lp,
 	shape_end_loop(out, first);
 }
 
-// Adds the use of end k of round b to out, the other way if back: one
-// stretch, or two split where the end meets another round and a patch,
-// with the piece past a miter before or after them.
-static void use_end(struct shape *out, const struct blend *b, int k, int back)
+// Adds the use of end k of round b to out, the second end the other
+// way: one stretch, or two split where the end meets another round and
+// a patch, with the piece past a miter before or after them.
+static void use_end(struct shape *out, const struct blend *b, int k)
 {
+	int back = k;
 	struct seg p[DEG_MAX];
 	struct seg run[DEG_MAX + 1];
 	size_t n = b->split[k] + 1;
@@ -1839,11 +1853,11 @@ static void blend_face(const struct stage *g, const struct blend *b,
 	first = out->nu;
 	use_seg(out, &sa, 0);
 	if (b->has_end[0]) {
-		use_end(out, b, 0, 0);
+		use_end(out, b, 0);
 	}
 	use_seg(out, &sb, 0);
 	if (b->has_end[1]) {
-		use_end(out, b, 1, 1);
+		use_end(out, b, 1);
 	}
 	shape_end_loop(out, first);
 }

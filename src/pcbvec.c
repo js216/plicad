@@ -14,274 +14,370 @@
 // and selects them.
 
 #include "pcbplot.h"
+#include "pcbsrc.h"
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-static struct pcb B;
-static const char *dir;
-static FILE *out;
-static int dark = 1, in_zone;
-static const char *part, *net; // Set, and their brackets maybe not open.
-static int part_open, net_open;
+enum { DECIMAL = 10, LAYER_LEN = 64 };
+#define FAR 1e300 // Beyond any box, for a box of nothing yet.
 
-// The boxes of the parts in the file being written, by part.
-static double (*box)[4];
+// The vectors under way: of the board b, into the directory dir, the file
+// out; its polarity, whether a zone is open, the part and the net set
+// (their brackets maybe not open), whether they are open, and the boxes
+// of the parts in the file, by part.
+struct vec_out {
+	const struct pcb *b;
+	const char *dir;
+	FILE *out;
+	int dark;
+	int in_zone;
+	const char *part;
+	const char *net;
+	int part_open;
+	int net_open;
+	double (*box)[4];
+};
+
+// Whether s starts with prefix.
+static int starts(const char *s, const char *prefix)
+{
+	return strncmp(s, prefix, strlen(prefix)) == 0;
+}
 
 // KiCad's name of the layer of a file function of Gerber X2: F.Cu,
 // In1.Cu, ..., B.Cu, F.Mask, F.Paste, F.Silkscreen, F.Courtyard (B. on
 // the bottom), Edge.Cuts, and Drill for the holes.
 static void layer_name(const char *function, char *name, size_t size)
 {
-	int n = 0;
+	static const char copper[] = "Copper,L";
 	const char *side = strstr(function, ",Bot") ? "B" : "F";
+	const char *num = function + sizeof(copper) - 1;
+	char *end = NULL;
+	long n = starts(function, copper) ? strtol(num, &end, DECIMAL) : 0;
 
-	if (sscanf(function, "Copper,L%d", &n) == 1) {
+	if (end && end != num) {
 		if (strstr(function, ",Top")) {
-			snprintf(name, size, "F.Cu");
+			(void)snprintf(name, size, "F.Cu");
 		} else if (strstr(function, ",Bot")) {
-			snprintf(name, size, "B.Cu");
+			(void)snprintf(name, size, "B.Cu");
 		} else {
-			snprintf(name, size, "In%d.Cu", n - 1);
+			(void)snprintf(name, size, "In%d.Cu", (int)n - 1);
 		}
-	} else if (!strncmp(function, "Soldermask,", 11)) {
-		snprintf(name, size, "%s.Mask", side);
-	} else if (!strncmp(function, "Paste,", 6)) {
-		snprintf(name, size, "%s.Paste", side);
-	} else if (!strncmp(function, "Legend,", 7)) {
-		snprintf(name, size, "%s.Silkscreen", side);
+	} else if (starts(function, "Soldermask,")) {
+		(void)snprintf(name, size, "%s.Mask", side);
+	} else if (starts(function, "Paste,")) {
+		(void)snprintf(name, size, "%s.Paste", side);
+	} else if (starts(function, "Legend,")) {
+		(void)snprintf(name, size, "%s.Silkscreen", side);
 	} else if (strstr(function, "Courtyard")) {
-		snprintf(name, size, "%s.Courtyard", side);
-	} else if (!strncmp(function, "Profile", 7)) {
-		snprintf(name, size, "Edge.Cuts");
+		(void)snprintf(name, size, "%s.Courtyard", side);
+	} else if (starts(function, "Profile")) {
+		(void)snprintf(name, size, "Edge.Cuts");
 	} else {
-		snprintf(name, size, "Drill");
+		(void)snprintf(name, size, "Drill");
 	}
 }
 
-static void v_begin(const char *name, const char *function)
+static void v_begin(void *ctx, struct plot_file f)
 {
-	char *p = pcb_alloc(strlen(dir) + strlen(name) + 6), layer[64];
+	struct vec_out *v = ctx;
+	const struct pcb *b = v->b;
+	size_t room = strlen(v->dir) + strlen(f.name) + sizeof("/.vec");
+	char *p = pcb_alloc(room);
+	char layer[LAYER_LEN];
 
-	sprintf(p, "%s/%s.vec", dir, name);
-	out = fopen(p, "w");
-	if (!out) {
+	(void)snprintf(p, room, "%s/%s.vec", v->dir, f.name);
+	v->out = fopen(p, "w");
+	if (!v->out) {
 		pcb_die("%s: cannot write", p);
 	}
 	free(p);
-	layer_name(function, layer, sizeof layer);
-	fprintf(out, "# vec of %s, by pcbvec\nlayer %s\n", name, layer);
-	dark = 1;
-	in_zone = part_open = net_open = 0;
-	part = net = NULL;
-	free(box);
-	box = pcb_alloc((B.npart + 1) * sizeof *box);
-	for (size_t q = 0; q < B.npart; q++) {
-		box[q][0] = box[q][1] = 1e300;
-		box[q][2] = box[q][3] = -1e300;
+	layer_name(f.function, layer, sizeof layer);
+	(void)fprintf(v->out, "# vec of %s, by pcbvec\nlayer %s\n", f.name,
+		      layer);
+	v->dark = 1;
+	v->in_zone = v->part_open = v->net_open = 0;
+	v->part = v->net = NULL;
+	free((void *)v->box);
+	v->box = pcb_alloc((b->npart + 1) * sizeof *v->box);
+	for (size_t q = 0; q < b->npart; q++) {
+		v->box[q][0] = v->box[q][1] = FAR;
+		v->box[q][2] = v->box[q][3] = -FAR;
 	}
 }
 
-static int by_name(const void *a, const void *b)
+// A part by its name, to sort.
+struct named {
+	const char *name;
+	size_t q;
+};
+
+static int by_name(const void *lhs, const void *rhs)
 {
-	return strcmp(B.part[*(const size_t *)a].name,
-		      B.part[*(const size_t *)b].name);
+	const struct named *x = lhs;
+	const struct named *y = rhs;
+	int c = strcmp(x->name, y->name);
+
+	if (c) {
+		return c;
+	}
+	return (x->q > y->q) - (x->q < y->q);
 }
 
-static void v_end(void)
+static void v_end(void *ctx)
 {
-	size_t *order = pcb_alloc((B.npart + 1) * sizeof *order);
+	struct vec_out *v = ctx;
+	const struct pcb *b = v->b;
+	struct named *order = pcb_alloc((b->npart + 1) * sizeof *order);
+	int failed = 0;
 
-	for (size_t q = 0; q < B.npart; q++) {
-		order[q] = q;
+	for (size_t q = 0; q < b->npart; q++) {
+		order[q].name = b->part[q].name;
+		order[q].q = q;
 	}
-	qsort(order, B.npart, sizeof *order, by_name);
-	for (size_t i = 0; i < B.npart; i++) {
-		const double *b = box[order[i]];
+	qsort(order, b->npart, sizeof *order, by_name);
+	for (size_t i = 0; i < b->npart; i++) {
+		const double *bx = v->box[order[i].q];
 
-		if (b[2] >= b[0]) {
-			fprintf(out, "name %s %.4f %.4f %.4f %.4f\n",
-				B.part[order[i]].name, b[0], b[1], b[2], b[3]);
+		if (bx[2] >= bx[0]) {
+			(void)fprintf(v->out, "name %s %.4f %.4f %.4f %.4f\n",
+				      order[i].name, bx[0], bx[1], bx[2],
+				      bx[3]);
 		}
 	}
 	free(order);
-	if (fclose(out)) {
-		pcb_die("%s: cannot write", dir);
+	failed = ferror(v->out);
+	if (fclose(v->out) || failed) {
+		pcb_die("%s: cannot write", v->dir);
 	}
 }
 
-// Opens the brackets of what is set before a drawing, and takes its
-// points into the box of its part.
-static void open_brackets(const double *xy, size_t n, double r)
+// Opens the bracket of the part set, if not open.
+static void open_part(struct vec_out *v)
 {
-	if (part && !part_open) {
-		const char *ref = part;
+	const struct pcb *b = v->b;
+	const char *ref = v->part;
 
-		for (size_t q = 0; q < B.npart; q++) {
-			if (!strcmp(B.part[q].name, part)) {
-				ref = pcb_ref(&B.part[q]);
-			}
-		}
-		fprintf(out, "part %s %s\n", part, ref);
-		part_open = 1;
+	if (!v->part || v->part_open) {
+		return;
 	}
-	if (net && !net_open && !in_zone) {
-		const char *c = NULL;
+	for (size_t q = 0; q < b->npart; q++) {
+		if (!strcmp(b->part[q].name, v->part)) {
+			ref = pcb_ref(&b->part[q]);
+		}
+	}
+	(void)fprintf(v->out, "part %s %s\n", v->part, ref);
+	v->part_open = 1;
+}
 
-		// The class the netlist gives the net, for the viewer.
-		for (size_t k = 0; k < B.nnet; k++) {
-			if (!strcmp(B.net[k].name, net)) {
-				c = B.net[k].klass;
-			}
-		}
-		fprintf(out, "net %s%s%s\n", net, c ? " class " : "",
-			c ? c : "");
-		net_open = 1;
+// Opens the bracket of the net set, if not open and not in a zone.
+static void open_net(struct vec_out *v)
+{
+	const struct pcb *b = v->b;
+	const char *c = NULL;
+
+	if (!v->net || v->net_open || v->in_zone) {
+		return;
 	}
-	for (size_t q = 0; part && q < B.npart; q++) {
-		if (B.part[q].name == part || !strcmp(B.part[q].name, part)) {
+	// The class the netlist gives the net, for the viewer.
+	for (size_t k = 0; k < b->nnet; k++) {
+		if (!strcmp(b->net[k].name, v->net)) {
+			c = b->net[k].klass;
+		}
+	}
+	(void)fprintf(v->out, "net %s%s%s\n", v->net, c ? " class " : "",
+		      c ? c : "");
+	v->net_open = 1;
+}
+
+// Takes the n points xy, grown by r, into the box of the part set.
+static void grow_box(struct vec_out *v, double r, const double *xy, size_t n)
+{
+	const struct pcb *b = v->b;
+
+	for (size_t q = 0; v->part && q < b->npart; q++) {
+		if (b->part[q].name == v->part ||
+		    !strcmp(b->part[q].name, v->part)) {
+			double *bx = v->box[q];
+
 			for (size_t i = 0; i < n; i++) {
-				box[q][0] = fmin(box[q][0], xy[2 * i] - r);
-				box[q][1] = fmin(box[q][1], xy[2 * i + 1] - r);
-				box[q][2] = fmax(box[q][2], xy[2 * i] + r);
-				box[q][3] = fmax(box[q][3], xy[2 * i + 1] + r);
+				bx[0] = fmin(bx[0], xy[2 * i] - r);
+				bx[1] = fmin(bx[1], xy[(2 * i) + 1] - r);
+				bx[2] = fmax(bx[2], xy[2 * i] + r);
+				bx[3] = fmax(bx[3], xy[(2 * i) + 1] + r);
 			}
 			break;
 		}
 	}
 }
 
-static void v_part(const char *name)
+// Opens the brackets of what is set before a drawing, and takes its
+// n points xy, grown by r, into the box of its part.
+static void open_brackets(struct vec_out *v, double r, const double *xy,
+			  size_t n)
 {
-	if (part_open && (!name || strcmp(name, part))) {
-		fprintf(out, "part\n");
-		part_open = 0;
-	}
-	part = name;
+	open_part(v);
+	open_net(v);
+	grow_box(v, r, xy, n);
 }
 
-static void v_net(const char *name)
+static void v_part(void *ctx, const char *name)
 {
-	if (!name && in_zone) {
-		fprintf(out, "end\n");
-		in_zone = 0;
+	struct vec_out *v = ctx;
+
+	if (v->part_open && (!name || strcmp(name, v->part) != 0)) {
+		(void)fprintf(v->out, "part\n");
+		v->part_open = 0;
 	}
-	if (net_open && (!name || strcmp(name, net))) {
-		fprintf(out, "net\n");
-		net_open = 0;
-	}
-	net = name;
+	v->part = name;
 }
 
-static void v_dark(int d)
+static void v_net(void *ctx, const char *name)
 {
-	if (d != dark) {
-		fprintf(out, d ? "dark\n" : "clear\n");
-		dark = d;
+	struct vec_out *v = ctx;
+
+	if (!name && v->in_zone) {
+		(void)fprintf(v->out, "end\n");
+		v->in_zone = 0;
+	}
+	if (v->net_open && (!name || strcmp(name, v->net) != 0)) {
+		(void)fprintf(v->out, "net\n");
+		v->net_open = 0;
+	}
+	v->net = name;
+}
+
+static void v_dark(void *ctx, int d)
+{
+	struct vec_out *v = ctx;
+
+	if (d != v->dark) {
+		(void)fprintf(v->out, d ? "dark\n" : "clear\n");
+		v->dark = d;
 	}
 }
 
-static void points(const double *xy, size_t n)
+static void points(const struct vec_out *v, const double *xy, size_t n)
 {
 	for (size_t i = 0; i < n; i++) {
-		fprintf(out, " %.4f %.4f", xy[2 * i], xy[2 * i + 1]);
+		(void)fprintf(v->out, " %.4f %.4f", xy[2 * i], xy[(2 * i) + 1]);
 	}
-	fprintf(out, "\n");
+	(void)fprintf(v->out, "\n");
 }
 
-static void v_flash(int rect, double x, double y, double w, double h)
+static void v_flash(void *ctx, struct plot_flash f)
 {
-	const double xy[8] = { x - w / 2, y - h / 2, x + w / 2, y - h / 2,
-			       x + w / 2, y + h / 2, x - w / 2, y + h / 2 };
+	struct vec_out *v = ctx;
+	const double x = f.x;
+	const double y = f.y;
+	const double w = f.w;
+	const double h = f.h;
+	const double xy[8] = { x - (w / 2), y - (h / 2), x + (w / 2),
+			       y - (h / 2), x + (w / 2), y + (h / 2),
+			       x - (w / 2), y + (h / 2) };
 
-	if (!rect) {
+	if (!f.rect) {
 		const double c[2] = { x, y };
 
-		open_brackets(c, 1, w / 2);
-		fprintf(out, "disk %.4f %.4f %.4f\n", x, y, w / 2);
+		open_brackets(v, w / 2, c, 1);
+		(void)fprintf(v->out, "disk %.4f %.4f %.4f\n", x, y, w / 2);
 		return;
 	}
-	open_brackets(xy, 4, 0);
-	fprintf(out, "poly");
-	points(xy, 4);
+	open_brackets(v, 0, xy, 4);
+	(void)fprintf(v->out, "poly");
+	points(v, xy, 4);
 }
 
-static void v_line(double w, const double *xy, size_t n)
+static void v_line(void *ctx, double w, const double *xy, size_t n)
 {
-	open_brackets(xy, n, w / 2);
-	fprintf(out, "line %.4f", w);
-	points(xy, n);
+	struct vec_out *v = ctx;
+
+	open_brackets(v, w / 2, xy, n);
+	(void)fprintf(v->out, "line %.4f", w);
+	points(v, xy, n);
 }
 
 // A region under a net is a plane: a zone of its net.
-static void v_region(const double *xy, size_t n)
+static void v_region(void *ctx, const double *xy, size_t n)
 {
-	if (net && !in_zone) {
-		fprintf(out, "zone %s\n", net);
-		in_zone = 1;
+	struct vec_out *v = ctx;
+
+	if (v->net && !v->in_zone) {
+		(void)fprintf(v->out, "zone %s\n", v->net);
+		v->in_zone = 1;
 	}
-	open_brackets(xy, n, 0);
-	fprintf(out, "poly");
-	points(xy, n);
+	open_brackets(v, 0, xy, n);
+	(void)fprintf(v->out, "poly");
+	points(v, xy, n);
 }
 
 // Where a pad is, by its pin: for the numbers a viewer shows on pads.
-static void v_pin(const char *name, double x, double y)
+static void v_pin(void *ctx, struct plot_pin p)
 {
-	const double c[2] = { x, y };
+	struct vec_out *v = ctx;
+	const double c[2] = { p.x, p.y };
 
-	open_brackets(c, 1, 0);
-	fprintf(out, "pin %s %.4f %.4f\n", name, x, y);
+	open_brackets(v, 0, c, 1);
+	(void)fprintf(v->out, "pin %s %.4f %.4f\n", p.name, p.x, p.y);
 }
 
 static const struct pcb_plot vec = { v_begin, v_end,  v_part,	v_net, v_dark,
 				     v_flash, v_line, v_region, v_pin };
 
 // The holes: the vias' and the parts' plated holes, as disks.
-static void holes(void)
+static void holes(struct vec_out *v)
 {
-	v_begin("drill", "Plated,1,2,PTH");
-	for (size_t q = 0; q < B.npart; q++) {
-		const struct pcb_part *p = &B.part[q];
+	const struct pcb *b = v->b;
+
+	v_begin(v, (struct plot_file){ "drill", "Plated,1,2,PTH" });
+	for (size_t q = 0; q < b->npart; q++) {
+		const struct pcb_part *p = &b->part[q];
 
 		for (size_t k = 0; p->placed && p->fp && k < p->fp->npad; k++) {
 			struct pcb_spot s;
 
-			pcb_spot(&B, p, k, &s);
+			pcb_spot(b, p, k, &s);
 			if (s.layer < 0) {
-				v_part(p->name);
-				v_flash(0, s.x, s.y, s.drill, 0);
+				v_part(v, p->name);
+				v_flash(v, (struct plot_flash){ 0, s.x, s.y,
+								s.drill, 0 });
 			}
 		}
 	}
-	v_part(NULL);
-	for (size_t i = 0; i < B.nvia; i++) {
-		v_flash(0, B.via[i].x, B.via[i].y, B.via[i].drill, 0);
+	v_part(v, NULL);
+	for (size_t i = 0; i < b->nvia; i++) {
+		v_flash(v, (struct plot_flash){ 0, b->via[i].x, b->via[i].y,
+						b->via[i].drill, 0 });
 	}
-	v_end();
+	v_end(v);
 }
 
 int main(int argc, char **argv)
 {
-	char **lib = NULL;
-	size_t nlib = 0;
+	static const char usage[] =
+		"usage: pcbvec [-L LIB]... -o DIR board.pcb < board.lock";
+	struct pcb b;
+	struct vec_out v = { &b, NULL, NULL, 1, 0, NULL, NULL, 0, 0, NULL };
+	struct pcb_lib lib = { NULL, 0, NULL, 0 };
 	int i = 1;
 
 	for (; i < argc && argv[i][0] == '-'; i++) {
 		if (!strcmp(argv[i], "-L") && i + 1 < argc) {
-			lib = pcb_grow(lib, nlib, sizeof *lib);
-			lib[nlib] = pcb_alloc(strlen(argv[i + 1]) + 16);
-			sprintf(lib[nlib++], "%s/footprints", argv[++i]);
+			pcb_add_lib(&lib, argv[++i]);
 		} else if (!strcmp(argv[i], "-o") && i + 1 < argc) {
-			dir = argv[++i];
+			v.dir = argv[++i];
 		} else {
-			pcb_die("usage: pcbvec [-L LIB]... -o DIR board.pcb < board.lock");
+			pcb_die("%s", usage);
 		}
 	}
-	if (i != argc - 1 || !dir) {
-		pcb_die("usage: pcbvec [-L LIB]... -o DIR board.pcb < board.lock");
+	if (i != argc - 1 || !v.dir) {
+		pcb_die("%s", usage);
 	}
-	pcb_read(&B, argv[i], lib, nlib, stdin, NULL);
-	pcb_plot(&B, &vec);
-	holes();
-	return B.failed;
+	memset(&b, 0, sizeof b);
+	pcb_read(&b, argv[i], &lib, stdin, NULL);
+	pcb_plot(&b, &vec, &v);
+	holes(&v);
+	return b.failed;
 }

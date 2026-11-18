@@ -10,28 +10,46 @@
 
 #include "pcbsrc.h"
 
-// The primitives a writer gives: a layer file begins (its name without
-// an extension, and its function in the terms of Gerber X2) and ends;
-// the part and the net of what follows (NULL for none); the polarity; a
-// flash of a circle (rect 0) or rectangle w by h at (x, y); a stroke of
-// width w; a region; and where a pad of a copper layer is, by its pin
-// (REF.PIN), for a writer that names pins (NULL for none).
+// A layer file: its name without an extension, and its function in the
+// terms of Gerber X2.
+struct plot_file {
+	const char *name;
+	const char *function;
+};
+
+// A flash of a circle (rect 0) or a rectangle w by h at (x, y).
+struct plot_flash {
+	int rect;
+	double x, y, w, h;
+};
+
+// Where a pad of a copper layer is: its pin (REF.PIN) and its center.
+struct plot_pin {
+	const char *name;
+	double x, y;
+};
+
+// The primitives a writer gives, each with the writer's own ctx: a layer
+// file begins and ends; the part and the net of what follows (NULL for
+// none); the polarity; a flash; a stroke of width w; a region; and
+// where a pad is, for a writer that names pins (NULL for none).
 struct pcb_plot {
-	void (*begin)(const char *name, const char *function);
-	void (*end)(void);
-	void (*part)(const char *name);
-	void (*net)(const char *name);
-	void (*dark)(int dark);
-	void (*flash)(int rect, double x, double y, double w, double h);
-	void (*line)(double w, const double *xy, size_t n);
-	void (*region)(const double *xy, size_t n);
-	void (*pin)(const char *name, double x, double y);
+	void (*begin)(void *ctx, struct plot_file f);
+	void (*end)(void *ctx);
+	void (*part)(void *ctx, const char *name);
+	void (*net)(void *ctx, const char *name);
+	void (*dark)(void *ctx, int dark);
+	void (*flash)(void *ctx, struct plot_flash f);
+	void (*line)(void *ctx, double w, const double *xy, size_t n);
+	void (*region)(void *ctx, const double *xy, size_t n);
+	void (*pin)(void *ctx, struct plot_pin p);
 };
 
 // Draws each copper layer (a signal layer its pads, tracks and vias; a
 // plane the outline 0.3 mm in, cleared by the clearance round what is
 // not of its net), the outline, the mask and paste of the top, the
-// courtyards and the silkscreen of each side.
-void pcb_plot(const struct pcb *b, const struct pcb_plot *p);
+// courtyards and the silkscreen of each side, by the primitives of p
+// with ctx.
+void pcb_plot(const struct pcb *b, const struct pcb_plot *p, void *ctx);
 
 #endif

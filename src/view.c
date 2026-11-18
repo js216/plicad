@@ -60,7 +60,6 @@
 #include <math.h>
 #include <stdint.h>
 #include <sys/poll.h>
-#include <sys/types.h>
 #include <sys/utsname.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -196,6 +195,25 @@ static void free_gl(struct gui *g, size_t item)
 enum { GRAIN = 64, GRAIN_CELL = 8, GRAIN_PTS = GRAIN / GRAIN_CELL };
 #define GRAIN_DIM 0.75F
 #define GRAIN_MM 8.0
+// The noise of the grain, of the C standard's example rand: its
+// multiplier, increment and mask, the low bits dropped (by a division),
+// and the range of the rest.
+#define NOISE_MUL 1103515245UL
+#define NOISE_ADD 12345UL
+#define NOISE_MASK 0x7fffffffUL
+#define NOISE_DROP 32768UL
+#define NOISE_RANGE 65536.0F
+// A grade g makes a tile of GRAIN_MM times 10 to the (g - GRADE_UNIT) /
+// GRADE_DECADE.
+#define GRADE_BASE 10.0
+#define GRADE_UNIT 30.0
+#define GRADE_DECADE 20.0
+enum {
+	XYZ = 3, // The floats of a point,
+	UV_FLOATS = 3 * 2, // and the grain coordinates of a triangle.
+	LOADING_PAD = 8, // The room around the loading note, in pixels.
+	BYTE_MAX = 255 // The brightest of a byte.
+};
 
 static void make_grain(struct gui *g)
 {
@@ -204,9 +222,11 @@ static void make_grain(struct gui *g)
 	unsigned long seed = 1;
 
 	for (int k = 0; k < GRAIN_PTS * GRAIN_PTS; k++) {
-		seed = ((seed * 1103515245UL) + 12345UL) & 0x7fffffffUL;
-		l[k / GRAIN_PTS][k % GRAIN_PTS] =
-			(float)(seed >> 15) / 65536.0F;
+		unsigned long high = 0;
+
+		seed = ((seed * NOISE_MUL) + NOISE_ADD) & NOISE_MASK;
+		high = seed / NOISE_DROP;
+		l[k / GRAIN_PTS][k % GRAIN_PTS] = (float)high / NOISE_RANGE;
 	}
 	for (int k = 0; k < GRAIN * GRAIN; k++) {
 		int x = k % GRAIN;
@@ -222,7 +242,7 @@ static void make_grain(struct gui *g)
 		float lo = a[i] + ((a[(i + 1) % GRAIN_PTS] - a[i]) * sx);
 		float hi = b[i] + ((b[(i + 1) % GRAIN_PTS] - b[i]) * sx);
 
-		t[k] = (unsigned char)(255 *
+		t[k] = (unsigned char)(BYTE_MAX *
 				       (GRAIN_DIM + ((1 - GRAIN_DIM) *
 						     (lo + ((hi - lo) * sy)))));
 	}
@@ -241,27 +261,31 @@ static void put_tri(const struct part *p, size_t i, size_t k, float **b)
 {
 	const float *q = &p->pos[TRI_FLOATS * i];
 	struct vec o = v3(q[0], q[1], q[2]);
-	struct vec n = cross(sub(v3(q[3], q[4], q[5]), o),
-			     sub(v3(q[6], q[7], q[8]), o));
+	const float *q1 = q + XYZ;
+	const float *q2 = q1 + XYZ;
+	struct vec n = cross(sub(v3(q1[0], q1[1], q1[2]), o),
+			     sub(v3(q2[0], q2[1], q2[2]), o));
 	int a = fabs(n.x) > fabs(n.y) ? 0 : 1;
-	double tile =
-		p->grade && p->grade[i] >= 0 ?
-			GRAIN_MM * pow(10, ((double)p->grade[i] - 30) / 20) :
-			0;
+	double tile = p->grade && p->grade[i] >= 0 ?
+			      GRAIN_MM * pow(GRADE_BASE, ((double)p->grade[i] -
+							  GRADE_UNIT) /
+								 GRADE_DECADE) :
+			      0;
 
 	a = fabs(comp(n, a)) > fabs(n.z) ? a : 2;
 	memcpy(&b[0][TRI_FLOATS * k], q, TRI_FLOATS * sizeof(float));
 	memcpy(&b[1][TRI_FLOATS * k], &p->nrm[TRI_FLOATS * i],
 	       TRI_FLOATS * sizeof(float));
-	for (size_t c = 0; c < 3 * 2; c++) {
+	for (size_t c = 0; c < UV_FLOATS; c++) {
 		if (b[2] && c < 3) {
 			memcpy(&b[2][(TRI_FLOATS * k) + (3 * c)],
 			       &p->col[3 * i], 3 * sizeof(float));
 		}
 		if (tile > 0) {
-			b[3][(6 * k) + c] =
+			b[3][(UV_FLOATS * k) + c] =
 				(float)((double)q[(3 * (c / 2)) +
-						  ((size_t)a + 1 + (c % 2)) % 3] /
+						  (((size_t)a + 1 + (c % 2)) %
+						   3)] /
 					tile);
 		}
 	}
@@ -293,7 +317,7 @@ static void upload(struct part *p)
 	b[0] = xmalloc(n + 1);
 	b[1] = xmalloc(n + 1);
 	b[2] = p->col ? xmalloc(n + 1) : NULL;
-	b[3] = xcalloc((6 * p->nt) + 1, sizeof(float));
+	b[3] = xcalloc((UV_FLOATS * p->nt) + 1, sizeof(float));
 	for (int pass = 0; pass < 2; pass++) {
 		for (size_t i = 0; i < p->nt; i++) {
 			if ((p->grade && p->grade[i] >= 0) == pass) {
@@ -308,9 +332,9 @@ static void upload(struct part *p)
 		if (b[i]) {
 			glBufferData(
 				GL_ARRAY_BUFFER,
-				(GLsizeiptr)(i == 3 ?
-						     6 * p->nt * sizeof(float) :
-						     n),
+				(GLsizeiptr)(i == 3 ? UV_FLOATS * p->nt *
+							      sizeof(float) :
+						      n),
 				b[i], GL_STATIC_DRAW);
 		}
 		free(b[i]);
@@ -485,7 +509,7 @@ static void draw_label(const struct gui *g)
 		help_box(g);
 	}
 	if (g->loading) {
-		int w = (int)strlen("Loading...") * g->font_w + 8;
+		int w = ((int)strlen("Loading...") * g->font_w) + LOADING_PAD;
 		int h = g->font_h + 4;
 
 		glColor3f(0, 0, 0);

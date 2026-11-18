@@ -38,13 +38,48 @@
 // is at, and printed once; nothing is printed when all is well.  With
 // -l each net's track length and vias are printed too, one net a line.
 
-#define _POSIX_C_SOURCE 200809L // For strtok_r.
-
 #include "pcbsrc.h"
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-static struct pcb B;
+#define TOUCH 1e-9 // Copper this near touches, in mm.
+#define SLACK 1e-6 // What a rule lets go of rounding, in mm.
+#define ON 1e-3 // A point this near copper is on it, in mm.
+#define STROKE_STEP 0.05 // The step along a stroke against an opening.
+#define FAR 1e300 // Beyond any length.
+#define NEAR_FAR 1e299 // A length below this is reached.
+#define ROOM_MOST 5.0 // The most room told of a side, in mm.
+enum {
+	BOX = 4, // The corners of a box,
+	BOX_XY = 2 * BOX, // and their coordinates.
+	FORK_WORDS = 6, // The words of fork NET PIN to PIN PIN.
+	NAME_LEN = 1200, // Room for a name in a message,
+	HINT_LEN = 600, // for a hint,
+	MSG_LEN = 2048, // for a message,
+	LONG_MSG_LEN = 2800, // and for one of two pads and a net.
+	WHY_LEN = 1024 // Room for why parts clash.
+};
+
+// The check under way: the board; its pieces of copper, their sets
+// (up) of what touches; the labels of the parts for the messages; the
+// faults told; and the graph of the copper of the net under way.
+struct check {
+	struct pcb b;
+	struct item *items;
+	size_t nitems;
+	size_t *up;
+	char **labels;
+	int faults;
+	char **told; // The faults printed, each once.
+	size_t ntold;
+	struct node *nodes;
+	size_t nnodes;
+	size_t (*edge)[2];
+	double *elen;
+	size_t nedges;
+};
 
 // A piece of copper: a segment (a point for a pad or via) of a radius,
 // or a rectangle; on a layer (-1 all).
@@ -55,36 +90,40 @@ struct item {
 	long part, pad; // A pad's, or -1.
 };
 
-static struct item *items;
-static size_t nitems;
-static size_t *up;
-
-static void add(struct item it)
+static void add(struct check *ck, struct item it)
 {
-	items = pcb_grow(items, nitems, sizeof *items);
-	items[nitems++] = it;
+	ck->items = pcb_grow(ck->items, ck->nitems, sizeof *ck->items);
+	ck->items[ck->nitems++] = it;
 }
 
-static size_t find(size_t i)
+static size_t find(struct check *ck, size_t i)
 {
-	while (up[i] != i) {
-		up[i] = up[up[i]];
-		i = up[i];
+	while (ck->up[i] != i) {
+		ck->up[i] = ck->up[ck->up[i]];
+		i = ck->up[i];
 	}
 	return i;
 }
 
-static double seg_seg(double ax, double ay, double bx, double by, double cx,
-		      double cy, double dx, double dy)
+// The distance between the segments st[0], a-b, and st[1], c-d.
+static double seg_seg(const struct pcb_seg st[2])
 {
-	double d = fmin(fmin(pcb_seg_dist(ax, ay, cx, cy, dx, dy),
-			     pcb_seg_dist(bx, by, cx, cy, dx, dy)),
-			fmin(pcb_seg_dist(cx, cy, ax, ay, bx, by),
-			     pcb_seg_dist(dx, dy, ax, ay, bx, by)));
-	double d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-	double d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
-	double d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
-	double d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+	double ax = st[0].a.x;
+	double ay = st[0].a.y;
+	double bx = st[0].b.x;
+	double by = st[0].b.y;
+	double cx = st[1].a.x;
+	double cy = st[1].a.y;
+	double dx = st[1].b.x;
+	double dy = st[1].b.y;
+	double d = fmin(fmin(pcb_seg_dist(st[0].a, st[1]),
+			     pcb_seg_dist(st[0].b, st[1])),
+			fmin(pcb_seg_dist(st[1].a, st[0]),
+			     pcb_seg_dist(st[1].b, st[0])));
+	double d1 = ((bx - ax) * (cy - ay)) - ((by - ay) * (cx - ax));
+	double d2 = ((bx - ax) * (dy - ay)) - ((by - ay) * (dx - ax));
+	double d3 = ((dx - cx) * (ay - cy)) - ((dy - cy) * (ax - cx));
+	double d4 = ((dx - cx) * (by - cy)) - ((dy - cy) * (bx - cx));
 
 	return d1 * d2 < 0 && d3 * d4 < 0 ? 0 : d;
 }
@@ -92,7 +131,7 @@ static double seg_seg(double ax, double ay, double bx, double by, double cx,
 // The gap between two pieces of copper, 0 where they touch or overlap.
 static double gap(const struct item *a, const struct item *b)
 {
-	double d;
+	double d = NAN;
 
 	if (a->rect && b->rect) {
 		double dx = fmax(fmax(a->ax - b->bx, b->ax - a->bx), 0);
@@ -101,9 +140,10 @@ static double gap(const struct item *a, const struct item *b)
 		return hypot(dx, dy);
 	}
 	if (a->rect || b->rect) {
-		const struct item *r = a->rect ? a : b, *s = a->rect ? b : a;
-		const double c[8] = { r->ax, r->ay, r->bx, r->ay,
-				      r->bx, r->by, r->ax, r->by };
+		const struct item *r = a->rect ? a : b;
+		const struct item *s = a->rect ? b : a;
+		const double c[BOX_XY] = { r->ax, r->ay, r->bx, r->ay,
+					   r->bx, r->by, r->ax, r->by };
 
 		if ((s->ax >= r->ax && s->ax <= r->bx && s->ay >= r->ay &&
 		     s->ay <= r->by) ||
@@ -111,16 +151,27 @@ static double gap(const struct item *a, const struct item *b)
 		     s->by <= r->by)) {
 			return 0;
 		}
-		d = 1e300;
-		for (int i = 0; i < 4; i++) {
-			d = fmin(d,
-				 seg_seg(s->ax, s->ay, s->bx, s->by, c[2 * i],
-					 c[2 * i + 1], c[(2 * i + 2) % 8],
-					 c[(2 * i + 3) % 8]));
+		d = FAR;
+		for (size_t i = 0; i < BOX; i++) {
+			struct pcb_seg st[2] = {
+				{ { s->ax, s->ay }, { s->bx, s->by } },
+				{ { c[2 * i], c[(2 * i) + 1] },
+				  { c[((2 * i) + 2) % BOX_XY],
+				    c[((2 * i) + 3) % BOX_XY] } }
+			};
+
+			d = fmin(d, seg_seg(st));
 		}
 		return fmax(d - s->r, 0);
 	}
-	d = seg_seg(a->ax, a->ay, a->bx, a->by, b->ax, b->ay, b->bx, b->by);
+	{
+		const struct pcb_seg st[2] = {
+			{ { a->ax, a->ay }, { a->bx, a->by } },
+			{ { b->ax, b->ay }, { b->bx, b->by } }
+		};
+
+		d = seg_seg(st);
+	}
 	return fmax(d - a->r - b->r, 0);
 }
 
@@ -129,52 +180,53 @@ static int same_layer(const struct item *a, const struct item *b)
 	return a->layer < 0 || b->layer < 0 || a->layer == b->layer;
 }
 
-// The name of each part for the messages, NAME (REF), made once.
-static char **labels;
-
 // A part for a message: NAME (REF), kept till the end.
-static const char *label(const struct pcb_part *p)
+static const char *label(struct check *ck, const struct pcb_part *p)
 {
-	size_t k = (size_t)(p - B.part);
+	size_t k = (size_t)(p - ck->b.part);
 
-	if (!labels) {
-		labels = pcb_alloc((B.npart + 1) * sizeof *labels);
+	if (!ck->labels) {
+		ck->labels = (char **)pcb_alloc((ck->b.npart + 1) *
+						sizeof *ck->labels);
 	}
-	if (!labels[k]) {
-		labels[k] = pcb_alloc(strlen(p->name) + strlen(pcb_ref(p)) + 4);
-		sprintf(labels[k], "%s (%s)", p->name, pcb_ref(p));
+	if (!ck->labels[k]) {
+		size_t room = strlen(p->name) + strlen(pcb_ref(p)) + 4;
+
+		ck->labels[k] = pcb_alloc(room);
+		(void)snprintf(ck->labels[k], room, "%s (%s)", p->name,
+			       pcb_ref(p));
 	}
-	return labels[k];
+	return ck->labels[k];
 }
 
 // The name of pad k of part q for a message: PART.PAD (REF).
-static const char *pad_name(size_t q, size_t k)
+static const char *pad_name(struct check *ck, size_t q, size_t k)
 {
-	static char buf[4][1200];
+	static char buf[4][NAME_LEN];
 	static int n;
 	char *s = buf[n++ % 4];
 
-	snprintf(s, sizeof buf[0], "%s.%s (%s)", B.part[q].name,
-		 B.part[q].fp->pad[k].name, pcb_ref(&B.part[q]));
+	(void)snprintf(s, sizeof buf[0], "%s.%s (%s)", ck->b.part[q].name,
+		       ck->b.part[q].fp->pad[k].name, pcb_ref(&ck->b.part[q]));
 	return s;
 }
 
 // The pieces of copper of the board, one for each pad, track segment
 // and via.
-static void gather(void)
+static void gather(struct check *ck)
 {
-	for (size_t q = 0; q < B.npart; q++) {
-		const struct pcb_part *p = &B.part[q];
+	for (size_t q = 0; q < ck->b.npart; q++) {
+		const struct pcb_part *p = &ck->b.part[q];
 
 		for (size_t k = 0; p->placed && p->fp && k < p->fp->npad; k++) {
 			struct pcb_spot s;
 			struct item it;
 
-			pcb_spot(&B, p, k, &s);
+			pcb_spot(&ck->b, p, k, &s);
 			memset(&it, 0, sizeof it);
-			it.net = pcb_net_of(&B, q, k);
+			it.net = pcb_net_of(&ck->b, q, k);
 			it.layer = s.layer;
-			it.what = label(p);
+			it.what = label(ck, p);
 			it.part = (long)q;
 			it.pad = (long)k;
 			if (s.shape == PAD_CIRCLE) {
@@ -188,11 +240,11 @@ static void gather(void)
 				it.bx = s.x + s.w / 2;
 				it.by = s.y + s.h / 2;
 			}
-			add(it);
+			add(ck, it);
 		}
 	}
-	for (size_t i = 0; i < B.ntrack; i++) {
-		const struct pcb_track *t = &B.track_[i];
+	for (size_t i = 0; i < ck->b.ntrack; i++) {
+		const struct pcb_track *t = &ck->b.track_[i];
 
 		for (size_t j = 1; j < t->n; j++) {
 			struct item it;
@@ -200,79 +252,79 @@ static void gather(void)
 			memset(&it, 0, sizeof it);
 			it.net = t->net;
 			it.layer = t->layer;
-			it.ax = t->xy[2 * j - 2];
-			it.ay = t->xy[2 * j - 1];
+			it.ax = t->xy[(2 * j) - 2];
+			it.ay = t->xy[(2 * j) - 1];
 			it.bx = t->xy[2 * j];
-			it.by = t->xy[2 * j + 1];
+			it.by = t->xy[(2 * j) + 1];
 			it.r = t->w / 2;
-			it.what = B.net[t->net].name;
+			it.what = ck->b.net[t->net].name;
 			it.part = it.pad = -1;
-			add(it);
+			add(ck, it);
 		}
 	}
-	for (size_t i = 0; i < B.nvia; i++) {
+	for (size_t i = 0; i < ck->b.nvia; i++) {
 		struct item it;
 
 		memset(&it, 0, sizeof it);
-		it.net = B.via[i].net;
+		it.net = ck->b.via[i].net;
 		it.layer = -1;
-		it.ax = it.bx = B.via[i].x;
-		it.ay = it.by = B.via[i].y;
-		it.r = B.via[i].dia / 2;
+		it.ax = it.bx = ck->b.via[i].x;
+		it.ay = it.by = ck->b.via[i].y;
+		it.r = ck->b.via[i].dia / 2;
 		it.what = "a via";
 		it.via = 1;
 		it.part = it.pad = -1;
-		add(it);
+		add(ck, it);
 	}
 }
 
-static int is_except(const char *name)
+static int is_except(struct check *ck, const char *name)
 {
-	for (size_t i = 0; i < B.nexcept; i++) {
-		if (!strcmp(B.edge_except[i], name)) {
+	for (size_t i = 0; i < ck->b.nexcept; i++) {
+		if (!strcmp(ck->b.edge_except[i], name)) {
 			return 1;
 		}
 	}
 	return 0;
 }
 
-static int faults;
-static char **told; // The faults printed, each once.
-static size_t ntold;
-
 // Prints a fault, made by the caller, the place it is at and a hint
 // after it; but not a second time word for word.
-static void fault_hint(const char *what, double x, double y, const char *hint)
+static void fault_hint(struct check *ck, const char *what, double x, double y,
+		       const char *hint)
 {
-	char line[2800];
+	char line[LONG_MSG_LEN];
 
-	snprintf(line, sizeof line, "%s: %s at %.3f %.3f%s", B.file, what, x, y,
-		 hint);
-	faults = 1;
-	for (size_t i = 0; i < ntold; i++) {
-		if (!strcmp(told[i], line)) {
+	(void)snprintf(line, sizeof line, "%s: %s at %.3f %.3f%s", ck->b.file,
+		       what, x, y, hint);
+	ck->faults = 1;
+	for (size_t i = 0; i < ck->ntold; i++) {
+		if (!strcmp(ck->told[i], line)) {
 			return;
 		}
 	}
-	told = pcb_grow(told, ntold, sizeof *told);
-	told[ntold++] = pcb_strdup(line);
+	ck->told = (char **)pcb_grow((void *)ck->told, ck->ntold,
+				     sizeof *ck->told);
+	ck->told[ck->ntold++] = pcb_strdup(line);
 	printf("%s\n", line);
 }
 
-static void fault(const char *what, double x, double y)
+static void fault(struct check *ck, const char *what, double x, double y)
 {
-	fault_hint(what, x, y, "");
+	fault_hint(ck, what, x, y, "");
 }
 
-// Whether a stroke runs into the box, by points along it 0.05 mm apart.
+// Whether a stroke runs into the box, by points along it STROKE_STEP
+// apart.
 static int stroke_in(const struct pcb_stroke *s, const double o[4])
 {
-	double len = hypot(s->x1 - s->x0, s->y1 - s->y0), r = s->w / 2;
-	int n = 1 + (int)(len / 0.05);
+	double len = hypot(s->x1 - s->x0, s->y1 - s->y0);
+	double r = s->w / 2;
+	int n = 1 + (int)(len / STROKE_STEP);
 
 	for (int i = 0; i <= n; i++) {
-		double x = s->x0 + (s->x1 - s->x0) * i / n;
-		double y = s->y0 + (s->y1 - s->y0) * i / n;
+		double x = s->x0 + ((s->x1 - s->x0) * i / n);
+		double y = s->y0 + ((s->y1 - s->y0) * i / n);
 
 		if (x > o[0] - r && x < o[2] + r && y > o[1] - r &&
 		    y < o[3] + r) {
@@ -285,71 +337,76 @@ static int stroke_in(const struct pcb_stroke *s, const double o[4])
 // The parts against each other: no two courtyards on one side overlap,
 // and no courtyard on either side, nor any via, comes into the keep-out
 // of a hole a screw goes through, whatever the nets.
-static void check_parts(void)
+static void check_parts(struct check *ck)
 {
-	char why[1024];
+	char why[WHY_LEN];
 
-	for (size_t q = 0; q < B.npart; q++) {
-		for (size_t o = q + 1; o < B.npart; o++) {
-			if (pcb_clash(&B, &B.part[q], &B.part[o], why,
-				      sizeof why)) {
-				fault(why, B.part[q].x, B.part[q].y);
+	for (size_t q = 0; q < ck->b.npart; q++) {
+		for (size_t o = q + 1; o < ck->b.npart; o++) {
+			if (pcb_clash(&ck->b, &ck->b.part[q], &ck->b.part[o],
+				      why, sizeof why)) {
+				fault(ck, why, ck->b.part[q].x,
+				      ck->b.part[q].y);
 			}
 		}
 	}
-	for (size_t v = 0; v < B.nvia; v++) {
-		char msg[1200];
+	for (size_t v = 0; v < ck->b.nvia; v++) {
+		char msg[NAME_LEN];
 
-		if (pcb_in_keepout(&B, B.via[v].x, B.via[v].y, B.via[v].dia / 2,
-				   why, sizeof why)) {
-			snprintf(msg, sizeof msg, "a via of %s in %s",
-				 B.net[B.via[v].net].name, why);
-			fault(msg, B.via[v].x, B.via[v].y);
+		if (pcb_in_keepout(&ck->b, ck->b.via[v].x, ck->b.via[v].y,
+				   ck->b.via[v].dia / 2, why, sizeof why)) {
+			(void)snprintf(msg, sizeof msg, "a via of %s in %s",
+				       ck->b.net[ck->b.via[v].net].name, why);
+			fault(ck, msg, ck->b.via[v].x, ck->b.via[v].y);
 		}
 	}
 }
 
-// The silkscreen against the openings of the mask: one fault a part.
 // Whether the designator of part q found no room.
-static int no_room(const struct pcb_stroke *s, size_t n, size_t q)
+static int no_room(const struct pcb_strokes *ss, size_t q)
 {
-	for (size_t i = 0; i < n; i++) {
-		if (s[i].part == q && s[i].ref == 2) {
+	for (size_t i = 0; i < ss->n; i++) {
+		if (ss->s[i].part == q && ss->s[i].ref == 2) {
 			return 1;
 		}
 	}
 	return 0;
 }
 
-// No two designators of one side overlap.
-static void check_refs(const struct pcb_stroke *s, size_t n)
+// Tells that the designators of parts q and o, of boxes a and c,
+// overlap, with the hint for the one with no room, else the later.
+static void refs_overlap(struct check *ck, const struct pcb_strokes *ss,
+			 const size_t qo[2], const double a[4])
 {
-	char msg[2048], hint[600];
+	char msg[MSG_LEN];
+	char hint[HINT_LEN];
+	size_t h = no_room(ss, qo[0]) && !no_room(ss, qo[1]) ? qo[0] : qo[1];
 
-	for (size_t q = 0; q < B.npart; q++) {
+	pcb_ref_hint(&ck->b, ss, h, hint, sizeof hint);
+	(void)snprintf(msg, sizeof msg, "the designators of %s and %s overlap",
+		       label(ck, &ck->b.part[qo[0]]),
+		       label(ck, &ck->b.part[qo[1]]));
+	fault_hint(ck, msg, a[0], a[1], hint);
+}
+
+// No two designators of one side overlap.
+static void check_refs(struct check *ck, const struct pcb_strokes *ss)
+{
+	for (size_t q = 0; q < ck->b.npart; q++) {
 		double a[4];
 
-		if (!pcb_ref_box(s, n, q, a)) {
+		if (!pcb_ref_box(ss, q, a)) {
 			continue;
 		}
-		for (size_t o = q + 1; o < B.npart; o++) {
+		for (size_t o = q + 1; o < ck->b.npart; o++) {
 			double c[4];
 
-			if (B.part[o].bottom == B.part[q].bottom &&
-			    pcb_ref_box(s, n, o, c) && a[0] < c[2] &&
+			if (ck->b.part[o].bottom == ck->b.part[q].bottom &&
+			    pcb_ref_box(ss, o, c) && a[0] < c[2] &&
 			    c[0] < a[2] && a[1] < c[3] && c[1] < a[3]) {
-				// The hint for the one with no room, else the
-				// later.
-				size_t h = no_room(s, n, q) &&
-							   !no_room(s, n, o) ?
-						   q :
-						   o;
+				const size_t qo[2] = { q, o };
 
-				pcb_ref_hint(&B, s, n, h, hint, sizeof hint);
-				snprintf(msg, sizeof msg,
-					 "the designators of %s and %s overlap",
-					 label(&B.part[q]), label(&B.part[o]));
-				fault_hint(msg, a[0], a[1], hint);
+				refs_overlap(ck, ss, qo, a);
 			}
 		}
 	}
@@ -357,196 +414,250 @@ static void check_refs(const struct pcb_stroke *s, size_t n)
 
 // The silkscreen of stroke s, for a message: its part, or a text
 // statement's text.
-static const char *silk_of(const struct pcb_stroke *s)
+static const char *silk_of(struct check *ck, const struct pcb_stroke *s)
 {
-	static char buf[1200];
+	static char buf[NAME_LEN];
+	const struct pcb_stmt *st = NULL;
+	char *t = NULL;
 
-	if (s->part < B.npart) {
-		return label(&B.part[s->part]);
+	if (s->part < ck->b.npart) {
+		return label(ck, &ck->b.part[s->part]);
 	}
-	{
-		const struct pcb_stmt *st = &B.stmt[s->part - B.npart];
-		char *t = pcb_words(st->w + 1, st->n - 1);
-
-		snprintf(buf, sizeof buf, "the text %s", t);
-		free(t);
-	}
+	st = &ck->b.stmt[s->part - ck->b.npart];
+	t = pcb_words(st->w + 1, st->n - 1);
+	(void)snprintf(buf, sizeof buf, "the text %s", t);
+	free(t);
 	return buf;
 }
 
-static void check_silk(void)
+// Whether stroke i of ss runs over a pad of its side; if so, tells it,
+// once for its part.
+static int silk_over_pad(struct check *ck, const struct pcb_strokes *ss,
+			 size_t i)
 {
-	struct pcb_stroke *s;
-	size_t n = pcb_silk(&B, &s), off = (size_t)-1;
-	char msg[2048], hint[600];
+	const struct pcb_stroke *s = &ss->s[i];
 
-	check_refs(s, n);
-	for (size_t i = 0; i < n; i++) {
-		int bottom = s[i].bottom;
+	for (size_t q = 0; q < ck->b.npart; q++) {
+		for (size_t k = 0;
+		     ck->b.part[q].placed && k < ck->b.part[q].fp->npad; k++) {
+			struct pcb_end at = { q, k };
+			char msg[MSG_LEN];
+			char hint[HINT_LEN] = "";
+			double o[4];
 
-		// A text statement's on the board, off its cutouts: once.
-		if (s[i].part >= B.npart && s[i].part != off &&
-		    pcb_edge_dist(&B, 0,
-				  (const double[4]){ s[i].x0, s[i].y0, s[i].x1,
-						     s[i].y1 },
-				  s[i].w / 2, NULL) < 0) {
-			snprintf(msg, sizeof msg,
-				 "the silkscreen of %s is off the board or "
-				 "over a cutout",
-				 silk_of(&s[i]));
-			fault(msg, s[i].x0, s[i].y0);
-			off = s[i].part;
-		}
-		for (size_t q = 0; q < B.npart; q++) {
-			for (size_t k = 0;
-			     B.part[q].placed && k < B.part[q].fp->npad; k++) {
-				double o[4];
-
-				if (pcb_opening(&B, q, k, bottom, o) &&
-				    stroke_in(&s[i], o)) {
-					*hint = 0;
-					if (s[i].ref && s[i].part < B.npart) {
-						pcb_ref_hint(&B, s, n,
-							     s[i].part, hint,
-							     sizeof hint);
-					}
-					snprintf(
-						msg, sizeof msg,
-						"the silkscreen of %s runs over pad %s",
-						silk_of(&s[i]), pad_name(q, k));
-					fault_hint(msg, s[i].x0, s[i].y0, hint);
-					while (i + 1 < n &&
-					       s[i + 1].part == s[i].part) {
-						i++;
-					}
-					q = B.npart;
-					break;
-				}
-			}
-		}
-	}
-	free(s);
-}
-
-static void check_copper(void)
-{
-	size_t nplane = B.nlayer, base;
-	char msg[2048];
-
-	// The items, then one node for each plane.
-	base = nitems;
-	up = pcb_alloc((nitems + nplane + 1) * sizeof *up);
-	for (size_t i = 0; i < nitems + nplane; i++) {
-		up[i] = i;
-	}
-	for (size_t i = 0; i < nitems; i++) {
-		const struct item *a = &items[i];
-
-		for (size_t j = i + 1; j < nitems; j++) {
-			const struct item *b = &items[j];
-			double g;
-
-			if (!same_layer(a, b)) {
+			if (!pcb_opening(&ck->b, at, s->bottom, o) ||
+			    !stroke_in(s, o)) {
 				continue;
 			}
-			g = gap(a, b);
-			if (g <= 1e-9) {
-				up[find(i)] = find(j);
-			} else if (a->net != b->net && g < B.clearance - 1e-6) {
-				snprintf(msg, sizeof msg,
-					 "%s and %s are %.3f mm apart", a->what,
-					 b->what, g);
-				fault(msg, (a->ax + b->ax) / 2,
-				      (a->ay + b->ay) / 2);
+			if (s->ref && s->part < ck->b.npart) {
+				pcb_ref_hint(&ck->b, ss, s->part, hint,
+					     sizeof hint);
 			}
+			(void)snprintf(msg, sizeof msg,
+				       "the silkscreen of %s runs over pad %s",
+				       silk_of(ck, s), pad_name(ck, q, k));
+			fault_hint(ck, msg, s->x0, s->y0, hint);
+			return 1;
 		}
-		// Joined to a plane: of its net, through a hole or a via, or a
-		// pad or track on the plane's layer; but a pad the plane
-		// relieves joins it by its neck alone.
-		for (size_t l = 0; l < B.nlayer; l++) {
-			const struct pcb_layer *ly = &B.layer[l];
+	}
+	return 0;
+}
 
-			if (ly->kind == LAYER_PLANE && ly->net && a->net >= 0 &&
-			    !strcmp(B.net[a->net].name, ly->net) &&
-			    (a->layer < 0 || a->layer == (int)l) &&
-			    !(a->part >= 0 && pcb_relieved(&B, (size_t)a->part,
-							   (size_t)a->pad))) {
-				up[find(i)] = find(base + l);
-			}
+// The silkscreen against the openings of the mask: one fault a part.
+static void check_silk(struct check *ck)
+{
+	struct pcb_strokes ss = pcb_silk(&ck->b);
+	const struct pcb_stroke *s = ss.s;
+	size_t off = (size_t)-1;
+
+	check_refs(ck, &ss);
+	for (size_t i = 0; i < ss.n; i++) {
+		const double seg[4] = { s[i].x0, s[i].y0, s[i].x1, s[i].y1 };
+
+		// A text statement's on the board, off its cutouts: once.
+		if (s[i].part >= ck->b.npart && s[i].part != off &&
+		    pcb_edge_dist(&ck->b, 0, seg, s[i].w / 2, NULL) < 0) {
+			char msg[MSG_LEN];
+
+			(void)snprintf(msg, sizeof msg,
+				       "the silkscreen of %s is off the board "
+				       "or over a cutout",
+				       silk_of(ck, &s[i]));
+			fault(ck, msg, s[i].x0, s[i].y0);
+			off = s[i].part;
 		}
-		// The edge: the outline and the cutouts, but for the parts
-		// it excepts.
-		if ((a->layer >= 0 || a->r > 0) &&
-		    !(a->part >= 0 && is_except(B.part[a->part].name))) {
-			double at[2];
-			double d = pcb_edge_dist(
-				&B, a->rect,
-				(const double[4]){ a->ax, a->ay, a->bx, a->by },
-				a->rect ? 0 : a->r, at);
-
-			if (d < -1e-6) {
-				snprintf(msg, sizeof msg,
-					 "%s runs past the edge", a->what);
-				fault(msg, at[0], at[1]);
-			} else if (d < B.edge - 1e-6) {
-				snprintf(msg, sizeof msg,
-					 "%s is nearer the edge than %.3f mm",
-					 a->what, B.edge);
-				fault(msg, at[0], at[1]);
+		if (silk_over_pad(ck, &ss, i)) {
+			while (i + 1 < ss.n && s[i + 1].part == s[i].part) {
+				i++;
 			}
 		}
 	}
-	// Each net one piece, and no piece of two nets; a net that waits
-	// whole for parts not placed (of no plane) may be in pieces.
-	for (size_t k = 0; k < B.nnet; k++) {
+	free(ss.s);
+}
+
+// Joins pieces i and j of copper that touch; tells them if they are of
+// two nets and nearer than the clearance.
+static void pair_gap(struct check *ck, size_t i, size_t j)
+{
+	const struct item *a = &ck->items[i];
+	const struct item *b = &ck->items[j];
+	double g = NAN;
+
+	if (!same_layer(a, b)) {
+		return;
+	}
+	g = gap(a, b);
+	if (g <= TOUCH) {
+		ck->up[find(ck, i)] = find(ck, j);
+	} else if (a->net != b->net && g < ck->b.clearance - SLACK) {
+		char msg[MSG_LEN];
+
+		(void)snprintf(msg, sizeof msg, "%s and %s are %.3f mm apart",
+			       a->what, b->what, g);
+		fault(ck, msg, (a->ax + b->ax) / 2, (a->ay + b->ay) / 2);
+	}
+}
+
+// Joins piece i of copper to the planes it joins (their nodes from
+// base): of its net, through a hole or a via, or a pad or track on the
+// plane's layer; but a pad the plane relieves joins it by its neck
+// alone.
+static void join_planes(struct check *ck, size_t i, size_t base)
+{
+	const struct item *a = &ck->items[i];
+
+	for (size_t l = 0; l < ck->b.nlayer; l++) {
+		const struct pcb_layer *ly = &ck->b.layer[l];
+
+		if (ly->kind == LAYER_PLANE && ly->net && a->net >= 0 &&
+		    !strcmp(ck->b.net[a->net].name, ly->net) &&
+		    (a->layer < 0 || a->layer == (int)l) &&
+		    !(a->part >= 0 &&
+		      pcb_relieved(&ck->b, (size_t)a->part, (size_t)a->pad))) {
+			ck->up[find(ck, i)] = find(ck, base + l);
+		}
+	}
+}
+
+// Piece a of copper against the edge: the outline and the cutouts, but
+// for the parts it excepts.
+static void edge_gap(struct check *ck, const struct item *a)
+{
+	const double seg[4] = { a->ax, a->ay, a->bx, a->by };
+	char msg[MSG_LEN];
+	double at[2];
+	double d = NAN;
+
+	if ((a->layer < 0 && !(a->r > 0)) ||
+	    (a->part >= 0 && is_except(ck, ck->b.part[a->part].name))) {
+		return;
+	}
+	d = pcb_edge_dist(&ck->b, a->rect, seg, a->rect ? 0 : a->r, at);
+	if (d < -SLACK) {
+		(void)snprintf(msg, sizeof msg, "%s runs past the edge",
+			       a->what);
+		fault(ck, msg, at[0], at[1]);
+	} else if (d < ck->b.edge - SLACK) {
+		(void)snprintf(msg, sizeof msg,
+			       "%s is nearer the edge than %.3f mm", a->what,
+			       ck->b.edge);
+		fault(ck, msg, at[0], at[1]);
+	}
+}
+
+// Each net one piece; a net that waits whole for parts not placed (of no
+// plane) may be in pieces.
+static void check_pieces(struct check *ck)
+{
+	for (size_t k = 0; k < ck->b.nnet; k++) {
 		size_t root = (size_t)-1;
 
-		if (B.net[k].waits && B.net[k].plane < 0) {
+		if (ck->b.net[k].waits && ck->b.net[k].plane < 0) {
 			continue;
 		}
-		for (size_t i = 0; i < nitems; i++) {
-			if (items[i].net != (int)k ||
-			    items[i].rect + (items[i].r > 0) == 0) {
+		for (size_t i = 0; i < ck->nitems; i++) {
+			const struct item *it = &ck->items[i];
+
+			if (it->net != (int)k || it->rect + (it->r > 0) == 0) {
 				continue;
 			}
 			if (root == (size_t)-1) {
-				root = find(i);
-			} else if (find(i) != root) {
-				snprintf(msg, sizeof msg,
-					 "net %s: %s is not joined to the rest",
-					 B.net[k].name, items[i].what);
-				fault(msg, items[i].ax, items[i].ay);
+				root = find(ck, i);
+			} else if (find(ck, i) != root) {
+				char msg[MSG_LEN];
+
+				(void)snprintf(msg, sizeof msg,
+					       "net %s: %s is not joined to "
+					       "the rest",
+					       ck->b.net[k].name, it->what);
+				fault(ck, msg, it->ax, it->ay);
 				break;
 			}
 		}
 	}
-	for (size_t i = 0; i < nitems; i++) {
-		for (size_t j = i + 1; j < nitems; j++) {
-			if (items[i].net != items[j].net && items[i].net >= 0 &&
-			    items[j].net >= 0 && find(i) == find(j)) {
-				snprintf(msg, sizeof msg,
-					 "nets %s and %s are shorted",
-					 B.net[items[i].net].name,
-					 B.net[items[j].net].name);
-				fault(msg, items[i].ax, items[i].ay);
+}
+
+// No piece of two nets: the first short told.
+static void check_shorts(struct check *ck)
+{
+	for (size_t i = 0; i < ck->nitems; i++) {
+		const struct item *a = &ck->items[i];
+
+		for (size_t j = i + 1; j < ck->nitems; j++) {
+			const struct item *b = &ck->items[j];
+
+			if (a->net != b->net && a->net >= 0 && b->net >= 0 &&
+			    find(ck, i) == find(ck, j)) {
+				char msg[MSG_LEN];
+
+				(void)snprintf(msg, sizeof msg,
+					       "nets %s and %s are shorted",
+					       ck->b.net[a->net].name,
+					       ck->b.net[b->net].name);
+				fault(ck, msg, a->ax, a->ay);
 				return;
 			}
 		}
 	}
 }
 
+static void check_copper(struct check *ck)
+{
+	size_t nplane = ck->b.nlayer;
+	size_t base = ck->nitems;
+
+	// The items, then one node for each plane.
+	ck->up = pcb_alloc((ck->nitems + nplane + 1) * sizeof *ck->up);
+	for (size_t i = 0; i < ck->nitems + nplane; i++) {
+		ck->up[i] = i;
+	}
+	for (size_t i = 0; i < ck->nitems; i++) {
+		for (size_t j = i + 1; j < ck->nitems; j++) {
+			pair_gap(ck, i, j);
+		}
+		join_planes(ck, i, base);
+		edge_gap(ck, &ck->items[i]);
+	}
+	check_pieces(ck);
+	check_shorts(ck);
+}
+
 // Why a part's lock is stale, from its words now (by) and the lock's
 // (was): "nets PAD NET ... by STATEMENT".
-static void stale_part(const struct pcb_part *p, const char *by,
-		       const char *was)
+static void stale_part(struct check *ck, const struct pcb_part *p,
+		       const char *by, const char *was)
 {
-	const char *a = strstr(by, " by "), *b = strstr(was, " by ");
-	char *x, *y, *sx = NULL, *sy = NULL;
+	const char *a = strstr(by, " by ");
+	const char *b = strstr(was, " by ");
+	char *x = NULL;
+	char *y = NULL;
+	char *sx = NULL;
+	char *sy = NULL;
 
-	if (!a || !b || strcmp(a, b)) {
+	if (!a || !b || strcmp(a, b) != 0) {
 		printf("%s: %s (%s) is placed by a statement since changed\n",
-		       B.file, p->name, pcb_ref(p));
-		faults = 1;
+		       ck->b.file, p->name, pcb_ref(p));
+		ck->faults = 1;
 		return;
 	}
 	x = pcb_strdup(by);
@@ -557,14 +668,14 @@ static void stale_part(const struct pcb_part *p, const char *by,
 		  *v = strtok_r(y + 4, " ", &sy);
 	     u && v;
 	     u = strtok_r(NULL, " ", &sx), v = strtok_r(NULL, " ", &sy)) {
-		char *nu = strtok_r(NULL, " ", &sx),
-		     *nv = strtok_r(NULL, " ", &sy);
+		char *nu = strtok_r(NULL, " ", &sx);
+		char *nv = strtok_r(NULL, " ", &sy);
 
-		if (nu && nv && strcmp(nu, nv)) {
+		if (nu && nv && strcmp(nu, nv) != 0) {
 			printf("%s: %s (%s) was placed with its pad %s on %s, "
 			       "now on %s\n",
-			       B.file, p->name, pcb_ref(p), u, nv, nu);
-			faults = 1;
+			       ck->b.file, p->name, pcb_ref(p), u, nv, nu);
+			ck->faults = 1;
 		}
 	}
 	free(x);
@@ -573,26 +684,27 @@ static void stale_part(const struct pcb_part *p, const char *by,
 
 // Each net's copper made by its statements now, for its pads where they
 // stand.
-static void check_nets(void)
+static void check_nets(struct check *ck)
 {
-	for (size_t k = 0; k < B.nnet; k++) {
-		char *w, **pads;
-		size_t n;
+	for (size_t k = 0; k < ck->b.nnet; k++) {
+		char *w = NULL;
+		char **pads = NULL;
+		size_t n = 0;
 
-		if (!B.netby[k]) {
+		if (!ck->b.netby[k]) {
 			continue;
 		}
-		w = pcb_net_words(&B, k);
-		if (strcmp(w, B.netby[k])) {
+		w = pcb_net_words(&ck->b, k);
+		if (strcmp(w, ck->b.netby[k]) != 0) {
 			printf("%s: net %s: its copper was made by statements "
 			       "since changed\n",
-			       B.file, B.net[k].name);
-			faults = 1;
+			       ck->b.file, ck->b.net[k].name);
+			ck->faults = 1;
 		}
 		free(w);
-		pads = pcb_net_pads(&B, k, &n);
-		for (size_t i = 0; i < B.nnetpad[k]; i++) {
-			const char *was = B.netpad[k][i];
+		pads = pcb_net_pads(&ck->b, k, &n);
+		for (size_t i = 0; i < ck->b.nnetpad[k]; i++) {
+			const char *was = ck->b.netpad[k][i];
 			size_t len = strcspn(was, " ");
 			int same = 0;
 
@@ -604,54 +716,57 @@ static void check_nets(void)
 				    pads[j][len] == ' ') {
 					printf("%s: net %s: its copper was made "
 					       "for %.*s at%s, now at%s\n",
-					       B.file, B.net[k].name, (int)len,
-					       was, was + len, pads[j] + len);
+					       ck->b.file, ck->b.net[k].name,
+					       (int)len, was, was + len,
+					       pads[j] + len);
 					same = 1;
-					faults = 1;
+					ck->faults = 1;
 				}
 			}
 			if (!same) {
 				printf("%s: net %s: its copper was made for %s, "
 				       "no pad of it now\n",
-				       B.file, B.net[k].name, was);
-				faults = 1;
+				       ck->b.file, ck->b.net[k].name, was);
+				ck->faults = 1;
 			}
 		}
 		for (size_t j = 0; j < n; j++) {
 			free(pads[j]);
 		}
-		free(pads);
+		free((void *)pads);
 	}
 }
 
 // The via gap: each via's ring that far from the edge of every pad of
 // its net that is soldered, joined by a neck track, not standing on or
 // by the pad; a via may stand in a contact pad.
-static void check_viagap(void)
+static void check_viagap(struct check *ck)
 {
-	char msg[2048];
+	char msg[MSG_LEN];
 
-	for (size_t i = 0; i < nitems; i++) {
-		const struct item *v = &items[i];
+	for (size_t i = 0; i < ck->nitems; i++) {
+		const struct item *v = &ck->items[i];
 
-		for (size_t j = 0; v->via && j < nitems; j++) {
-			const struct item *p = &items[j];
-			double g;
+		for (size_t j = 0; v->via && j < ck->nitems; j++) {
+			const struct item *p = &ck->items[j];
+			double g = NAN;
 
 			if (p->part < 0 || p->net != v->net ||
-			    !pcb_soldered(&B.part[p->part], (size_t)p->pad)) {
+			    !pcb_soldered(&ck->b.part[p->part],
+					  (size_t)p->pad)) {
 				continue;
 			}
 			g = gap(v, p);
-			if (g < B.viagap - 1e-6) {
-				snprintf(msg, sizeof msg,
-					 "a via of %s is %.3f mm from pad %s, "
-					 "under the via gap %.3f",
-					 B.net[v->net].name, g,
-					 pad_name((size_t)p->part,
-						  (size_t)p->pad),
-					 B.viagap);
-				fault(msg, v->ax, v->ay);
+			if (g < ck->b.viagap - SLACK) {
+				(void)snprintf(
+					msg, sizeof msg,
+					"a via of %s is %.3f mm from pad %s, "
+					"under the via gap %.3f",
+					ck->b.net[v->net].name, g,
+					pad_name(ck, (size_t)p->part,
+						 (size_t)p->pad),
+					ck->b.viagap);
+				fault(ck, msg, v->ax, v->ay);
 			}
 		}
 	}
@@ -667,72 +782,85 @@ static double box_gap(const double *a, const double *b)
 // The web of solder mask: between two openings of a side, of two nets
 // (where none would be a bridge) or of one net but apart (a sliver);
 // and between an opening and a via, which the mask covers.
-static void check_maskweb(void)
+// The mask web between the opening a of pad at, on a side, and those of
+// the pads after it.
+static void pad_webs(struct check *ck, int side, struct pcb_end at,
+		     const double a[4])
 {
-	char msg[2048];
+	int na = pcb_net_of(&ck->b, at.part, at.pad);
 
+	for (size_t r = at.part; r < ck->b.npart; r++) {
+		const struct pcb_part *pr = &ck->b.part[r];
+
+		for (size_t m = r == at.part ? at.pad + 1 : 0;
+		     pr->placed && pr->fp && m < pr->fp->npad; m++) {
+			struct pcb_end to = { r, m };
+			char msg[MSG_LEN];
+			double c[4];
+			double g = NAN;
+			int nc = pcb_net_of(&ck->b, r, m);
+
+			if (!pcb_opening(&ck->b, to, side, c)) {
+				continue;
+			}
+			g = box_gap(a, c);
+			if (g >= ck->b.maskweb - SLACK ||
+			    (na == nc && na >= 0 && g <= TOUCH)) {
+				continue;
+			}
+			(void)snprintf(msg, sizeof msg,
+				       "the mask web between pad %s and pad %s "
+				       "is %.3f mm, under %.3f",
+				       pad_name(ck, at.part, at.pad),
+				       pad_name(ck, r, m), g, ck->b.maskweb);
+			fault(ck, msg, (a[0] + c[2]) / 2, (a[1] + c[3]) / 2);
+		}
+	}
+}
+
+// The mask web between the opening a of pad at, soldered, and the vias,
+// which are tented.
+static void via_webs(struct check *ck, struct pcb_end at, const double a[4])
+{
+	for (size_t i = 0;
+	     pcb_soldered(&ck->b.part[at.part], at.pad) && i < ck->b.nvia;
+	     i++) {
+		const struct pcb_via *v = &ck->b.via[i];
+		const double vb[4] = { v->x - (v->dia / 2), v->y - (v->dia / 2),
+				       v->x + (v->dia / 2),
+				       v->y + (v->dia / 2) };
+		double g = box_gap(a, vb);
+
+		if (g < ck->b.maskweb - SLACK) {
+			char msg[MSG_LEN];
+
+			(void)snprintf(msg, sizeof msg,
+				       "the mask web between pad %s and a via "
+				       "of %s is %.3f mm, under %.3f",
+				       pad_name(ck, at.part, at.pad),
+				       ck->b.net[v->net].name, g,
+				       ck->b.maskweb);
+			fault(ck, msg, v->x, v->y);
+		}
+	}
+}
+
+static void check_maskweb(struct check *ck)
+{
 	for (int side = 0; side < 2; side++) {
-		for (size_t q = 0; q < B.npart; q++) {
-			for (size_t k = 0; B.part[q].placed && B.part[q].fp &&
-					   k < B.part[q].fp->npad;
-			     k++) {
-				double a[4];
-				int na = pcb_net_of(&B, q, k);
+		for (size_t q = 0; q < ck->b.npart; q++) {
+			const struct pcb_part *p = &ck->b.part[q];
 
-				if (!pcb_opening(&B, q, k, side, a)) {
+			for (size_t k = 0;
+			     p->placed && p->fp && k < p->fp->npad; k++) {
+				struct pcb_end at = { q, k };
+				double a[4];
+
+				if (!pcb_opening(&ck->b, at, side, a)) {
 					continue;
 				}
-				for (size_t r = q; r < B.npart; r++) {
-					for (size_t m = r == q ? k + 1 : 0;
-					     B.part[r].placed && B.part[r].fp &&
-					     m < B.part[r].fp->npad;
-					     m++) {
-						double c[4], g;
-						int nc = pcb_net_of(&B, r, m);
-
-						if (!pcb_opening(&B, r, m, side,
-								 c)) {
-							continue;
-						}
-						g = box_gap(a, c);
-						if (g >= B.maskweb - 1e-6 ||
-						    (na == nc && na >= 0 &&
-						     g <= 1e-9)) {
-							continue;
-						}
-						snprintf(msg, sizeof msg,
-							 "the mask web between "
-							 "pad %s and pad %s is "
-							 "%.3f mm, under %.3f",
-							 pad_name(q, k),
-							 pad_name(r, m), g,
-							 B.maskweb);
-						fault(msg, (a[0] + c[2]) / 2,
-						      (a[1] + c[3]) / 2);
-					}
-				}
-				for (size_t i = 0;
-				     pcb_soldered(&B.part[q], k) && i < B.nvia;
-				     i++) {
-					const struct pcb_via *v = &B.via[i];
-					double vb[4] = { v->x - v->dia / 2,
-							 v->y - v->dia / 2,
-							 v->x + v->dia / 2,
-							 v->y + v->dia / 2 };
-					double g = box_gap(a, vb);
-
-					if (g < B.maskweb - 1e-6) {
-						snprintf(msg, sizeof msg,
-							 "the mask web between "
-							 "pad %s and a via of "
-							 "%s is %.3f mm, under "
-							 "%.3f",
-							 pad_name(q, k),
-							 B.net[v->net].name, g,
-							 B.maskweb);
-						fault(msg, v->x, v->y);
-					}
-				}
+				pad_webs(ck, side, at, a);
+				via_webs(ck, at, a);
 			}
 		}
 	}
@@ -741,102 +869,134 @@ static void check_maskweb(void)
 // The heat of soldering: a small part of two pins with one pad on a
 // plane's net and the other not must join the plane by a neck no wider
 // than a track, and no via by it, so both pads heat alike.
-static void check_thermal(void)
+// Pad at of a small part of two pins, on the plane net n, whose other
+// pad is on no plane: no via by it, and no track wider than a neck.
+static void thermal_pad(struct check *ck, struct pcb_end at, int n)
 {
-	char msg[2048];
+	const struct item *pad = NULL;
 
-	for (size_t q = 0; q < B.npart; q++) {
-		const struct pcb_part *p = &B.part[q];
-		int n0, n1;
+	for (size_t i = 0; i < ck->nitems && !pad; i++) {
+		if (ck->items[i].part == (long)at.part &&
+		    ck->items[i].pad == (long)at.pad) {
+			pad = &ck->items[i];
+		}
+	}
+	for (size_t i = 0; pad && i < ck->nitems; i++) {
+		const struct item *t = &ck->items[i];
+		const char *why = NULL;
+		double g = NAN;
 
-		if (!p->placed || !pcb_small_two_pin(p)) {
+		if (t->net != n || t->part >= 0) {
 			continue;
 		}
-		n0 = pcb_net_of(&B, q, 0);
-		n1 = pcb_net_of(&B, q, 1);
-		for (size_t k = 0; k < 2; k++) {
-			int n = k ? n1 : n0, o = k ? n0 : n1;
-			const struct item *pad = NULL;
+		g = gap(t, pad);
+		if (t->via && g < ck->b.viagap - SLACK) {
+			why = "a via by it";
+		} else if (!t->via && same_layer(t, pad) && g <= TOUCH &&
+			   2 * t->r > ck->b.track + SLACK) {
+			why = "a track wider than a neck";
+		}
+		if (why) {
+			char msg[MSG_LEN];
 
-			if (n < 0 || B.net[n].plane < 0 ||
-			    (o >= 0 && B.net[o].plane >= 0)) {
-				continue;
-			}
-			for (size_t i = 0; i < nitems && !pad; i++) {
-				if (items[i].part == (long)q &&
-				    items[i].pad == (long)k) {
-					pad = &items[i];
-				}
-			}
-			for (size_t i = 0; pad && i < nitems; i++) {
-				const struct item *t = &items[i];
-				const char *why = NULL;
-				double g;
-
-				if (t->net != n || t->part >= 0) {
-					continue;
-				}
-				g = gap(t, pad);
-				if (t->via && g < B.viagap - 1e-6) {
-					why = "a via by it";
-				} else if (!t->via && same_layer(t, pad) &&
-					   g <= 1e-9 &&
-					   2 * t->r > B.track + 1e-6) {
-					why = "a track wider than a neck";
-				}
-				if (why) {
-					snprintf(
-						msg, sizeof msg,
-						"thermal imbalance: pad %s joins "
-						"the plane %s with %s, but pad "
-						"%s by a track",
-						pad_name(q, k), B.net[n].name,
-						why, pad_name(q, 1 - k));
-					fault(msg, pad->ax, pad->ay);
-				}
-			}
+			(void)snprintf(
+				msg, sizeof msg,
+				"thermal imbalance: pad %s joins the "
+				"plane %s with %s, but pad %s by a track",
+				pad_name(ck, at.part, at.pad),
+				ck->b.net[n].name, why,
+				pad_name(ck, at.part, 1 - at.pad));
+			fault(ck, msg, pad->ax, pad->ay);
 		}
 	}
 }
 
-// Whether (x, y) is on the copper between the two last pins of a fork
-// statement of net n (fork NET PIN to PIN PIN), on its layer: where the
-// fork's first pin is fed.
-static int on_fork(int n, int layer, double x, double y)
+static void check_thermal(struct check *ck)
 {
-	for (size_t i = 0; i < B.nstmt; i++) {
-		const struct pcb_stmt *st = &B.stmt[i];
-		size_t q[2], p[2];
-		char *ka, *kb;
-		int on = 0;
+	for (size_t q = 0; q < ck->b.npart; q++) {
+		const struct pcb_part *p = &ck->b.part[q];
+		int n0 = 0;
+		int n1 = 0;
 
-		if (strcmp(st->w[0], "fork") || st->n != 6 ||
-		    strcmp(st->w[1], B.net[n].name) ||
-		    !pcb_pin(&B, st->w[4], &q[0], &p[0]) ||
-		    !pcb_pin(&B, st->w[5], &q[1], &p[1])) {
+		if (!p->placed || !pcb_small_two_pin(p)) {
 			continue;
 		}
-		ka = pcb_pad_key(&B, q[0], p[0]);
-		kb = pcb_pad_key(&B, q[1], p[1]);
-		for (size_t j = 0; !on && j < B.ntrack; j++) {
-			const struct pcb_track *t = &B.track_[j];
-			const struct pcb_link *l =
-				t->link >= 0 ? &B.link[t->link] : NULL;
+		n0 = pcb_net_of(&ck->b, q, 0);
+		n1 = pcb_net_of(&ck->b, q, 1);
+		for (size_t k = 0; k < 2; k++) {
+			int n = k ? n1 : n0;
+			int o = k ? n0 : n1;
+			struct pcb_end at = { q, k };
 
-			if (t->net != n || t->layer != layer || !l ||
-			    !((!strcmp(l->a, ka) && !strcmp(l->b, kb)) ||
-			      (!strcmp(l->a, kb) && !strcmp(l->b, ka)))) {
+			if (n < 0 || ck->b.net[n].plane < 0 ||
+			    (o >= 0 && ck->b.net[o].plane >= 0)) {
 				continue;
 			}
-			for (size_t e = 1; !on && e < t->n; e++) {
-				on = pcb_seg_dist(x, y, t->xy[2 * e - 2],
-						  t->xy[2 * e - 1],
-						  t->xy[2 * e],
-						  t->xy[2 * e + 1]) < 1e-3;
+			thermal_pad(ck, at, n);
+		}
+	}
+}
+
+// An end of a track: its net, its layer and its point.
+struct track_end {
+	int net;
+	int layer;
+	struct pcb_pt p;
+};
+
+// Whether the end te is on the copper of net n's connection between the
+// pads of keys k[0] and k[1], on its layer.
+static int on_link(const struct pcb *b, const struct track_end *te,
+		   char *const k[2])
+{
+	for (size_t j = 0; j < b->ntrack; j++) {
+		const struct pcb_track *t = &b->track_[j];
+		const struct pcb_link *l = t->link >= 0 ? &b->link[t->link] :
+							  NULL;
+
+		if (t->net != te->net || t->layer != te->layer || !l ||
+		    !((!strcmp(l->a, k[0]) && !strcmp(l->b, k[1])) ||
+		      (!strcmp(l->a, k[1]) && !strcmp(l->b, k[0])))) {
+			continue;
+		}
+		for (size_t e = 1; e < t->n; e++) {
+			struct pcb_seg s = {
+				{ t->xy[(2 * e) - 2], t->xy[(2 * e) - 1] },
+				{ t->xy[2 * e], t->xy[(2 * e) + 1] }
+			};
+
+			if (pcb_seg_dist(te->p, s) < ON) {
+				return 1;
 			}
 		}
-		free(ka);
-		free(kb);
+	}
+	return 0;
+}
+
+// Whether the end te is on the copper between the two last pins of a
+// fork statement of its net (fork NET PIN to PIN PIN), on its layer:
+// where the fork's first pin is fed.
+static int on_fork(const struct check *ck, const struct track_end *te)
+{
+	const struct pcb *b = &ck->b;
+
+	for (size_t i = 0; i < b->nstmt; i++) {
+		const struct pcb_stmt *st = &b->stmt[i];
+		struct pcb_end p[2] = { { 0, 0 }, { 0, 0 } };
+		char *k[2] = { NULL, NULL };
+		int on = 0;
+
+		if (strcmp(st->w[0], "fork") != 0 || st->n != FORK_WORDS ||
+		    strcmp(st->w[1], b->net[te->net].name) != 0 ||
+		    !pcb_pin(b, st->w[FORK_WORDS - 2], &p[0]) ||
+		    !pcb_pin(b, st->w[FORK_WORDS - 1], &p[1])) {
+			continue;
+		}
+		k[0] = pcb_pad_key(b, p[0].part, p[0].pad);
+		k[1] = pcb_pad_key(b, p[1].part, p[1].pad);
+		on = on_link(b, te, k);
+		free(k[0]);
+		free(k[1]);
 		if (on) {
 			return 1;
 		}
@@ -844,117 +1004,261 @@ static int on_fork(int n, int layer, double x, double y)
 	return 0;
 }
 
-// Each track ends at the center of a pad of its net on its layer (of a
-// long pad, on the line between its ends), or at a via of its net, or in its own plane on the plane's layer (a neck),
-// or on the copper between the two last pins of a fork of its net: a
-// route never ends on the side of a pad, or in the middle of another
-// track but a fork's.
-static void check_ends(void)
+// Whether the end te is at the center of a pad of its net on its layer,
+// or of a long pad on the line between its ends.
+static int on_pad(const struct pcb *b, const struct track_end *te)
 {
-	char msg[2048];
+	for (size_t q = 0; q < b->npart; q++) {
+		const struct pcb_part *pt = &b->part[q];
 
-	for (size_t i = 0; i < B.ntrack; i++) {
-		const struct pcb_track *t = &B.track_[i];
+		for (size_t k = 0; pt->placed && pt->fp && k < pt->fp->npad;
+		     k++) {
+			struct pcb_spot s;
+			double p[2][2];
+			int np = 0;
 
-		for (size_t e = 0; e < 2 && t->n > 0; e++) {
-			double x = t->xy[e ? 2 * t->n - 2 : 0];
-			double y = t->xy[e ? 2 * t->n - 1 : 1];
-			int ok = B.layer[t->layer].kind == LAYER_PLANE &&
-				 B.net[t->net].plane == t->layer;
-
-			for (size_t v = 0; !ok && v < B.nvia; v++) {
-				ok = B.via[v].net == t->net &&
-				     hypot(B.via[v].x - x, B.via[v].y - y) <
-					     1e-3;
+			pcb_spot(b, pt, k, &s);
+			if (pcb_net_of(b, q, k) != te->net ||
+			    (s.layer >= 0 && s.layer != te->layer)) {
+				continue;
 			}
-			for (size_t q = 0; !ok && q < B.npart; q++) {
-				for (size_t k = 0;
-				     !ok && B.part[q].placed && B.part[q].fp &&
-				     k < B.part[q].fp->npad;
-				     k++) {
-					struct pcb_spot s;
-					double p[2][2];
-					int np;
+			np = pcb_pad_ends(&s, p);
+			if (hypot(s.x - te->p.x, s.y - te->p.y) < ON) {
+				return 1;
+			}
+			// A long pad: any point of the line between its ends.
+			if (np == 2) {
+				struct pcb_seg line = { { p[0][0], p[0][1] },
+							{ p[1][0], p[1][1] } };
 
-					pcb_spot(&B, &B.part[q], k, &s);
-					np = pcb_pad_ends(&s, p);
-					ok = pcb_net_of(&B, q, k) == t->net &&
-					     (s.layer < 0 ||
-					      s.layer == t->layer) &&
-					     hypot(s.x - x, s.y - y) < 1e-3;
-					// A long pad: any point of the line
-					// between its ends.
-					if (!ok && np == 2 &&
-					    pcb_net_of(&B, q, k) == t->net &&
-					    (s.layer < 0 ||
-					     s.layer == t->layer)) {
-						ok = pcb_seg_dist(
-							     x, y, p[0][0],
-							     p[0][1], p[1][0],
-							     p[1][1]) < 1e-3;
-					}
+				if (pcb_seg_dist(te->p, line) < ON) {
+					return 1;
 				}
 			}
-			ok = ok || on_fork(t->net, t->layer, x, y);
-			if (!ok) {
-				snprintf(
-					msg, sizeof msg,
-					"a track of %s ends off a pad's center "
-					"or line and off a via",
-					B.net[t->net].name);
-				fault(msg, x, y);
+		}
+	}
+	return 0;
+}
+
+// Whether the end te of a track ends where a route may: in its own plane
+// on the plane's layer (a neck), at a via of its net, on a pad
+// (on_pad), or on a fork (on_fork).
+static int end_ok(const struct check *ck, const struct track_end *te)
+{
+	const struct pcb *b = &ck->b;
+
+	if (b->layer[te->layer].kind == LAYER_PLANE &&
+	    b->net[te->net].plane == te->layer) {
+		return 1;
+	}
+	for (size_t v = 0; v < b->nvia; v++) {
+		if (b->via[v].net == te->net &&
+		    hypot(b->via[v].x - te->p.x, b->via[v].y - te->p.y) < ON) {
+			return 1;
+		}
+	}
+	return on_pad(b, te) || on_fork(ck, te);
+}
+
+// Each track ends at the center of a pad of its net on its layer (of a
+// long pad, on the line between its ends), or at a via of its net, or
+// in its own plane on the plane's layer (a neck), or on the copper
+// between the two last pins of a fork of its net: a route never ends on
+// the side of a pad, or in the middle of another track but a fork's.
+static void check_ends(struct check *ck)
+{
+	for (size_t i = 0; i < ck->b.ntrack; i++) {
+		const struct pcb_track *t = &ck->b.track_[i];
+
+		for (size_t e = 0; e < 2 && t->n > 0; e++) {
+			const double *xy = t->xy + (e ? (2 * t->n) - 2 : 0);
+			struct track_end te = { t->net,
+						t->layer,
+						{ xy[0], xy[1] } };
+
+			if (!end_ok(ck, &te)) {
+				char msg[MSG_LEN];
+
+				(void)snprintf(msg, sizeof msg,
+					       "a track of %s ends off a pad's "
+					       "center or line and off a via",
+					       ck->b.net[t->net].name);
+				fault(ck, msg, xy[0], xy[1]);
 			}
 		}
 	}
 }
 
-// The item of pad k of part q, or nitems.
-static size_t pad_item(size_t q, size_t k)
+// The item of pad at, or nitems.
+static size_t pad_item(const struct check *ck, struct pcb_end at)
 {
-	for (size_t i = 0; i < nitems; i++) {
-		if (items[i].part == (long)q && items[i].pad == (long)k) {
+	for (size_t i = 0; i < ck->nitems; i++) {
+		if (ck->items[i].part == (long)at.part &&
+		    ck->items[i].pad == (long)at.pad) {
 			return i;
 		}
 	}
-	return nitems;
+	return ck->nitems;
 }
 
-// The pad of net n that key (PART.PAD) names, to *q and *k; 0 if none.
-static int link_pad(int n, const char *key, long *q, long *k)
+// The pad of net n that key (PART.PAD) names, to *at; 0 if none.
+static int link_pad(const struct check *ck, int n, const char *key,
+		    struct pcb_end *at)
 {
-	for (size_t j = 0; j < B.net[n].nend; j++) {
-		const struct pcb_end *e = &B.net[n].end[j];
-		char *s = pcb_pad_key(&B, e->part, e->pad);
+	for (size_t j = 0; j < ck->b.net[n].nend; j++) {
+		const struct pcb_end *e = &ck->b.net[n].end[j];
+		char *s = pcb_pad_key(&ck->b, e->part, e->pad);
 		int same = !strcmp(s, key);
 
 		free(s);
 		if (same) {
-			*q = (long)e->part;
-			*k = (long)e->pad;
+			*at = *e;
 			return 1;
 		}
 	}
 	return 0;
 }
 
-// Whether a statement width PIN PIN W names pads (qa, ka) and (qb, kb).
-static int stated(long qa, long ka, long qb, long kb)
+// Whether two pads are the same.
+static int same_pad(struct pcb_end a, struct pcb_end b)
 {
-	for (size_t s = 0; s < B.nstmt; s++) {
-		const struct pcb_stmt *st = &B.stmt[s];
-		size_t q[2], p[2];
+	return a.part == b.part && a.pad == b.pad;
+}
+
+// Whether a statement width PIN PIN W names the pads ab, either way.
+static int stated(const struct check *ck, const struct pcb_end ab[2])
+{
+	for (size_t s = 0; s < ck->b.nstmt; s++) {
+		const struct pcb_stmt *st = &ck->b.stmt[s];
+		struct pcb_end p[2] = { { 0, 0 }, { 0, 0 } };
 
 		if (!strcmp(st->w[0], "width") && st->n == 4 &&
-		    pcb_pin(&B, st->w[1], &q[0], &p[0]) &&
-		    pcb_pin(&B, st->w[2], &q[1], &p[1]) &&
-		    (((long)q[0] == qa && (long)p[0] == ka &&
-		      (long)q[1] == qb && (long)p[1] == kb) ||
-		     ((long)q[0] == qb && (long)p[0] == kb &&
-		      (long)q[1] == qa && (long)p[1] == ka))) {
+		    pcb_pin(&ck->b, st->w[1], &p[0]) &&
+		    pcb_pin(&ck->b, st->w[2], &p[1]) &&
+		    ((same_pad(p[0], ab[0]) && same_pad(p[1], ab[1])) ||
+		     (same_pad(p[0], ab[1]) && same_pad(p[1], ab[0])))) {
 			return 1;
 		}
 	}
 	return 0;
+}
+
+// Room for a search of the copper: of each item, the one it was reached
+// from, and the queue.
+struct search {
+	size_t *from;
+	size_t *queue;
+};
+
+// Searches the copper from item ab[0] to item ab[1] by the fewest
+// pieces, of its net, each touching the one before, into sr; returns
+// whether it reached ab[1].
+static int search_path(const struct check *ck, const size_t ab[2],
+		       struct search *sr)
+{
+	size_t a = ab[0];
+	size_t head = 0;
+	size_t tail = 0;
+
+	for (size_t i = 0; i < ck->nitems; i++) {
+		sr->from[i] = ck->nitems;
+	}
+	sr->from[a] = a;
+	sr->queue[tail++] = a;
+	while (head < tail && sr->from[ab[1]] == ck->nitems) {
+		size_t i = sr->queue[head++];
+
+		for (size_t j = 0; j < ck->nitems; j++) {
+			if (sr->from[j] == ck->nitems &&
+			    ck->items[j].net == ck->items[a].net &&
+			    same_layer(&ck->items[i], &ck->items[j]) &&
+			    gap(&ck->items[i], &ck->items[j]) <= TOUCH) {
+				sr->from[j] = i;
+				sr->queue[tail++] = j;
+			}
+		}
+	}
+	return sr->from[ab[1]] != ck->nitems;
+}
+
+// The statement st, width PIN PIN W: the copper from one pin to the
+// other no narrower than W.
+static void width_stmt(struct check *ck, const struct pcb_stmt *st,
+		       struct search *sr)
+{
+	struct pcb_end p[2] = { { 0, 0 }, { 0, 0 } };
+	size_t ab[2] = { 0, 0 };
+	double w = NAN;
+	double least = FAR;
+	double lx = 0;
+	double ly = 0;
+
+	if (strcmp(st->w[0], "width") != 0 || st->n != 4 ||
+	    !pcb_pin(&ck->b, st->w[1], &p[0]) ||
+	    !pcb_pin(&ck->b, st->w[2], &p[1])) {
+		return;
+	}
+	w = strtod(st->w[3], NULL);
+	ab[0] = pad_item(ck, p[0]);
+	ab[1] = pad_item(ck, p[1]);
+	if (ab[0] == ck->nitems || ab[1] == ck->nitems ||
+	    !search_path(ck, ab, sr)) {
+		return; // Not joined: told as such.
+	}
+	for (size_t at = sr->from[ab[1]]; at != ab[0]; at = sr->from[at]) {
+		const struct item *t = &ck->items[at];
+
+		if (t->part < 0 && !t->via && 2 * t->r < least) {
+			least = 2 * t->r;
+			lx = (t->ax + t->bx) / 2;
+			ly = (t->ay + t->by) / 2;
+		}
+	}
+	if (least < w - SLACK) {
+		char msg[LONG_MSG_LEN];
+
+		(void)snprintf(msg, sizeof msg,
+			       "the copper from pad %s to pad %s is %.3f mm "
+			       "wide, narrower than its width %.3f",
+			       pad_name(ck, p[0].part, p[0].pad),
+			       pad_name(ck, p[1].part, p[1].pad), least, w);
+		fault(ck, msg, lx, ly);
+	}
+}
+
+// Track t of a connection of the lock against its width now: one fault
+// a connection, done.
+static void link_width(struct check *ck, const struct pcb_track *t, char *done)
+{
+	const struct pcb_link *l = t->link >= 0 ? &ck->b.link[t->link] : NULL;
+	struct pcb_end ab[2] = { { 0, 0 }, { 0, 0 } };
+	char msg[LONG_MSG_LEN];
+	int neck = 0;
+	double w = NAN;
+
+	if (!l || l->net < 0 || done[t->link] ||
+	    !link_pad(ck, l->net, l->a, &ab[0])) {
+		return;
+	}
+	neck = !strcmp(l->b, "via") || !strcmp(l->b, "plane");
+	if (!neck && !link_pad(ck, l->net, l->b, &ab[1])) {
+		return;
+	}
+	w = neck ? pcb_neck_width(&ck->b, &ck->b.part[ab[0].part], l->net) :
+		   pcb_link_width(&ck->b, l->net, l->a, l->b);
+	if (t->w >= w - SLACK || (!neck && stated(ck, ab))) {
+		return;
+	}
+	done[t->link] = 1;
+	(void)snprintf(msg, sizeof msg,
+		       "net %.200s: the copper from pad %s to %s%s is %.3f "
+		       "mm wide, narrower than its width %.3f",
+		       ck->b.net[l->net].name,
+		       pad_name(ck, ab[0].part, ab[0].pad),
+		       neck ? "its " : "pad ",
+		       neck ? l->b : pad_name(ck, ab[1].part, ab[1].pad), t->w,
+		       w);
+	fault(ck, msg, t->xy[0], t->xy[1]);
 }
 
 // The width of each connection as stated: between the two pins of each
@@ -963,128 +1267,49 @@ static int stated(long qa, long ka, long qb, long kb)
 // of every net, no narrower than its width now (pcb_link_width), a neck
 // to a via or a plane no narrower than pcb_neck_width.  One fault a
 // connection: one of a width PIN PIN W is told by the first.
-static void check_widths(void)
+static void check_widths(struct check *ck)
 {
-	char msg[2800], *done;
-	size_t *from = pcb_alloc((nitems + 1) * sizeof *from);
-	size_t *queue = pcb_alloc((nitems + 1) * sizeof *queue);
+	struct search sr = { NULL, NULL };
+	char *done = NULL;
 
-	for (size_t s = 0; s < B.nstmt; s++) {
-		const struct pcb_stmt *st = &B.stmt[s];
-		size_t q[2], p[2], a, b, head = 0, tail = 0, at;
-		double w, least = 1e300, lx = 0, ly = 0;
-
-		if (strcmp(st->w[0], "width") || st->n != 4 ||
-		    !pcb_pin(&B, st->w[1], &q[0], &p[0]) ||
-		    !pcb_pin(&B, st->w[2], &q[1], &p[1])) {
-			continue;
-		}
-		w = atof(st->w[3]);
-		a = pad_item(q[0], p[0]);
-		b = pad_item(q[1], p[1]);
-		if (a == nitems || b == nitems) {
-			continue;
-		}
-		for (size_t i = 0; i < nitems; i++) {
-			from[i] = nitems;
-		}
-		from[a] = a;
-		queue[tail++] = a;
-		while (head < tail && from[b] == nitems) {
-			size_t i = queue[head++];
-
-			for (size_t j = 0; j < nitems; j++) {
-				if (from[j] == nitems &&
-				    items[j].net == items[a].net &&
-				    same_layer(&items[i], &items[j]) &&
-				    gap(&items[i], &items[j]) <= 1e-9) {
-					from[j] = i;
-					queue[tail++] = j;
-				}
-			}
-		}
-		if (from[b] == nitems) {
-			continue; // Not joined: told as such.
-		}
-		for (at = from[b]; at != a; at = from[at]) {
-			const struct item *t = &items[at];
-
-			if (t->part < 0 && !t->via && 2 * t->r < least) {
-				least = 2 * t->r;
-				lx = (t->ax + t->bx) / 2;
-				ly = (t->ay + t->by) / 2;
-			}
-		}
-		if (least < w - 1e-6) {
-			snprintf(msg, sizeof msg,
-				 "the copper from pad %s to pad %s is %.3f mm "
-				 "wide, narrower than its width %.3f",
-				 pad_name(q[0], p[0]), pad_name(q[1], p[1]),
-				 least, w);
-			fault(msg, lx, ly);
-		}
+	sr.from = pcb_alloc((ck->nitems + 1) * sizeof *sr.from);
+	sr.queue = pcb_alloc((ck->nitems + 1) * sizeof *sr.queue);
+	for (size_t s = 0; s < ck->b.nstmt; s++) {
+		width_stmt(ck, &ck->b.stmt[s], &sr);
 	}
-	free(from);
-	free(queue);
-	done = pcb_alloc(B.nlink + 1);
-	memset(done, 0, B.nlink + 1);
-	for (size_t i = 0; i < B.ntrack; i++) {
-		const struct pcb_track *t = &B.track_[i];
-		const struct pcb_link *l = t->link >= 0 ? &B.link[t->link] :
-							  NULL;
-		int neck;
-		long qa, ka, qb = -1, kb = -1;
-		double w;
-
-		if (!l || l->net < 0 || done[t->link] ||
-		    !link_pad(l->net, l->a, &qa, &ka)) {
-			continue;
-		}
-		neck = !strcmp(l->b, "via") || !strcmp(l->b, "plane");
-		if (!neck && !link_pad(l->net, l->b, &qb, &kb)) {
-			continue;
-		}
-		w = neck ? pcb_neck_width(&B, l->net, (size_t)qa) :
-			   pcb_link_width(&B, l->net, l->a, l->b);
-		if (t->w >= w - 1e-6 || (!neck && stated(qa, ka, qb, kb))) {
-			continue;
-		}
-		done[t->link] = 1;
-		snprintf(msg, sizeof msg,
-			 "net %.200s: the copper from pad %s to %s%s is %.3f "
-			 "mm wide, narrower than its width %.3f",
-			 B.net[l->net].name, pad_name((size_t)qa, (size_t)ka),
-			 neck ? "its " : "pad ",
-			 neck ? l->b : pad_name((size_t)qb, (size_t)kb), t->w,
-			 w);
-		fault(msg, t->xy[0], t->xy[1]);
+	free(sr.from);
+	free(sr.queue);
+	done = pcb_alloc(ck->b.nlink + 1);
+	memset(done, 0, ck->b.nlink + 1);
+	for (size_t i = 0; i < ck->b.ntrack; i++) {
+		link_width(ck, &ck->b.track_[i], done);
 	}
 	free(done);
 }
 
 // Every part placed by a current statement.
-static void check_lock(void)
+static void check_lock(struct check *ck)
 {
-	for (size_t q = 0; q < B.npart; q++) {
-		const struct pcb_part *p = &B.part[q];
+	for (size_t q = 0; q < ck->b.npart; q++) {
+		const struct pcb_part *p = &ck->b.part[q];
 		// The part of a group placed whole that no statement places
 		// is placed by the group's (pcb(5)).
-		const struct pcb_stmt *st = pcb_placed_by(&B, q);
-		char *by = st ? pcb_by(&B, q, st) : NULL;
+		const struct pcb_stmt *st = pcb_placed_by(&ck->b, q);
+		char *by = st ? pcb_by(&ck->b, q, st) : NULL;
 
 		if (!p->fp) {
 			continue;
 		}
 		if (!by) {
 			printf("%s: %s (%s) is placed by no statement\n",
-			       B.file, p->name, pcb_ref(p));
-			faults = 1;
+			       ck->b.file, p->name, pcb_ref(p));
+			ck->faults = 1;
 		} else if (!p->placed) {
-			printf("%s: %s (%s) is not placed\n", B.file, p->name,
-			       pcb_ref(p));
-			faults = 1;
-		} else if (strcmp(by, p->by ? p->by : "")) {
-			stale_part(p, by, p->by ? p->by : "");
+			printf("%s: %s (%s) is not placed\n", ck->b.file,
+			       p->name, pcb_ref(p));
+			ck->faults = 1;
+		} else if (strcmp(by, p->by ? p->by : "") != 0) {
+			stale_part(ck, p, by, p->by ? p->by : "");
 		}
 		free(by);
 	}
@@ -1099,196 +1324,249 @@ struct node {
 	int via;
 };
 
-static struct node *nodes;
-static size_t nnodes;
-static size_t (*edge)[2];
-static double *elen;
-static size_t nedges;
-
-static size_t node_at(double x, double y, long part, long pad, int via)
+static size_t node_at(struct check *ck, double x, double y, long part, long pad,
+		      int via)
 {
-	for (size_t i = 0; i < nnodes; i++) {
-		if (hypot(nodes[i].x - x, nodes[i].y - y) < 1e-6 &&
-		    nodes[i].part == part && nodes[i].pad == pad &&
-		    nodes[i].via == via) {
+	for (size_t i = 0; i < ck->nnodes; i++) {
+		if (hypot(ck->nodes[i].x - x, ck->nodes[i].y - y) < SLACK &&
+		    ck->nodes[i].part == part && ck->nodes[i].pad == pad &&
+		    ck->nodes[i].via == via) {
 			return i;
 		}
 	}
-	nodes = pcb_grow(nodes, nnodes, sizeof *nodes);
-	nodes[nnodes].x = x;
-	nodes[nnodes].y = y;
-	nodes[nnodes].part = part;
-	nodes[nnodes].pad = pad;
-	nodes[nnodes].via = via;
-	return nnodes++;
+	ck->nodes = pcb_grow(ck->nodes, ck->nnodes, sizeof *ck->nodes);
+	ck->nodes[ck->nnodes].x = x;
+	ck->nodes[ck->nnodes].y = y;
+	ck->nodes[ck->nnodes].part = part;
+	ck->nodes[ck->nnodes].pad = pad;
+	ck->nodes[ck->nnodes].via = via;
+	return ck->nnodes++;
 }
 
-static void join(size_t a, size_t b)
+static void join(struct check *ck, size_t a, size_t b)
 {
-	edge = pcb_grow(edge, nedges, sizeof *edge);
-	elen = pcb_grow(elen, nedges, sizeof *elen);
-	edge[nedges][0] = a;
-	edge[nedges][1] = b;
-	elen[nedges++] =
-		hypot(nodes[a].x - nodes[b].x, nodes[a].y - nodes[b].y);
+	ck->edge = pcb_grow(ck->edge, ck->nedges, sizeof *ck->edge);
+	ck->elen = pcb_grow(ck->elen, ck->nedges, sizeof *ck->elen);
+	ck->edge[ck->nedges][0] = a;
+	ck->edge[ck->nedges][1] = b;
+	ck->elen[ck->nedges++] = hypot(ck->nodes[a].x - ck->nodes[b].x,
+				       ck->nodes[a].y - ck->nodes[b].y);
 }
 
-static int by_t(const void *x, const void *y)
+static int by_t(const void *lhs, const void *rhs)
 {
-	const double *a = x, *b = y;
+	const double *a = lhs;
+	const double *b = rhs;
 
 	return (a[0] > b[0]) - (a[0] < b[0]);
 }
 
-static void net_graph(int n)
+// The points among the first nodes on the segment a-b of a track of
+// width w, in order along it, joined in turn.
+static void split_segment(struct check *ck, size_t first, const double *a,
+			  const double *b, double w)
 {
-	size_t first;
+	double(*on)[2] = pcb_alloc((first + 1) * sizeof *on);
+	struct pcb_seg s = { { a[0], a[1] }, { b[0], b[1] } };
+	double dx = b[0] - a[0];
+	double dy = b[1] - a[1];
+	double l = (dx * dx) + (dy * dy);
+	size_t m = 0;
 
-	nnodes = nedges = 0;
-	for (size_t i = 0; i < B.ntrack; i++) {
-		const struct pcb_track *t = &B.track_[i];
+	for (size_t k = 0; k < first; k++) {
+		const struct node *nd = &ck->nodes[k];
+		struct pcb_pt p = { nd->x, nd->y };
+		double u = 0;
 
-		for (size_t j = 0; t->net == n && j < t->n; j++) {
-			node_at(t->xy[2 * j], t->xy[2 * j + 1], -1, -1, 0);
+		if (l > 0) {
+			u = (((nd->x - a[0]) * dx) + ((nd->y - a[1]) * dy)) / l;
+		}
+		if (u >= -TOUCH && u <= 1 + TOUCH &&
+		    pcb_seg_dist(p, s) <= w / 2) {
+			on[m][0] = u;
+			on[m++][1] = (double)k;
 		}
 	}
-	first = nnodes; // The points of the tracks are the nodes before.
-	for (size_t i = 0; i < B.ntrack; i++) {
-		const struct pcb_track *t = &B.track_[i];
-
-		for (size_t j = 1; t->net == n && j < t->n; j++) {
-			const double *a = &t->xy[2 * j - 2], *b = &t->xy[2 * j];
-			double(*on)[2] = pcb_alloc((first + 1) * sizeof *on);
-			size_t m = 0;
-
-			// The points on the segment, in order along it.
-			for (size_t k = 0; k < first; k++) {
-				double dx = b[0] - a[0], dy = b[1] - a[1];
-				double l = dx * dx + dy * dy, u;
-
-				u = l > 0 ? ((nodes[k].x - a[0]) * dx +
-					     (nodes[k].y - a[1]) * dy) /
-						    l :
-					    0;
-				if (u >= -1e-9 && u <= 1 + 1e-9 &&
-				    pcb_seg_dist(nodes[k].x, nodes[k].y, a[0],
-						 a[1], b[0],
-						 b[1]) <= t->w / 2) {
-					on[m][0] = u;
-					on[m++][1] = (double)k;
-				}
-			}
-			qsort(on, m, sizeof *on, by_t);
-			for (size_t k = 1; k < m; k++) {
-				join((size_t)on[k - 1][1], (size_t)on[k][1]);
-			}
-			free(on);
-		}
+	qsort(on, m, sizeof *on, by_t);
+	for (size_t k = 1; k < m; k++) {
+		join(ck, (size_t)on[k - 1][1], (size_t)on[k][1]);
 	}
-	for (size_t q = 0; q < B.npart; q++) {
-		for (size_t k = 0;
-		     B.part[q].placed && B.part[q].fp && k < B.part[q].fp->npad;
-		     k++) {
+	free((void *)on);
+}
+
+// Joins the pads of net n to the first nodes, the points of its tracks,
+// that lie in them.
+static void pad_nodes(struct check *ck, int n, size_t first)
+{
+	for (size_t q = 0; q < ck->b.npart; q++) {
+		const struct pcb_part *p = &ck->b.part[q];
+
+		for (size_t k = 0; p->placed && p->fp && k < p->fp->npad; k++) {
 			struct pcb_spot s;
-			size_t c;
+			size_t c = 0;
 
-			if (pcb_net_of(&B, q, k) != n) {
+			if (pcb_net_of(&ck->b, q, k) != n) {
 				continue;
 			}
-			pcb_spot(&B, &B.part[q], k, &s);
-			c = node_at(s.x, s.y, (long)q, (long)k, 0);
+			pcb_spot(&ck->b, p, k, &s);
+			c = node_at(ck, s.x, s.y, (long)q, (long)k, 0);
 			for (size_t i = 0; i < first; i++) {
-				if (pcb_spot_dist(&s, nodes[i].x, nodes[i].y) <=
-				    1e-6) {
-					join(c, i);
+				if (pcb_spot_dist(&s, ck->nodes[i].x,
+						  ck->nodes[i].y) <= SLACK) {
+					join(ck, c, i);
 				}
-			}
-		}
-	}
-	for (size_t v = 0; v < B.nvia; v++) {
-		size_t c;
-
-		if (B.via[v].net != n) {
-			continue;
-		}
-		c = node_at(B.via[v].x, B.via[v].y, -1, -1, 1);
-		for (size_t i = 0; i < first; i++) {
-			if (hypot(nodes[i].x - B.via[v].x,
-				  nodes[i].y - B.via[v].y) <=
-			    B.via[v].dia / 2 + 1e-6) {
-				join(c, i);
 			}
 		}
 	}
 }
 
-// The shortest copper of net n from pad k of part q to the nearest pad
-// of another part or via of the net: its points, from the far end to the
-// pad, into *path; their number, 0 if there is none.
-static size_t reach(int n, size_t q, size_t k, double **path)
+// Joins the vias of net n to the first nodes that lie in them.
+static void via_nodes(struct check *ck, int n, size_t first)
 {
-	double *d;
-	size_t *prev, src = (size_t)-1, goal = (size_t)-1, m = 0;
-	char *done;
+	for (size_t v = 0; v < ck->b.nvia; v++) {
+		const struct pcb_via *vi = &ck->b.via[v];
+		size_t c = 0;
 
-	net_graph(n);
-	for (size_t i = 0; i < nnodes; i++) {
-		src = nodes[i].part == (long)q && nodes[i].pad == (long)k ? i :
-									    src;
+		if (vi->net != n) {
+			continue;
+		}
+		c = node_at(ck, vi->x, vi->y, -1, -1, 1);
+		for (size_t i = 0; i < first; i++) {
+			if (hypot(ck->nodes[i].x - vi->x,
+				  ck->nodes[i].y - vi->y) <=
+			    (vi->dia / 2) + SLACK) {
+				join(ck, c, i);
+			}
+		}
 	}
-	if (src == (size_t)-1) {
-		return 0;
+}
+
+static void net_graph(struct check *ck, int n)
+{
+	size_t first = 0;
+
+	ck->nnodes = ck->nedges = 0;
+	for (size_t i = 0; i < ck->b.ntrack; i++) {
+		const struct pcb_track *t = &ck->b.track_[i];
+
+		for (size_t j = 0; t->net == n && j < t->n; j++) {
+			node_at(ck, t->xy[2 * j], t->xy[(2 * j) + 1], -1, -1,
+				0);
+		}
 	}
-	d = pcb_alloc(nnodes * sizeof *d);
-	prev = pcb_alloc(nnodes * sizeof *prev);
-	done = pcb_alloc(nnodes);
-	for (size_t i = 0; i < nnodes; i++) {
-		d[i] = 1e300;
+	first = ck->nnodes; // The points of the tracks are the nodes before.
+	for (size_t i = 0; i < ck->b.ntrack; i++) {
+		const struct pcb_track *t = &ck->b.track_[i];
+
+		for (size_t j = 1; t->net == n && j < t->n; j++) {
+			split_segment(ck, first, &t->xy[(2 * j) - 2],
+				      &t->xy[2 * j], t->w);
+		}
+	}
+	pad_nodes(ck, n, first);
+	via_nodes(ck, n, first);
+}
+
+// The nearest node not done of the graph by d, or -1.
+static size_t nearest(const struct check *ck, const double *d, const char *done)
+{
+	size_t u = (size_t)-1;
+
+	for (size_t i = 0; i < ck->nnodes; i++) {
+		if (!done[i] && d[i] < NEAR_FAR &&
+		    (u == (size_t)-1 || d[i] < d[u])) {
+			u = i;
+		}
+	}
+	return u;
+}
+
+// Relaxes the edges of node u of the graph, d its distances and prev the
+// node before each.
+static void relax(const struct check *ck, size_t u, double *d, size_t *prev)
+{
+	for (size_t e = 0; e < ck->nedges; e++) {
+		size_t a = ck->edge[e][0];
+		size_t b = ck->edge[e][1];
+		size_t v = 0;
+
+		if (a != u && b != u) {
+			continue;
+		}
+		v = a == u ? b : a;
+		if (d[u] + ck->elen[e] < d[v]) {
+			d[v] = d[u] + ck->elen[e];
+			prev[v] = u;
+		}
+	}
+}
+
+// The node of the graph nearest node src, by Dijkstra's method, that is
+// a via or a pad of another part than q, or -1; prev the node before
+// each.
+static size_t nearest_end(const struct check *ck, size_t src, size_t q,
+			  size_t *prev)
+{
+	double *d = pcb_alloc(ck->nnodes * sizeof *d);
+	char *done = pcb_alloc(ck->nnodes);
+	size_t goal = (size_t)-1;
+
+	for (size_t i = 0; i < ck->nnodes; i++) {
+		d[i] = FAR;
 		prev[i] = (size_t)-1;
 	}
 	d[src] = 0;
 	for (;;) {
-		size_t u = (size_t)-1;
+		size_t u = nearest(ck, d, done);
 
-		for (size_t i = 0; i < nnodes; i++) {
-			if (!done[i] && d[i] < 1e299 &&
-			    (u == (size_t)-1 || d[i] < d[u])) {
-				u = i;
-			}
-		}
 		if (u == (size_t)-1) {
 			break;
 		}
 		done[u] = 1;
-		if (u != src && (nodes[u].via || (nodes[u].part >= 0 &&
-						  nodes[u].part != (long)q))) {
+		if (u != src &&
+		    (ck->nodes[u].via || (ck->nodes[u].part >= 0 &&
+					  ck->nodes[u].part != (long)q))) {
 			goal = u;
 			break;
 		}
-		for (size_t e = 0; e < nedges; e++) {
-			size_t a = edge[e][0], b = edge[e][1], v;
+		relax(ck, u, d, prev);
+	}
+	free(d);
+	free(done);
+	return goal;
+}
 
-			if (a != u && b != u) {
-				continue;
-			}
-			v = a == u ? b : a;
-			if (d[u] + elen[e] < d[v]) {
-				d[v] = d[u] + elen[e];
-				prev[v] = u;
-			}
+// The shortest copper of net n from pad at to the nearest pad of another
+// part or via of the net: its points, from the far end to the pad, into
+// *path; their number, 0 if there is none.
+static size_t reach(struct check *ck, int n, struct pcb_end at, double **path)
+{
+	size_t *prev = NULL;
+	size_t src = (size_t)-1;
+	size_t goal = (size_t)-1;
+	size_t m = 0;
+
+	net_graph(ck, n);
+	for (size_t i = 0; i < ck->nnodes; i++) {
+		if (ck->nodes[i].part == (long)at.part &&
+		    ck->nodes[i].pad == (long)at.pad) {
+			src = i;
 		}
 	}
+	if (src == (size_t)-1) {
+		return 0;
+	}
+	prev = pcb_alloc(ck->nnodes * sizeof *prev);
+	goal = nearest_end(ck, src, at.part, prev);
 	if (goal != (size_t)-1) {
-		*path = pcb_alloc(2 * (nnodes + 1) * sizeof **path);
+		*path = pcb_alloc(2 * (ck->nnodes + 1) * sizeof **path);
 		for (size_t u = goal; u != (size_t)-1; u = prev[u]) {
-			(*path)[2 * m] = nodes[u].x;
-			(*path)[2 * m + 1] = nodes[u].y;
+			(*path)[2 * m] = ck->nodes[u].x;
+			(*path)[(2 * m) + 1] = ck->nodes[u].y;
 			m++;
 		}
 	}
-	free(d);
 	free(prev);
-	free(done);
 	return m;
 }
 
@@ -1297,24 +1575,29 @@ static size_t reach(int n, size_t q, size_t k, double **path)
 // (a decoupling capacitor to its pin and its ground via, a feedback
 // resistor to the amplifier's two pins), closed straight between those
 // ends; its area, by the shoelace.
-static void loops(void)
+static void loops(struct check *ck)
 {
-	for (size_t q = 0; q < B.npart; q++) {
-		const struct pcb_part *p = &B.part[q];
-		int n0, n1;
-		double *a = NULL, *b = NULL, area = 0;
-		size_t na, nb, m;
+	for (size_t q = 0; q < ck->b.npart; q++) {
+		const struct pcb_part *p = &ck->b.part[q];
+		int n0 = 0;
+		int n1 = 0;
+		double *a = NULL;
+		double *b = NULL;
+		double area = 0;
+		size_t na = 0;
+		size_t nb = 0;
+		size_t m = 0;
 
 		if (!p->placed || !p->fp || p->fp->npad != 2) {
 			continue;
 		}
-		n0 = pcb_net_of(&B, q, 0);
-		n1 = pcb_net_of(&B, q, 1);
+		n0 = pcb_net_of(&ck->b, q, 0);
+		n1 = pcb_net_of(&ck->b, q, 1);
 		if (n0 < 0 || n1 < 0 || n0 == n1) {
 			continue;
 		}
-		na = reach(n0, q, 0, &a);
-		nb = reach(n1, q, 1, &b);
+		na = reach(ck, n0, (struct pcb_end){ q, 0 }, &a);
+		nb = reach(ck, n1, (struct pcb_end){ q, 1 }, &b);
 		if (na && nb) {
 			// a runs from its far end to pad 0, b from its far end to
 			// pad 1: a, then b backward, closes the loop.
@@ -1323,17 +1606,19 @@ static void loops(void)
 			memcpy(v, a, 2 * na * sizeof *v);
 			for (size_t i = 0; i < nb; i++) {
 				v[2 * (na + i)] = b[2 * (nb - 1 - i)];
-				v[2 * (na + i) + 1] = b[2 * (nb - 1 - i) + 1];
+				v[(2 * (na + i)) + 1] =
+					b[(2 * (nb - 1 - i)) + 1];
 			}
 			m = na + nb;
 			for (size_t i = 0; i < m; i++) {
 				size_t j = (i + 1) % m;
 
-				area += v[2 * i] * v[2 * j + 1] -
-					v[2 * j] * v[2 * i + 1];
+				area += (v[2 * i] * v[(2 * j) + 1]) -
+					(v[2 * j] * v[(2 * i) + 1]);
 			}
 			printf("loop %s %s %s %s %.3f\n", p->name, pcb_ref(p),
-			       B.net[n0].name, B.net[n1].name, fabs(area) / 2);
+			       ck->b.net[n0].name, ck->b.net[n1].name,
+			       fabs(area) / 2);
 			free(v);
 		}
 		free(a);
@@ -1341,90 +1626,128 @@ static void loops(void)
 	}
 }
 
+// How far box o is out from courtyard c on side s (0 above, 1 below, 2
+// left, 3 right).
+static double side_gap(const double c[4], const double o[4], int s)
+{
+	switch (s) {
+	case 0:
+		return o[1] - c[3];
+	case 1:
+		return c[1] - o[3];
+	case 2:
+		return c[0] - o[2];
+	default:
+		return o[0] - c[2];
+	}
+}
+
 // The free room of a side of courtyard c out to box o: how far o is, if
-// it faces that side (0 if it overlaps c), else room as it was.
-static double room_to(const double c[4], const double o[4], int side,
-		      double room)
+// it faces that side (0 if it overlaps c), else *room as it was.
+static void room_to(const double c[4], const double o[4], int side,
+		    double *room)
 {
 	int across = side == 0 || side == 1; // above, below: along x
-	double d;
+	int faces = across ? !(o[2] <= c[0] || o[0] >= c[2]) :
+			     !(o[3] <= c[1] || o[1] >= c[3]);
+	double d = NAN;
 
-	if (across ? o[2] <= c[0] || o[0] >= c[2] :
-		     o[3] <= c[1] || o[1] >= c[3]) {
-		return room;
+	if (!faces) {
+		return;
 	}
 	if (o[0] < c[2] && o[2] > c[0] && o[1] < c[3] && o[3] > c[1]) {
-		return 0;
+		*room = 0;
+		return;
 	}
-	d = side == 0 ? o[1] - c[3] :
-	    side == 1 ? c[1] - o[3] :
-	    side == 2 ? c[0] - o[2] :
-			o[0] - c[2];
-	return d >= 0 && d < room ? d : room;
+	d = side_gap(c, o, side);
+	if (d >= 0 && d < *room) {
+		*room = d;
+	}
+}
+
+// The room of each side r of courtyard c out to box o.
+static void rooms_to(const double c[4], const double o[4], double r[4])
+{
+	for (int s = 0; s < 4; s++) {
+		room_to(c, o, s, &r[s]);
+	}
+}
+
+// The room of each side r of courtyard c of a part on a side (bottom or
+// not) out to part op: its courtyard on that side, its openings, and the
+// keep-outs of its holes.
+static void part_rooms(const struct pcb *b, const struct pcb_part *op,
+		       int bottom, const double c[4], double r[4])
+{
+	double oc[4];
+
+	pcb_court(op, oc);
+	if (op->bottom == bottom) {
+		rooms_to(c, oc, r);
+	}
+	for (size_t k = 0; k < op->fp->npad; k++) {
+		struct pcb_end at = { (size_t)(op - b->part), k };
+		struct pcb_disk d = { NAN, NAN, NAN };
+		double ob[4];
+
+		if (pcb_opening(b, at, bottom, ob)) {
+			rooms_to(c, ob, r);
+		}
+		if (pcb_keepout(b, op, k, &d)) {
+			const double kb[4] = { d.x - d.r, d.y - d.r, d.x + d.r,
+					       d.y + d.r };
+
+			rooms_to(c, kb, r);
+		}
+	}
+}
+
+// The room of each side r of courtyard c out to the board's edge rule:
+// its outline and its cutouts.
+static void edge_rooms(const struct pcb *b, const double c[4], double r[4])
+{
+	const double e = b->edge;
+	const double rim[4] = { b->board[3] - e - c[3], c[1] - b->board[1] - e,
+				c[0] - b->board[0] - e,
+				b->board[2] - e - c[2] };
+
+	for (int s = 0; s < 4; s++) {
+		r[s] = fmax(0, fmin(r[s], rim[s]));
+	}
+	for (size_t k = 0; k < b->ncut; k++) {
+		const double *ct = b->cut[k];
+		const double cb[4] = { ct[0] - e, ct[1] - e, ct[2] + e,
+				       ct[3] + e };
+
+		rooms_to(c, cb, r);
+	}
 }
 
 // Prints, for each part placed, the free room on each side of its
-// courtyard, in mm out to 5: to the courtyards and the openings of the
-// mask of the other parts of its side, the keep-outs of the holes and
-// the board's edge rule.
-static void rooms(void)
+// courtyard, in mm out to ROOM_MOST: to the courtyards and the openings
+// of the mask of the other parts of its side, the keep-outs of the holes
+// and the board's edge rule.
+static void rooms(const struct check *ck)
 {
 	static const char *const sides[] = { "above", "below", "left",
 					     "right" };
+	const struct pcb *b = &ck->b;
 
-	for (size_t q = 0; q < B.npart; q++) {
-		const struct pcb_part *p = &B.part[q];
-		double c[4], r[4] = { 5, 5, 5, 5 };
+	for (size_t q = 0; q < b->npart; q++) {
+		const struct pcb_part *p = &b->part[q];
+		double c[4];
+		double r[4] = { ROOM_MOST, ROOM_MOST, ROOM_MOST, ROOM_MOST };
 
 		if (!p->placed || !p->fp) {
 			continue;
 		}
 		pcb_court(p, c);
-		for (int s = 0; s < 4; s++) {
-			double e = B.edge;
-			double rim = s == 0 ? B.board[3] - e - c[3] :
-				     s == 1 ? c[1] - B.board[1] - e :
-				     s == 2 ? c[0] - B.board[0] - e :
-					      B.board[2] - e - c[2];
+		edge_rooms(b, c, r);
+		for (size_t o = 0; o < b->npart; o++) {
+			const struct pcb_part *op = &b->part[o];
 
-			r[s] = fmax(0, fmin(r[s], rim));
-		}
-		for (size_t k = 0; k < B.ncut; k++) {
-			const double *ct = B.cut[k];
-			double cb[4] = { ct[0] - B.edge, ct[1] - B.edge,
-					 ct[2] + B.edge, ct[3] + B.edge };
-
-			for (int s = 0; s < 4; s++) {
-				r[s] = room_to(c, cb, s, r[s]);
-			}
-		}
-		for (size_t o = 0; o < B.npart; o++) {
-			const struct pcb_part *op = &B.part[o];
-			double oc[4], x, y, rad;
-
-			if (o == q || !op->placed || !op->fp) {
-				continue;
-			}
-			pcb_court(op, oc);
-			for (int s = 0; op->bottom == p->bottom && s < 4; s++) {
-				r[s] = room_to(c, oc, s, r[s]);
-			}
-			for (size_t k = 0; k < op->fp->npad; k++) {
-				double ob[4];
-
-				if (pcb_opening(&B, o, k, p->bottom, ob)) {
-					for (int s = 0; s < 4; s++) {
-						r[s] = room_to(c, ob, s, r[s]);
-					}
-				}
-				if (pcb_keepout(&B, op, k, &x, &y, &rad)) {
-					double kb[4] = { x - rad, y - rad,
-							 x + rad, y + rad };
-
-					for (int s = 0; s < 4; s++) {
-						r[s] = room_to(c, kb, s, r[s]);
-					}
-				}
+			if (o != q && op->placed && op->fp) {
+				part_rooms(b, op, p->bottom, c, r);
 			}
 		}
 		printf("room %s %s", p->name, pcb_ref(p));
@@ -1438,27 +1761,70 @@ static void rooms(void)
 // Notes, not faults: each group not placed yet, and each net that waits
 // for it: a plane net checked so far among its placed parts alone, any
 // other net not routed till the group is placed.
-static void notes(void)
+static void notes(struct check *ck)
 {
-	for (size_t s = 0; s < B.nstmt; s++) {
-		if (!strcmp(B.stmt[s].w[0], "unplaced") && B.stmt[s].n == 2) {
-			printf("%s:%d: note: %s is not placed yet\n", B.file,
-			       B.stmt[s].line, B.stmt[s].w[1]);
+	for (size_t s = 0; s < ck->b.nstmt; s++) {
+		if (!strcmp(ck->b.stmt[s].w[0], "unplaced") &&
+		    ck->b.stmt[s].n == 2) {
+			printf("%s:%d: note: %s is not placed yet\n",
+			       ck->b.file, ck->b.stmt[s].line,
+			       ck->b.stmt[s].w[1]);
 		}
 	}
-	for (size_t k = 0; k < B.nnet; k++) {
-		if (B.net[k].waits && B.net[k].nend) {
+	for (size_t k = 0; k < ck->b.nnet; k++) {
+		if (ck->b.net[k].waits && ck->b.net[k].nend) {
 			printf("%s: note: net %s waits for parts not placed\n",
-			       B.file, B.net[k].name);
+			       ck->b.file, ck->b.net[k].name);
 		}
 	}
 }
 
+// Prints the length of the tracks of each net and its vias.
+static void print_lengths(const struct pcb *b)
+{
+	for (size_t k = 0; k < b->nnet; k++) {
+		double len = 0;
+		int nv = 0;
+
+		for (size_t t = 0; t < b->ntrack; t++) {
+			const double *xy = b->track_[t].xy;
+
+			for (size_t j = 1;
+			     b->track_[t].net == (int)k && j < b->track_[t].n;
+			     j++) {
+				len += hypot(xy[2 * j] - xy[(2 * j) - 2],
+					     xy[(2 * j) + 1] - xy[(2 * j) - 1]);
+			}
+		}
+		for (size_t v = 0; v < b->nvia; v++) {
+			nv += b->via[v].net == (int)k;
+		}
+		printf("length %s %.3f vias %d\n", b->net[k].name, len, nv);
+	}
+}
+
+// Frees the labels and the faults told of ck.
+static void free_check(struct check *ck)
+{
+	for (size_t k = 0; ck->labels && k < ck->b.npart; k++) {
+		free(ck->labels[k]);
+	}
+	free((void *)ck->labels);
+	for (size_t k = 0; k < ck->ntold; k++) {
+		free(ck->told[k]);
+	}
+	free((void *)ck->told);
+}
+
 int main(int argc, char **argv)
 {
-	char **lib = NULL;
-	size_t nlib = 0;
-	int i = 1, lengths = 0, room = 0;
+	static const char usage[] =
+		"usage: pcbcheck [-l] [-r] [-L LIB]... board.pcb < board.lock";
+	struct check ctx;
+	struct pcb_lib lib = { NULL, 0, NULL, 0 };
+	int i = 1;
+	int lengths = 0;
+	int room = 0;
 
 	for (; i < argc && argv[i][0] == '-'; i++) {
 		if (!strcmp(argv[i], "-l")) {
@@ -1466,68 +1832,37 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "-r")) {
 			room = 1;
 		} else if (!strcmp(argv[i], "-L") && i + 1 < argc) {
-			lib = pcb_grow(lib, nlib, sizeof *lib);
-			lib[nlib] = pcb_alloc(strlen(argv[i + 1]) + 16);
-			sprintf(lib[nlib++], "%s/footprints", argv[++i]);
+			pcb_add_lib(&lib, argv[++i]);
 		} else {
-			pcb_die("usage: pcbcheck [-l] [-r] [-L LIB]... board.pcb < board.lock");
+			pcb_die("%s", usage);
 		}
 	}
 	if (i != argc - 1) {
-		pcb_die("usage: pcbcheck [-l] [-r] [-L LIB]... board.pcb < board.lock");
+		pcb_die("%s", usage);
 	}
-	pcb_read(&B, argv[i], lib, nlib, stdin, NULL);
-	pcb_tell_copies(&B);
-	gather();
-	check_copper();
-	check_viagap();
-	check_maskweb();
-	check_thermal();
-	check_ends();
-	check_widths();
-	check_silk();
-	check_parts();
-	check_lock();
-	check_nets();
-	notes();
+	memset(&ctx, 0, sizeof ctx);
+	pcb_read(&ctx.b, argv[i], &lib, stdin, NULL);
+	pcb_tell_copies(&ctx.b);
+	gather(&ctx);
+	check_copper(&ctx);
+	check_viagap(&ctx);
+	check_maskweb(&ctx);
+	check_thermal(&ctx);
+	check_ends(&ctx);
+	check_widths(&ctx);
+	check_silk(&ctx);
+	check_parts(&ctx);
+	check_lock(&ctx);
+	check_nets(&ctx);
+	notes(&ctx);
 	if (room) {
-		rooms();
+		rooms(&ctx);
 	}
 	if (lengths) {
-		for (size_t k = 0; k < B.nnet; k++) {
-			double len = 0;
-			int nv = 0;
-
-			for (size_t t = 0; t < B.ntrack; t++) {
-				for (size_t j = 1; B.track_[t].net == (int)k &&
-						   j < B.track_[t].n;
-				     j++) {
-					const double *xy = B.track_[t].xy;
-
-					len += hypot(xy[2 * j] - xy[2 * j - 2],
-						     xy[2 * j + 1] -
-							     xy[2 * j - 1]);
-				}
-			}
-			for (size_t v = 0; v < B.nvia; v++) {
-				nv += B.via[v].net == (int)k;
-			}
-			printf("length %s %.3f vias %d\n", B.net[k].name, len,
-			       nv);
-		}
-		loops();
+		print_lengths(&ctx.b);
+		loops(&ctx);
 	}
-	for (size_t k = 0; k < nlib; k++) {
-		free(lib[k]);
-	}
-	free(lib);
-	for (size_t k = 0; labels && k < B.npart; k++) {
-		free(labels[k]);
-	}
-	free(labels);
-	for (size_t k = 0; k < ntold; k++) {
-		free(told[k]);
-	}
-	free(told);
-	return faults || B.failed;
+	pcb_free_lib(&lib);
+	free_check(&ctx);
+	return ctx.faults || ctx.b.failed;
 }

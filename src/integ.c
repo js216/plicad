@@ -30,6 +30,16 @@
 
 #define PIECE (PI / 16) // The longest piece of an angle, in radians.
 #define AXIS_TINY 1e-12 // Sine below which a circle is round an axis.
+#define TURN_EPS 1e-12 // Angles closer than this are one, in radians.
+// Over a flat triangle, p^2 n / 2 is n times the squares and the
+// products of its corners over TRI_SQUARES; o p n is o n times their sum
+// over TRI_SUM; and p n / 3, the volume, their sum over TRI_VOL.
+#define TRI_SQUARES 24.0
+#define TRI_SUM 6.0
+#define TRI_VOL 18.0
+#define MESH_BOUND 6.0 // A mesh misses by its bound times its step^2 / this.
+#define ERR_NUM 64.0 // The error bound of Gauss on a ring: 64 / 15 of
+#define ERR_DEN 15.0 // its ellipse's terms.
 #define COARSE (PI / 8) // The first piece of a ring in shape_mass_to.
 #define ROUNDING 1e-12 // The rounding of a sum, of the sizes of its terms.
 #define GEO 1e-9 // Of a size, the nearest that edges prove their form.
@@ -47,8 +57,8 @@ enum {
 	EDGE_TRIG = 4, // The same of G dv along a conic on a plane,
 	EDGE_TRIG_ELLIPSE = 6, // along an ellipse of a cylinder,
 	EDGE_TRIG_MAX = 6,
-	RING_MOST = 1 << 12, // The most pieces of a ring.
-	MESH_MOST = 1 << 20 // The most points of a mesh.
+	RING_MOST = 1U << 12U, // The most pieces of a ring.
+	MESH_MOST = 1U << 20U // The most points of a mesh.
 };
 
 static const double gx[GAUSS] = { -0.9602898564975363, -0.7966664774136267,
@@ -154,7 +164,8 @@ static void trig_of(const struct surf *s, double u0, double v, struct trig *c)
 		}
 	}
 	for (int j = 0; j < TRIG_N; j++) {
-		double th = 2 * PI * j / TRIG_N, g[NQ];
+		double th = 2 * PI * j / TRIG_N;
+		double g[NQ];
 		struct uv p = { u0 + th, v };
 
 		integrands(s, p, g);
@@ -176,7 +187,11 @@ static void trig_of(const struct surf *s, double u0, double v, struct trig *c)
 static void inner_trig(const struct surf *s, double u0, struct uv q, double *G,
 		       struct trig *c)
 {
-	double t = q.u - u0, ct = cos(t), st = sin(t), cm = 1, sm = 0;
+	double t = q.u - u0;
+	double ct = cos(t);
+	double st = sin(t);
+	double cm = 1;
+	double sm = 0;
 
 	trig_of(s, u0, q.v, c);
 	for (int k = 0; k < NQ; k++) {
@@ -266,10 +281,22 @@ static void add_term(struct acc *z, int k, double x)
 
 // The integrals from w0 to w0 + th of the NQ sums of cos k w and sin k w,
 // k up to deg, whose values at w0 + 2 pi j / (2 deg + 1) are f[j].
-static void trig_integral(double (*f)[NQ], int deg, double th, double *out)
+// A span of a sum of cos k w and sin k w: its highest k, and its
+// length th.
+struct trig_span {
+	int deg;
+	double th;
+};
+
+static void trig_integral(double (*f)[NQ], struct trig_span ts, double *out)
 {
+	int deg = ts.deg;
+	double th = ts.th;
 	int n = (2 * deg) + 1;
-	double ct = cos(th), st = sin(th), cm = 1, sm = 0;
+	double ct = cos(th);
+	double st = sin(th);
+	double cm = 1;
+	double sm = 0;
 
 	for (int k = 0; k < NQ; k++) {
 		out[k] = 0;
@@ -284,7 +311,8 @@ static void trig_integral(double (*f)[NQ], int deg, double th, double *out)
 		cm = c2;
 		for (int j = 0; j < n; j++) {
 			double w = 2 * PI * j / n;
-			double a = cos(m * w) / n, b = sin(m * w) / n;
+			double a = cos(m * w) / n;
+			double b = sin(m * w) / n;
 
 			for (int k = 0; k < NQ; k++) {
 				out[k] += 2 * f[j][k] *
@@ -297,8 +325,10 @@ static void trig_integral(double (*f)[NQ], int deg, double th, double *out)
 // The integrals from w0 to w0 + th of w - w0 times the NQ sums of
 // cos k w and sin k w, k up to deg, whose values are f[j] as in
 // trig_integral.
-static void trig_moment(double (*f)[NQ], int deg, double th, double *out)
+static void trig_moment(double (*f)[NQ], struct trig_span ts, double *out)
 {
+	int deg = ts.deg;
+	double th = ts.th;
 	int n = (2 * deg) + 1;
 
 	for (int k = 0; k < NQ; k++) {
@@ -308,13 +338,15 @@ static void trig_moment(double (*f)[NQ], int deg, double th, double *out)
 		}
 	}
 	for (int m = 1; m <= deg; m++) {
-		double cm = cos(m * th), sm = sin(m * th);
+		double cm = cos(m * th);
+		double sm = sin(m * th);
 		double ic = ((cm - 1) / (m * m)) + (th * sm / m);
 		double is = (sm / (m * m)) - (th * cm / m);
 
 		for (int j = 0; j < n; j++) {
 			double w = 2 * PI * j / n;
-			double a = cos(m * w) / n, b = sin(m * w) / n;
+			double a = cos(m * w) / n;
+			double b = sin(m * w) / n;
 
 			for (int k = 0; k < NQ; k++) {
 				out[k] += 2 * f[j][k] * ((a * ic) + (b * is));
@@ -328,19 +360,37 @@ static void trig_moment(double (*f)[NQ], int deg, double th, double *out)
 // sum of cos t and sin t, so G = a0(v) (u - u0) + P with P a sum of cos
 // k t and sin k t: the integral of P dv, k up to EDGE_TRIG_ELLIPSE, and
 // of a0 dv times t, k up to 3, both exact (trig_integral, trig_moment).
+// A run of an edge in a loop: from a to b, the way of the loop, and the
+// degree (or the sign) of its rule.
+struct edge_run {
+	double a, b;
+	int fwd;
+	int deg;
+};
+
 static void ellipse_sum(const struct facemap *m, const struct sedge *e,
-			double a, double b, int fwd, int sign, struct acc *z)
+			const struct edge_run *er, struct acc *z)
 {
+	double a = er->a;
+	double b = er->b;
+	int fwd = er->fwd;
+	int sign = er->deg;
 	const struct surf *s = &m->sh->f[m->f].s;
-	double ft[2 * EDGE_TRIG_MAX + 1][NQ], fs[2 * EDGE_TRIG_MAX + 1][NQ];
-	double lo = fmin(a, b), th = fabs(b - a), o1[NQ], o2[NQ], o3[NQ];
+	double ft[(2 * EDGE_TRIG_MAX) + 1][NQ];
+	double fs[(2 * EDGE_TRIG_MAX) + 1][NQ];
+	double lo = fmin(a, b);
+	double th = fabs(b - a);
+	double o1[NQ];
+	double o2[NQ];
+	double o3[NQ];
 	double u_lo = fm_uv(m, curve_at(&e->c, lo)).u - m->ref.u;
 	int n = (2 * EDGE_TRIG_ELLIPSE) + 1;
 	struct trig c;
 
 	c.s = NULL;
 	for (int j = 0; j < n; j++) {
-		double t = lo + (2 * PI * j / n), gu[NQ];
+		double t = lo + (2 * PI * j / n);
+		double gu[NQ];
 		struct vec p = curve_at(&e->c, t);
 		struct vec d = mul(curve_tan(&e->c, t), fwd ? 1 : -1);
 		double dv = surf_dv(s, (struct line3){ p, d });
@@ -355,9 +405,9 @@ static void ellipse_sum(const struct facemap *m, const struct sedge *e,
 			z->mag[k] += fabs(gu[k] * dv) * 2 * PI / n;
 		}
 	}
-	trig_integral(ft, EDGE_TRIG_ELLIPSE, th, o1);
-	trig_integral(fs, EDGE_TRIG_ELLIPSE, th, o2);
-	trig_moment(fs, EDGE_TRIG_ELLIPSE, th, o3);
+	trig_integral(ft, (struct trig_span){ EDGE_TRIG_ELLIPSE, th }, o1);
+	trig_integral(fs, (struct trig_span){ EDGE_TRIG_ELLIPSE, th }, o2);
+	trig_moment(fs, (struct trig_span){ EDGE_TRIG_ELLIPSE, th }, o3);
 	for (int k = 0; k < NQ; k++) {
 		z->sum[k] += o1[k] + (u_lo * o2[k]) + (sign * o3[k]);
 	}
@@ -366,18 +416,24 @@ static void ellipse_sum(const struct facemap *m, const struct sedge *e,
 // Adds the loop integral of G dv along an edge from a to b where G dv
 // is a sum of cos k t and sin k t for k up to deg: exact from its values
 // at 2 deg + 1 points round the curve.
-static void trig_sum(const struct facemap *m, const struct sedge *e, double a,
-		     double b, int fwd, int deg, struct acc *z)
+static void trig_sum(const struct facemap *m, const struct sedge *e,
+		     const struct edge_run *er, struct acc *z)
 {
+	double a = er->a;
+	double b = er->b;
+	int fwd = er->fwd;
+	int deg = er->deg;
 	const struct surf *s = &m->sh->f[m->f].s;
-	double f[2 * EDGE_TRIG_MAX + 1][NQ], out[NQ];
+	double f[(2 * EDGE_TRIG_MAX) + 1][NQ];
+	double out[NQ];
 	double lo = fmin(a, b);
 	int n = (2 * deg) + 1;
 	struct trig c;
 
 	c.s = NULL;
 	for (int j = 0; j < n; j++) {
-		double t = lo + (2 * PI * j / n), gu[NQ];
+		double t = lo + (2 * PI * j / n);
+		double gu[NQ];
 		struct vec p = curve_at(&e->c, t);
 		struct vec d = mul(curve_tan(&e->c, t), fwd ? 1 : -1);
 		double dv = surf_dv(s, (struct line3){ p, d });
@@ -388,7 +444,7 @@ static void trig_sum(const struct facemap *m, const struct sedge *e, double a,
 			z->mag[k] += fabs(f[j][k]) * 2 * PI / n;
 		}
 	}
-	trig_integral(f, deg, fabs(b - a), out);
+	trig_integral(f, (struct trig_span){ deg, fabs(b - a) }, out);
 	for (int k = 0; k < NQ; k++) {
 		z->sum[k] += out[k];
 	}
@@ -402,11 +458,16 @@ enum { R_GAUSS, R_POLY, R_TRIG, R_ELLIPSE, R_ZERO, R_RING, R_MERIDIAN };
 // is a sum of cos k t and sin k t, k up to EDGE_TRIG, in v; its values
 // are taken at (u, v(t)) round the turn, past the poles as v goes on.
 static void meridian_sum(const struct facemap *m, const struct sedge *e,
-			 double a, double b, int fwd, struct acc *z)
+			 const struct edge_run *er, struct acc *z)
 {
+	double a = er->a;
+	double b = er->b;
+	int fwd = er->fwd;
 	const struct surf *s = &m->sh->f[m->f].s;
-	double mid = (a + b) / 2, lo = fmin(a, b), out[NQ];
-	double f[2 * EDGE_TRIG_MAX + 1][NQ];
+	double mid = (a + b) / 2;
+	double lo = fmin(a, b);
+	double out[NQ];
+	double f[(2 * EDGE_TRIG_MAX) + 1][NQ];
 	struct vec p = curve_at(&e->c, mid);
 	struct uv q = fm_uv(m, p);
 	double dv = surf_dv(s, (struct line3){ p, curve_tan(&e->c, mid) });
@@ -420,7 +481,8 @@ static void meridian_sum(const struct facemap *m, const struct sedge *e,
 		return;
 	}
 	for (int j = 0; j < n; j++) {
-		double t = lo + (2 * PI * j / n), gu[NQ];
+		double t = lo + (2 * PI * j / n);
+		double gu[NQ];
 		struct uv r = { q.u, q.v + ((dv > 0 ? 1 : -1) * (t - mid)) };
 
 		inner(s, m->ref.u, r, gu, &c, z);
@@ -429,7 +491,7 @@ static void meridian_sum(const struct facemap *m, const struct sedge *e,
 			z->mag[k] += fabs(f[j][k]) * 2 * PI / n;
 		}
 	}
-	trig_integral(f, EDGE_TRIG, fabs(b - a), out);
+	trig_integral(f, (struct trig_span){ EDGE_TRIG, fabs(b - a) }, out);
 	for (int k = 0; k < NQ; k++) {
 		z->sum[k] += out[k];
 	}
@@ -464,10 +526,11 @@ static int one_side(const struct curve *c, double t0, double t1, struct vec a)
 	struct vec y = frame_y(c->n, c->x);
 	double t = atan2(dot(a, y), dot(a, c->x));
 
-	for (int k = 0; k < 2; k++, t += PI) {
-		double w = t0 + fmod(fmod(t - t0, 2 * PI) + (2 * PI), 2 * PI);
+	for (int k = 0; k < 2; k++) {
+		double tk = t + (k * PI);
+		double w = t0 + fmod(fmod(tk - t0, 2 * PI) + (2 * PI), 2 * PI);
 
-		if (w > t0 + 1e-12 && w < t1 - 1e-12) {
+		if (w > t0 + TURN_EPS && w < t1 - TURN_EPS) {
 			return 0;
 		}
 	}
@@ -492,6 +555,55 @@ static int is_ring(const struct surf *s, const struct curve *c)
 // cos k t and sin k t: proven exact by the form of the edge on the
 // surface, or R_RING for a ring of a pipe, of the bounded rule, or
 // R_GAUSS, of no bound.
+// Whether ellipse c lies on cylinder s in a plane through the axis's
+// point: seen along the axis, the circle of the cylinder at angle t;
+// if so, *deg says whether u turns with t (1) or against it (-1).
+static int ellipse_on_cyl(const struct surf *s, const struct curve *c, int *deg)
+{
+	double near = near_of(s);
+	struct vec y = frame_y(c->n, c->x);
+	struct vec px = mul(sub(c->x, mul(s->n, dot(c->x, s->n))), c->a);
+	struct vec py = mul(sub(y, mul(s->n, dot(y, s->n))), c->b);
+
+	if (fabs(len(px) - s->r) < near && fabs(len(py) - s->r) < near &&
+	    fabs(dot(px, py)) < near * s->r) {
+		*deg = dot(cross(px, py), s->n) > 0 ? 1 : -1;
+		return 1;
+	}
+	return 0;
+}
+
+// Whether circle c of edge e lies on sphere or torus s as a meridian,
+// in a plane of the axis at one u.
+static int is_meridian(const struct surf *s, const struct sedge *e)
+{
+	const struct curve *c = &e->c;
+	double near = near_of(s);
+	struct vec d = sub(c->o, s->o);
+	double rc = s->kind == SF_SPHERE ? s->r : s->r2;
+
+	if (!square(c->n, s->n) || !(fabs(c->a - rc) < near)) {
+		return 0;
+	}
+	if (s->kind == SF_SPHERE) {
+		return len(d) < near && one_side(c, e->t0, e->t1, s->n);
+	}
+	return s->r > s->r2 && fabs(dot(d, s->n)) < near &&
+	       fabs(len(d) - s->r) < near && square(c->n, d);
+}
+
+// The rule of circle edge e on sphere or torus s: R_ZERO at one v (no
+// dv), R_MERIDIAN, or -1 for neither.
+static int round_rule(const struct surf *s, const struct sedge *e)
+{
+	const struct curve *c = &e->c;
+
+	if (parallel(c->n, s->n) && on_axis(s, c->o)) {
+		return R_ZERO; // At one v: no dv.
+	}
+	return is_meridian(s, e) ? R_MERIDIAN : -1;
+}
+
 static int rule_of(const struct surf *s, const struct sedge *e, int *deg)
 {
 	const struct curve *c = &e->c;
@@ -510,38 +622,16 @@ static int rule_of(const struct surf *s, const struct sedge *e, int *deg)
 	    len(cross(c->n, s->n)) < AXIS_TINY) {
 		return R_TRIG;
 	}
-	if (s->kind == SF_CYL && c->kind == CV_ELLIPSE && on_axis(s, c->o)) {
-		// A plane through the axis's point: seen along the axis, the
-		// ellipse is the circle of the cylinder at angle t.
-		struct vec y = frame_y(c->n, c->x);
-		struct vec px =
-			mul(sub(c->x, mul(s->n, dot(c->x, s->n))), c->a);
-		struct vec py = mul(sub(y, mul(s->n, dot(y, s->n))), c->b);
-
-		if (fabs(len(px) - s->r) < near &&
-		    fabs(len(py) - s->r) < near &&
-		    fabs(dot(px, py)) < near * s->r) {
-			// u turns with t, or against it: deg says which.
-			*deg = dot(cross(px, py), s->n) > 0 ? 1 : -1;
-			return R_ELLIPSE;
-		}
+	if (s->kind == SF_CYL && c->kind == CV_ELLIPSE && on_axis(s, c->o) &&
+	    ellipse_on_cyl(s, c, deg)) {
+		return R_ELLIPSE;
 	}
 	if ((s->kind == SF_SPHERE || s->kind == SF_TORUS) &&
 	    c->kind == CV_CIRCLE) {
-		struct vec d = sub(c->o, s->o);
-		double rc = s->kind == SF_SPHERE ? s->r : s->r2;
+		int r = round_rule(s, e);
 
-		if (parallel(c->n, s->n) && on_axis(s, c->o)) {
-			return R_ZERO; // At one v: no dv.
-		}
-		// A meridian: in a plane of the axis, at one u.
-		if (square(c->n, s->n) && fabs(c->a - rc) < near &&
-		    (s->kind == SF_SPHERE ?
-			     len(d) < near && one_side(c, e->t0, e->t1, s->n) :
-			     s->r > s->r2 && fabs(dot(d, s->n)) < near &&
-				     fabs(len(d) - s->r) < near &&
-				     square(c->n, d))) {
-			return R_MERIDIAN;
+		if (r >= 0) {
+			return r;
 		}
 	}
 	if (s->kind == SF_PIPE && c->kind == CV_ELLIPSE &&
@@ -561,19 +651,24 @@ static int rule_of(const struct surf *s, const struct sedge *e, int *deg)
 // ellipse's speed may be 0 there.
 static int pipe_bounds(const struct surf *s, double y, double *b)
 {
-	double ch = cosh(y), ex = exp(2 * y) - 1;
-	double lo = fmin(s->r, s->r3), hi = fmax(s->r, s->r3);
+	double ch = cosh(y);
+	double ex = exp(2 * y) - 1;
+	double lo = fmin(s->r, s->r3);
+	double hi = fmax(s->r, s->r3);
 	double half = fabs((s->r3 * s->r3) - (s->r * s->r)) / 2;
 	double m2 = (lo * lo) - (half * ex);
-	double M2 = (hi * hi) + (half * ex);
-	double d = 0, p = 0, w = 0, nn = 0;
+	double hi2 = (hi * hi) + (half * ex);
+	double d = 0;
+	double p = 0;
+	double w = 0;
+	double nn = 0;
 
 	if (!(m2 > 0)) {
 		return 0;
 	}
 	d = (s->r + s->r3) * ch / sqrt(m2);
 	p = len(s->o) + ((s->r + s->r3) * ch) + (s->r2 * (d + 1));
-	w = s->r2 * (sqrt(M2) + (s->r2 * s->r * s->r3 / m2));
+	w = s->r2 * (sqrt(hi2) + (s->r2 * s->r * s->r3 / m2));
 	nn = (d + 1) * w;
 	b[0] = p * nn / 3;
 	b[1] = w;
@@ -599,6 +694,54 @@ static double ring_height(const struct surf *s)
 // sin k v, k up to EDGE_TRIG); over u by Gauss's rule on pieces, each
 // with its bound by the ellipse of Bernstein of the piece (RHO), where
 // H is analytic: pieces halved until the bound is within the accuracy.
+// A ring sum under way: on surface s from the point q, u from u0 in n
+// pieces of h, the edge th long round the ring.
+struct ring_run {
+	const struct surf *s;
+	struct uv q;
+	double u0, h, th;
+	size_t n;
+};
+
+// The sums of a ring and the sums of their sizes.
+struct sums {
+	double sum[NQ];
+	double mag[NQ];
+};
+
+// The sums of the pieces of rr, by Gauss along u, exact round the ring.
+static void ring_pieces(const struct ring_run *rr, struct sums *sm)
+{
+	for (int k = 0; k < NQ; k++) {
+		sm->sum[k] = sm->mag[k] = 0;
+	}
+	for (size_t i = 0; i < rr->n; i++) {
+		for (int j = 0; j < GAUSS; j++) {
+			double u = rr->u0 +
+				   (rr->h * ((double)i + ((1 + gx[j]) / 2)));
+			double vals[(2 * EDGE_TRIG) + 1][NQ];
+			double hv[NQ];
+
+			for (int t = 0; t <= 2 * EDGE_TRIG; t++) {
+				struct uv r = { u, rr->q.v + (2 * PI * t /
+							      ((2 * EDGE_TRIG) +
+							       1)) };
+
+				integrands(rr->s, r, vals[t]);
+			}
+			trig_integral(vals,
+				      (struct trig_span){ EDGE_TRIG, rr->th },
+				      hv);
+			for (int k = 0; k < NQ; k++) {
+				double x = hv[k] * gw[j] * rr->h / 2;
+
+				sm->sum[k] += x;
+				sm->mag[k] += fabs(x);
+			}
+		}
+	}
+}
+
 static void ring_sum(const struct facemap *m, const struct sedge *e, double a,
 		     double b, struct acc *z)
 {
@@ -606,10 +749,16 @@ static void ring_sum(const struct facemap *m, const struct sedge *e, double a,
 	struct vec p = curve_at(&e->c, a);
 	struct uv q = fm_uv(m, p);
 	double dv = surf_dv(s, (struct line3){ p, curve_tan(&e->c, a) });
-	double u0 = m->ref.u, u1 = q.u, th = dv > 0 ? b - a : a - b;
-	double sum[NQ], mag[NQ], bound[NQ];
+	double u0 = m->ref.u;
+	double u1 = q.u;
+	double th = dv > 0 ? b - a : a - b;
+	struct sums sm;
+	double *sum = sm.sum;
+	double *mag = sm.mag;
+	double bound[NQ];
 
-	double y = ring_height(s), mb[NQ];
+	double y = ring_height(s);
+	double mb[NQ];
 
 	if (fabs(fabs(dv) - 1) > GEO || !pipe_bounds(s, y, mb)) {
 		z->unproven = 1;
@@ -617,38 +766,18 @@ static void ring_sum(const struct facemap *m, const struct sedge *e, double a,
 	}
 	for (size_t n = (size_t)fmax(1, ceil(fabs(u1 - u0) / z->piece));;
 	     n *= 2) {
-		double h = (u1 - u0) / (double)n, hh = fabs(h) / 2;
+		double h = (u1 - u0) / (double)n;
+		double hh = fabs(h) / 2;
 		double rho = (y + sqrt((y * y) + (hh * hh))) / hh;
-		double f = 64 / (15 * ((rho * rho) - 1) * pow(rho, 2 * GAUSS));
+		double f = ERR_NUM /
+			   (ERR_DEN * ((rho * rho) - 1) * pow(rho, 2 * GAUSS));
+		struct ring_run rr = { s, q, u0, h, th, n };
 		int ok = 1;
 
 		for (int k = 0; k < NQ; k++) {
-			sum[k] = mag[k] = 0;
 			bound[k] = (double)n * f * fabs(th) * mb[k] * hh;
 		}
-		for (size_t i = 0; i < n; i++) {
-			for (int j = 0; j < GAUSS; j++) {
-				double u = u0 + (h * ((double)i +
-						      ((1 + gx[j]) / 2)));
-				double vals[2 * EDGE_TRIG + 1][NQ], hv[NQ];
-
-				for (int t = 0; t <= 2 * EDGE_TRIG; t++) {
-					struct uv r = {
-						u, q.v + (2 * PI * t /
-							  (2 * EDGE_TRIG + 1))
-					};
-
-					integrands(s, r, vals[t]);
-				}
-				trig_integral(vals, EDGE_TRIG, th, hv);
-				for (int k = 0; k < NQ; k++) {
-					double x = hv[k] * gw[j] * h / 2;
-
-					sum[k] += x;
-					mag[k] += fabs(x);
-				}
-			}
-		}
+		ring_pieces(&rr, &sm);
 		ok = ok && n < RING_MOST;
 		for (int k = 0; ok && k < NQ; k++) {
 			ok = bound[k] <= z->rel * mag[k];
@@ -677,25 +806,33 @@ static void use_sum(const struct facemap *m, const struct sedge *e,
 	double a = u->fwd ? e->t0 : e->t1;
 	double b = u->fwd ? e->t1 : e->t0;
 	size_t n = pieces(&e->c, e->t0, e->t1, z->piece);
-	const double *rx = gx, *rw = gw;
-	int np = GAUSS, deg = 0, r = rule_of(s, e, &deg);
+	const double *rx = gx;
+	const double *rw = gw;
+	int np = GAUSS;
+	int deg = 0;
+	int r = rule_of(s, e, &deg);
 	double h = 0;
 	struct trig c;
+	struct edge_run run = { 0, 0, 0, 0 };
 
 	c.s = NULL;
 	if (r == R_ZERO) {
 		return;
 	}
+	run.a = a;
+	run.b = b;
+	run.fwd = u->fwd;
+	run.deg = deg;
 	if (r == R_TRIG) {
-		trig_sum(m, e, a, b, u->fwd, deg, z);
+		trig_sum(m, e, &run, z);
 		return;
 	}
 	if (r == R_MERIDIAN) {
-		meridian_sum(m, e, a, b, u->fwd, z);
+		meridian_sum(m, e, &run, z);
 		return;
 	}
 	if (r == R_ELLIPSE) {
-		ellipse_sum(m, e, a, b, u->fwd, deg, z);
+		ellipse_sum(m, e, &run, z);
 		return;
 	}
 	if (r == R_RING) {
@@ -733,8 +870,17 @@ static void use_sum(const struct facemap *m, const struct sedge *e,
 
 // The sums of the face of m, with pieces of angle no longer than piece,
 // a ring of a pipe to rel.
-static struct acc face_sum(const struct facemap *m, double piece, double rel)
+// How fine a sum is: the longest piece of a ring, and the relative
+// accuracy.
+struct grain {
+	double piece;
+	double rel;
+};
+
+static struct acc face_sum(const struct facemap *m, struct grain gr)
 {
+	double piece = gr.piece;
+	double rel = gr.rel;
 	const struct shape *sh = m->sh;
 	const struct sface *fc = &sh->f[m->f];
 	struct acc z;
@@ -772,7 +918,7 @@ struct solid_mass face_mass(const struct shape *sh, size_t f)
 	struct acc z;
 
 	facemap_init(&m, sh, f);
-	z = face_sum(&m, PIECE, FACE_REL);
+	z = face_sum(&m, (struct grain){ PIECE, FACE_REL });
 	return mass_of(sh, f, z.sum);
 }
 
@@ -793,8 +939,8 @@ struct solid_mass shape_mass(const struct shape *sh)
 // The sums of sphere face f of sh in the frame of the axis of one of its
 // circles, the first in which every edge is a parallel or a meridian;
 // else z, as they were.  The integrals do not depend on the frame.
-static struct acc sphere_sum(const struct shape *sh, size_t f, double rel,
-			     struct acc z)
+static struct acc sphere_sum(const struct shape *sh, size_t f, struct acc z,
+			     double rel)
 {
 	const struct sface *fc = &sh->f[f];
 	struct shape one = *sh;
@@ -817,7 +963,7 @@ static struct acc sphere_sum(const struct shape *sh, size_t f, double rel,
 			faces[f].s.n = unit(c->n);
 			faces[f].s.x = unit(c->x);
 			facemap_init(&fm, &one, f);
-			y = face_sum(&fm, COARSE, rel);
+			y = face_sum(&fm, (struct grain){ COARSE, rel });
 			if (!y.unproven) {
 				z = y;
 			}
@@ -906,10 +1052,15 @@ static int bounds(struct mesh *x, double cn)
 {
 	const struct surf *s = &x->s;
 	int pipe = s->kind == SF_PIPE;
-	double a = pipe ? s->r : 0, c = pipe ? s->r3 : 0;
-	double rt = pipe ? s->r2 : s->r, lo = fmin(a, c), hi = fmax(a, c);
-	double d = fabs((a * a) - (c * c)), k = d > 0 ? a * c / (lo * lo) : 1;
-	double e = d > 0 ? k * d / (lo * lo) : 0, f = rt * k * cn;
+	double a = pipe ? s->r : 0;
+	double c = pipe ? s->r3 : 0;
+	double rt = pipe ? s->r2 : s->r;
+	double lo = fmin(a, c);
+	double hi = fmax(a, c);
+	double d = fabs((a * a) - (c * c));
+	double k = d > 0 ? a * c / (lo * lo) : 1;
+	double e = d > 0 ? k * d / (lo * lo) : 0;
+	double f = rt * k * cn;
 
 	x->b[0] = fmax(hi + (rt * (e + (k * k))), rt) + (rt * k);
 	x->b[1] = hypot(k, 1);
@@ -928,8 +1079,10 @@ static struct mpt side_at(const struct facemap *m, const struct mesh *x,
 	const struct suse *u = &m->sh->u[lp->first + (i < lp->n ? i : 0)];
 	const struct sedge *e = &m->sh->e[u->e];
 	const struct curve *c = &e->c;
-	double a = u->fwd ? e->t0 : e->t1, b = u->fwd ? e->t1 : e->t0;
-	double rb = c->kind == CV_ELLIPSE ? c->b : c->a, lo = fmin(c->a, rb);
+	double a = u->fwd ? e->t0 : e->t1;
+	double b = u->fwd ? e->t1 : e->t0;
+	double rb = c->kind == CV_ELLIPSE ? c->b : c->a;
+	double lo = fmin(c->a, rb);
 	struct vec p = curve_at(
 		c, i < lp->n ? a + ((b - a) * (double)j / (double)n) : a);
 	struct vec d = sub(p, x->s.o);
@@ -948,14 +1101,17 @@ static struct mpt side_at(const struct facemap *m, const struct mesh *x,
 
 static double dist2(const struct mpt *a, const struct mpt *b)
 {
-	double du = b->q[0] - a->q[0], dv = b->q[1] - a->q[1];
+	double du = b->q[0] - a->q[0];
+	double dv = b->q[1] - a->q[1];
 
 	return (du * du) + (dv * dv);
 }
 
 static double dist3(const double *a, const double *b)
 {
-	double dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+	double dx = b[0] - a[0];
+	double dy = b[1] - a[1];
+	double dz = b[2] - a[2];
 
 	return (dx * dx) + (dy * dy) + (dz * dz);
 }
@@ -964,10 +1120,13 @@ static double dist3(const double *a, const double *b)
 // (cos v w(u) + sin v n).
 static void point(const struct mesh *x, struct mpt *p)
 {
-	double cu = cos(p->q[0]), su = sin(p->q[0]);
-	double cv = cos(p->q[1]) * x->rt, sv = sin(p->q[1]) * x->rt;
+	double cu = cos(p->q[0]);
+	double su = sin(p->q[0]);
+	double cv = cos(p->q[1]) * x->rt;
+	double sv = sin(p->q[1]) * x->rt;
 	double wx = x->ra == x->rb ? cu : x->rb * cu;
-	double wy = x->ra == x->rb ? su : x->ra * su, wl = hypot(wx, wy);
+	double wy = x->ra == x->rb ? su : x->ra * su;
+	double wl = hypot(wx, wy);
 
 	for (int i = 0; i < 3; i++) {
 		p->p[i] = (((x->ra * cu) + (cv * wx / wl)) * x->f[0][i]) +
@@ -1003,9 +1162,10 @@ static void grid(const struct facemap *m, size_t n, size_t k, struct mpt *g,
 	}
 	for (size_t j = 1; j < k; j++) {
 		for (size_t i = 1; i < n; i++) {
-			double a = (double)i / (double)n,
-			       b = (double)j / (double)k;
-			const struct mpt *c = g + (k * w), *l = g + (j * w);
+			double a = (double)i / (double)n;
+			double b = (double)j / (double)k;
+			const struct mpt *c = g + (k * w);
+			const struct mpt *l = g + (j * w);
 			struct mpt *p = &g[(j * w) + i];
 
 			for (int t = 0; t < 2; t++) {
@@ -1034,17 +1194,23 @@ static void moment(struct mesh *x, int k, double n, double p0, double p1,
 		 n *
 			 ((p0 * p0) + (p1 * p1) + (p2 * p2) + (p0 * p1) +
 			  (p1 * p2) + (p2 * p0)) /
-			 24);
-	add_term(&x->z, 2 + k, x->o[k] * n * (p0 + p1 + p2) / 6);
+			 TRI_SQUARES);
+	add_term(&x->z, 2 + k, x->o[k] * n * (p0 + p1 + p2) / TRI_SUM);
 }
 
 // Adds the triangle a, b, c of a mesh, t at its corner a (mesh_sum).
 static void tri(struct mesh *x, const struct mpt *a, const struct mpt *b,
 		const struct mpt *c)
 {
-	const double *p0 = a->p, *p1 = b->p, *p2 = c->p;
-	double ax = p1[0] - p0[0], ay = p1[1] - p0[1], az = p1[2] - p0[2];
-	double bx = p2[0] - p0[0], by = p2[1] - p0[1], bz = p2[2] - p0[2];
+	const double *p0 = a->p;
+	const double *p1 = b->p;
+	const double *p2 = c->p;
+	double ax = p1[0] - p0[0];
+	double ay = p1[1] - p0[1];
+	double az = p1[2] - p0[2];
+	double bx = p2[0] - p0[0];
+	double by = p2[1] - p0[1];
+	double bz = p2[2] - p0[2];
 	double det = ((b->q[0] - a->q[0]) * (c->q[1] - a->q[1])) -
 		     ((b->q[1] - a->q[1]) * (c->q[0] - a->q[0]));
 	double sg = (det > 0 ? 1 : -1) * x->sense;
@@ -1052,7 +1218,10 @@ static void tri(struct mesh *x, const struct mpt *a, const struct mpt *b,
 	double ny = sg * ((az * bx) - (ax * bz));
 	double nz = sg * ((ax * by) - (ay * bx));
 	double w = sqrt((nx * nx) + (ny * ny) + (nz * nz));
-	double d1 = dist2(a, b), d2 = dist2(a, c), sn = 0, t = 0;
+	double d1 = dist2(a, b);
+	double d2 = dist2(a, c);
+	double sn = 0;
+	double t = 0;
 
 	x->l2 = fmax(x->l2, fmax(fmax(d1, d2), dist2(b, c)));
 	if (!(w > 0)) {
@@ -1062,7 +1231,7 @@ static void tri(struct mesh *x, const struct mpt *a, const struct mpt *b,
 		 (((p0[0] + p1[0] + p2[0]) * nx) +
 		  ((p0[1] + p1[1] + p2[1]) * ny) +
 		  ((p0[2] + p1[2] + p2[2]) * nz)) /
-			 18);
+			 TRI_VOL);
 	add_term(&x->z, 1, x->sense * w / 2);
 	moment(x, 0, nx, p0[0], p1[0], p2[0]);
 	moment(x, 1, ny, p0[1], p1[1], p2[1]);
@@ -1082,11 +1251,22 @@ static int mesh_sum(const struct facemap *m, struct acc *z)
 {
 	const struct sface *fc = &m->sh->f[m->f];
 	struct urange r = face_uses(m->sh, m->f);
-	size_t ne = r.end - r.first, n = 0, k = 0, w = 0;
-	struct mpt c[4], *g = NULL;
+	size_t ne = r.end - r.first;
+	size_t n = 0;
+	size_t k = 0;
+	size_t w = 0;
+	struct mpt c[4];
+	struct mpt *g = NULL;
 	struct mesh x;
-	struct vec nf, y = v3(0, 0, 0);
-	double h = 0, kd = 0, area = 0, vb = 0, ek = 0, rr = 0, kc = 0;
+	struct vec nf;
+	struct vec y = v3(0, 0, 0);
+	double h = 0;
+	double kd = 0;
+	double area = 0;
+	double vb = 0;
+	double ek = 0;
+	double rr = 0;
+	double kc = 0;
 
 	memset(&x, 0, sizeof(x));
 	x.s = fc->s;
@@ -1141,7 +1321,7 @@ static int mesh_sum(const struct facemap *m, struct acc *z)
 				tri(&x, a + w, a, a + w + 1);
 			}
 		}
-		if ((x.b[0] * x.l2 / 6) + near_of(&x.s) +
+		if ((x.b[0] * x.l2 / MESH_BOUND) + near_of(&x.s) +
 			    (ROUNDING * (len(x.s.o) + x.b[3])) <=
 		    DELTA) {
 			break;
@@ -1200,10 +1380,10 @@ struct solid_mass shape_mass_to(const struct shape *sh, double rel,
 		facemap_init(&fm, sh, i);
 		if (sh->f[i].s.kind != SF_PIPE || rules_bound(&fm) ||
 		    !mesh_sum(&fm, &z)) {
-			z = face_sum(&fm, COARSE, rel);
+			z = face_sum(&fm, (struct grain){ COARSE, rel });
 		}
 		if (z.unproven && sh->f[i].s.kind == SF_SPHERE) {
-			z = sphere_sum(sh, i, rel, z);
+			z = sphere_sum(sh, i, z, rel);
 		}
 		if (z.unproven && sh->f[i].s.kind == SF_SPHERE) {
 			mesh_sum(&fm, &z);

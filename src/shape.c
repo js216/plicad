@@ -151,9 +151,25 @@ static double near_root(double r0, double z0, double z1, double g0)
 // point to an ellipse", which halves an interval of one root and so
 // keeps every bit; the nearest point for y1 = 0 inside the evolute lies
 // off the axis.
-static void ellipse_near(double e0, double e1, double y0, double y1, double *x0,
-			 double *x1)
+// The half axes of an ellipse, e0 >= e1.
+struct axes {
+	double e0, e1;
+};
+
+// A point in the frame of an ellipse.
+struct ept {
+	double x0, x1;
+};
+
+static struct ept ellipse_near(struct axes ax, struct ept y)
 {
+	double e0 = ax.e0;
+	double e1 = ax.e1;
+	double y0 = y.x0;
+	double y1 = y.x1;
+	struct ept x = { 0, 0 };
+	double *x0 = &x.x0;
+	double *x1 = &x.x1;
 	double r0 = (e0 / e1) * (e0 / e1);
 	double numer = e0 * y0;
 	double denom = (e0 * e0) - (e1 * e1);
@@ -177,6 +193,7 @@ static void ellipse_near(double e0, double e1, double y0, double y1, double *x0,
 		*x0 = e0;
 		*x1 = 0;
 	}
+	return x;
 }
 
 double pipe_foot(const struct surf *s, struct vec p)
@@ -188,13 +205,14 @@ double pipe_foot(const struct surf *s, struct vec p)
 	int swap = s->r3 > s->r;
 	double e0 = swap ? s->r3 : s->r;
 	double e1 = swap ? s->r : s->r3;
-	double x0 = 0;
-	double x1 = 0;
+	struct axes ax = { e0, e1 };
+	struct ept at = { fabs(swap ? py : px), fabs(swap ? px : py) };
+	struct ept x = ellipse_near(ax, at);
+	double x0 = x.x0;
+	double x1 = x.x1;
 	double fx = 0;
 	double fy = 0;
 
-	ellipse_near(e0, e1, fabs(swap ? py : px), fabs(swap ? px : py), &x0,
-		     &x1);
 	fx = copysign(swap ? x1 : x0, px);
 	fy = copysign(swap ? x0 : x1, py);
 	return atan2(fy / s->r3, fx / s->r);
@@ -727,7 +745,7 @@ struct surf surf_read(char **w, size_t n, size_t *at, const char *where)
 	s.kind = k;
 	s.o = word_vec(&r, i + 1);
 	s.n = word_vec(&r, i + 1 + VEC_WORDS);
-	s.x = word_vec(&r, i + 1 + (2 * VEC_WORDS));
+	s.x = word_vec(&r, i + 1 + (2 * (size_t)VEC_WORDS));
 	check_frame(&r, s.n, s.x);
 	for (size_t j = 0; j < surf_sizes[k] && j < SIZES_MAX; j++) {
 		*surf_size(&s, j) = word_num(&r, i + 1 + FRAME_WORDS + j);

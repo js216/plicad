@@ -10,6 +10,13 @@
 #include <string.h>
 
 #define NARROW 0.88 // The share of the grid's width a glyph takes.
+enum {
+	FIRST_GLYPH = ' ', // The first character with a glyph,
+	END_GLYPH = 127, // and the one past the last.
+	ADVANCE = 5, // From a glyph to the next, in steps of the grid,
+	GRID_H = 6, // and the capital height.
+	SEG_START = 64 // The first room for segments.
+};
 
 // The strokes of the characters from the space to the tilde: a string of
 // x and y + 2 digits for each point of a stroke, the strokes
@@ -114,14 +121,15 @@ static const char *const glyph[95] = {
 
 static const char *glyph_of(unsigned char c)
 {
-	return c >= 32 && c < 127 ? glyph[c - 32] : glyph['?' - 32];
+	return c >= FIRST_GLYPH && c < END_GLYPH ? glyph[c - FIRST_GLYPH] :
+						   glyph['?' - FIRST_GLYPH];
 }
 
 double stroke_width(const char *s, double h)
 {
 	size_t n = strlen(s);
 
-	return n ? (5 * (double)n - 1) * h / 6 : 0;
+	return n ? (((ADVANCE * (double)n) - 1) * h) / GRID_H : 0;
 }
 
 int stroke_descends(const char *s)
@@ -139,17 +147,18 @@ int stroke_descends(const char *s)
 
 size_t stroke_text(const char *s, double h, double **seg)
 {
-	double u = h / 6;
-	size_t n = 0, cap = 64;
+	double u = h / GRID_H;
+	size_t n = 0;
+	size_t cap = SEG_START;
 
 	*seg = malloc(4 * cap * sizeof **seg);
 	if (!*seg) {
-		fprintf(stderr, "out of memory\n");
+		(void)fprintf(stderr, "out of memory\n");
 		exit(2);
 	}
 	for (size_t k = 0; s[k]; k++) {
 		const char *g = glyph_of((unsigned char)s[k]);
-		double x0 = 5 * u * (double)k;
+		double x0 = ADVANCE * u * (double)k;
 
 		// A stroke a run of points up to a blank; a segment between
 		// each two of them.
@@ -162,16 +171,17 @@ size_t stroke_text(const char *s, double h, double **seg)
 				cap *= 2;
 				*seg = realloc(*seg, 4 * cap * sizeof **seg);
 				if (!*seg) {
-					fprintf(stderr, "out of memory\n");
+					(void)fprintf(stderr,
+						      "out of memory\n");
 					exit(2);
 				}
 			}
 			// Narrowed about the middle of the grid, x 2.
 			(*seg)[4 * n] = x0 + (2 + (g[0] - '2') * NARROW) * u;
-			(*seg)[4 * n + 1] = (g[1] - '2') * u;
-			(*seg)[4 * n + 2] =
+			(*seg)[(4 * n) + 1] = (g[1] - '2') * u;
+			(*seg)[(4 * n) + 2] =
 				x0 + (2 + (g[2] - '2') * NARROW) * u;
-			(*seg)[4 * n + 3] = (g[3] - '2') * u;
+			(*seg)[(4 * n) + 3] = (g[3] - '2') * u;
 			n++;
 			g++;
 		}

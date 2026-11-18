@@ -33,6 +33,8 @@
 // each face that moves goes out with its surface and its surface at
 // each end of the range, moved in proportion.
 
+#include "expr.h"
+#include "fold.h"
 #include "geom.h"
 #include "shape.h"
 #include "stream.h"

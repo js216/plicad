@@ -695,6 +695,42 @@ static int finish_line(struct stream *st)
 	return 1;
 }
 
+// The words of the line from word i on, with a blank between each two:
+// the designation of a thread, a new string.
+static char *thread_spec(const struct stream *st, size_t i)
+{
+	size_t n = 1;
+	size_t at = 0;
+	char *spec = NULL;
+
+	for (size_t k = i; k < st->nw; k++) {
+		n += strlen(st->w[k]) + 1;
+	}
+	spec = xmalloc(n);
+	for (size_t k = i; k < st->nw; k++) {
+		size_t m = strlen(st->w[k]);
+
+		if (at) {
+			spec[at++] = ' ';
+		}
+		memcpy(spec + at, st->w[k], m);
+		at += m;
+	}
+	spec[at] = 0;
+	return spec;
+}
+
+// The depth D of a line thread REF deep D ..., above 0.
+static double thread_depth(struct stream *st)
+{
+	double deep = stream_num(st, 3);
+
+	if (!(deep > 0)) {
+		stream_fail(st, "the depth of a thread is above 0", st->w[3]);
+	}
+	return deep;
+}
+
 // Reads a line thread REF [deep D] DESIGNATION...; returns 0 if the
 // line is none.  A reference that names a set gives a thread for each
 // of its references.
@@ -703,41 +739,21 @@ static int thread_line(struct stream *st)
 	struct face_thread t = { NULL, NULL, 0 };
 	const struct face_set *in = NULL;
 	size_t i = 2;
-	size_t n = 1;
 
 	if (st->nw < 1 || strcmp(st->w[0], "thread") != 0) {
 		return 0;
 	}
 	if (st->nw > 3 && strcmp(st->w[2], "deep") == 0) {
-		t.deep = stream_num(st, 3);
+		t.deep = thread_depth(st);
 		i = 4;
-		if (!(t.deep > 0)) {
-			stream_fail(st, "the depth of a thread is above 0",
-				    st->w[3]);
-		}
 	}
 	if (st->nw <= i) {
 		stream_fail(st, "thread REF [deep D] DESIGNATION...", NULL);
 	}
-	for (size_t k = i; k < st->nw; k++) {
-		n += strlen(st->w[k]) + 1;
-	}
 	in = find_set(st, st->w[1]);
 	for (size_t r = 0; r < (in ? in->n : 1); r++) {
-		size_t at = 0;
-
 		t.ref = xstrdup(in ? in->refs[r].s : st->w[1]);
-		t.spec = xmalloc(n);
-		for (size_t k = i; k < st->nw; k++) {
-			size_t m = strlen(st->w[k]);
-
-			if (at) {
-				t.spec[at++] = ' ';
-			}
-			memcpy(t.spec + at, st->w[k], m);
-			at += m;
-		}
-		t.spec[at] = 0;
+		t.spec = thread_spec(st, i);
 		PUSH(st->threads, st->nthreads, st->capthreads, t);
 	}
 	return 1;

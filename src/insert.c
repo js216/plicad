@@ -106,9 +106,9 @@ static void read_row(struct names *nm, char **w, size_t n,
 	}
 }
 
-// Finds the type of the name in the table of path into t; returns 0, or
-// -1 if it has none.
-static int type_in(const char *path, const char *name, struct insert_type *t)
+// Finds the type of the name of r in the table of path into t; returns
+// 0, or -1 if it has none.
+static int type_in(const char *path, struct insert_ref r, struct insert_type *t)
 {
 	char *text = read_file(path);
 	struct src_line *ls = NULL;
@@ -124,7 +124,7 @@ static int type_in(const char *path, const char *name, struct insert_type *t)
 		size_t k = split_words(ls[i].text, w, WORDS_MAX);
 
 		xsnprintf(where, "%s:%u", path, ls[i].no);
-		if (k && strcmp(w[0], name) == 0) {
+		if (k && strcmp(w[0], r.name) == 0) {
 			read_row(&nm, w, k, t);
 			found = 0;
 		}
@@ -145,10 +145,10 @@ int insert_type(struct insert_ref r, struct insert_type *t)
 
 	if (f) {
 		(void)fclose(f);
-		found = type_in(near, r.name, t);
+		found = type_in(near, r, t);
 	}
 	if (found < 0) {
-		found = type_in(lib, r.name, t);
+		found = type_in(lib, r, t);
 	}
 	free(near);
 	free(lib);
@@ -176,80 +176,95 @@ static void ring_loop(struct shape *sh, const struct curve *c, int back)
 	shape_end_loop(sh, first);
 }
 
-// The ring of radius r at the height z along the bar b, x its frame.
-static struct curve bar_ring(const struct bar *b, struct vec x, double r,
-			     double z)
+// The rings of step k of the bar b, x its frame: ring[0] at its lower
+// end, ring[1] at its upper end.
+static void bar_rings(const struct bar *b, struct vec x, size_t k,
+		      struct curve ring[2])
 {
-	struct curve c;
+	for (int j = 0; j < 2; j++) {
+		struct curve *c = &ring[j];
 
-	memset(&c, 0, sizeof(c));
-	c.kind = CV_CIRCLE;
-	c.o = add(b->o, mul(b->n, z));
-	c.n = b->n;
-	c.x = x;
-	c.a = r;
-	return c;
+		memset(c, 0, sizeof(*c));
+		c->kind = CV_CIRCLE;
+		c->o = add(b->o, mul(b->n, b->z[k + (size_t)j]));
+		c->n = b->n;
+		c->x = x;
+		c->a = b->r[k];
+	}
+}
+
+// The side of step k of the bar b, x its frame, between its rings ring.
+static void bar_side(struct shape *sh, const char *name, const struct bar *b,
+		     struct vec x, size_t k, const struct curve ring[2])
+{
+	struct surf side = { SF_CYL, b->o, b->n, x, b->r[k], 0, 0 };
+	struct span up = { b->z[k], b->z[k + 1] };
+	struct curve seam[2];
+
+	for (int j = 0; j < 2; j++) {
+		memset(&seam[j], 0, sizeof(seam[j]));
+		seam[j].kind = CV_LINE;
+		seam[j].o = add(b->o, mul(x, j ? -b->r[k] : b->r[k]));
+		seam[j].x = b->n;
+	}
+	// The halves of the side, each over half a turn of u and the
+	// height of the step, counterclockwise about the outward
+	// normal: the lower ring forward, the upper one back.
+	for (int j = 0; j < 2; j++) {
+		struct span half = { j ? PI : 0, j ? 2 * PI : PI };
+		size_t first = 0;
+
+		shape_face(sh, side, 1, name);
+		first = sh->nu;
+		use(sh, &ring[0], half, 0);
+		use(sh, &seam[!j], up, 0);
+		use(sh, &ring[1], half, 1);
+		use(sh, &seam[j], up, 1);
+		shape_end_loop(sh, first);
+	}
+}
+
+// The disks of the ends of the bar b of ns steps, x its frame, and
+// between two steps a ring that faces the way the bar narrows; each uses
+// its rings, those of ring, the other way from the sides.
+static void bar_disks(struct shape *sh, const char *name, const struct bar *b,
+		      struct vec x, size_t ns, struct curve (*ring)[2])
+{
+	for (size_t k = 0; k <= ns; k++) {
+		struct surf disk = { SF_PLANE, b->o, b->n, x, 0, 0, 0 };
+
+		if (k == 0) {
+			disk.o = ring[0][0].o;
+			shape_face(sh, disk, -1, name);
+			ring_loop(sh, &ring[0][0], 1);
+		} else if (k == ns) {
+			disk.o = ring[k - 1][1].o;
+			shape_face(sh, disk, 1, name);
+			ring_loop(sh, &ring[k - 1][1], 0);
+		} else {
+			int down = b->r[k - 1] > b->r[k];
+			const struct curve *below = &ring[k - 1][1];
+			const struct curve *above = &ring[k][0];
+
+			disk.o = below->o;
+			shape_face(sh, disk, down ? 1 : -1, name);
+			ring_loop(sh, down ? below : above, !down);
+			ring_loop(sh, down ? above : below, down);
+		}
+	}
 }
 
 void bar_shape(struct shape *sh, struct bar b, const char *name)
 {
 	struct vec x = unit(
 		cross(b.n, fabs(b.n.x) < HALF ? v3(1, 0, 0) : v3(0, 1, 0)));
-	struct curve lo[BAR_MAX];
-	struct curve hi[BAR_MAX];
+	struct curve ring[BAR_MAX][2];
 	size_t ns = b.ns < BAR_MAX ? b.ns : BAR_MAX;
 
 	shape_init(sh, name);
 	for (size_t k = 0; k < ns; k++) {
-		struct surf side = { SF_CYL, b.o, b.n, x, b.r[k], 0, 0 };
-		struct span up = { b.z[k], b.z[k + 1] };
-		struct curve seam[2];
-
-		lo[k] = bar_ring(&b, x, b.r[k], b.z[k]);
-		hi[k] = bar_ring(&b, x, b.r[k], b.z[k + 1]);
-		for (int j = 0; j < 2; j++) {
-			memset(&seam[j], 0, sizeof(seam[j]));
-			seam[j].kind = CV_LINE;
-			seam[j].o = add(b.o, mul(x, j ? -b.r[k] : b.r[k]));
-			seam[j].x = b.n;
-		}
-		// The halves of the side, each over half a turn of u and the
-		// height of the step, counterclockwise about the outward
-		// normal: the lower ring forward, the upper one back.
-		for (int j = 0; j < 2; j++) {
-			struct span half = { j ? PI : 0, j ? 2 * PI : PI };
-			size_t first = 0;
-
-			shape_face(sh, side, 1, name);
-			first = sh->nu;
-			use(sh, &lo[k], half, 0);
-			use(sh, &seam[!j], up, 0);
-			use(sh, &hi[k], half, 1);
-			use(sh, &seam[j], up, 1);
-			shape_end_loop(sh, first);
-		}
+		bar_rings(&b, x, k, ring[k]);
+		bar_side(sh, name, &b, x, k, ring[k]);
 	}
-	// The disks of the ends, and between two steps a ring that faces
-	// the way the bar narrows; each uses its rings the other way from
-	// the sides.
-	for (size_t k = 0; k <= ns; k++) {
-		struct surf disk = { SF_PLANE, b.o, b.n, x, 0, 0, 0 };
-
-		if (k == 0) {
-			disk.o = lo[0].o;
-			shape_face(sh, disk, -1, name);
-			ring_loop(sh, &lo[0], 1);
-		} else if (k == ns) {
-			disk.o = hi[k - 1].o;
-			shape_face(sh, disk, 1, name);
-			ring_loop(sh, &hi[k - 1], 0);
-		} else {
-			int down = b.r[k - 1] > b.r[k];
-
-			disk.o = hi[k - 1].o;
-			shape_face(sh, disk, down ? 1 : -1, name);
-			ring_loop(sh, down ? &hi[k - 1] : &lo[k], !down);
-			ring_loop(sh, down ? &lo[k] : &hi[k - 1], down);
-		}
-	}
+	bar_disks(sh, name, &b, x, ns, ring);
 }

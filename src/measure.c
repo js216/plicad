@@ -307,11 +307,15 @@ struct memo {
 	struct solid_mass m, err;
 };
 
-static double accuracy = ACCURACY; // Of each integral, of the part,
-static int accuracy_set; // or for every part as -e says.
+// The memos so far, and the accuracy of each integral, of the part under
+// way.
+struct memos {
+	struct memo *v;
+	size_t n, cap;
+	double accuracy;
+};
 
-static struct memo *memos;
-static size_t nmemos, capmemos;
+enum { KEY_SPARE = 64 }; // Room a key takes beyond twice its bytes.
 
 // A key under way: its bytes, their number and room.
 struct key {
@@ -322,7 +326,7 @@ struct key {
 static void put_bytes(struct key *k, const void *p, size_t n)
 {
 	if (k->n + n > k->cap) {
-		k->cap = 2 * (k->n + n) + 64;
+		k->cap = (2 * (k->n + n)) + KEY_SPARE;
 		k->s = xrealloc(k->s, k->cap);
 	}
 	memcpy(k->s + k->n, p, n);
@@ -382,7 +386,7 @@ static struct key key_of(const struct shape *sh)
 		put_double(&k, f->s.r);
 		put_double(&k, f->s.r2);
 		put_double(&k, f->s.r3);
-		put_size(&k, (size_t)(f->sense + 1));
+		put_size(&k, (size_t)f->sense + 1);
 		put_size(&k, f->nloops);
 		put_bytes(&k, f->name, strlen(f->name) + 1);
 		for (size_t l = 0; l < f->nloops; l++) {
@@ -400,39 +404,44 @@ static struct key key_of(const struct shape *sh)
 	return k;
 }
 
+#define FNV_OFFSET 2166136261UL // The start of the FNV-1a hash,
+#define FNV_PRIME 16777619UL // and its factor.
+
 // The FNV-1a hash of the n bytes s.
 static unsigned long hash_of(const char *s, size_t n)
 {
-	unsigned long h = 2166136261UL;
+	unsigned long h = FNV_OFFSET;
 
 	for (size_t i = 0; i < n; i++) {
-		h = (h ^ (unsigned char)s[i]) * 16777619UL;
+		h = (h ^ (unsigned char)s[i]) * FNV_PRIME;
 	}
 	return h;
 }
 
 // The volume, area and moment of shape sh in its own frame, worked out
-// once for each content.
-static struct solid_mass own_mass(const struct shape *sh,
+// once for each content and accuracy, the memos of which are mt.
+static struct solid_mass own_mass(struct memos *mt, const struct shape *sh,
 				  struct solid_mass *err)
 {
 	struct key k = key_of(sh);
 	struct memo m;
 
-	put_double(&k, accuracy);
+	put_double(&k, mt->accuracy);
 	m.hash = hash_of(k.s, k.n);
-	for (size_t i = 0; i < nmemos; i++) {
-		if (memos[i].hash == m.hash && memos[i].n == k.n &&
-		    !memcmp(memos[i].key, k.s, k.n)) {
+	for (size_t i = 0; i < mt->n; i++) {
+		const struct memo *q = &mt->v[i];
+
+		if (q->hash == m.hash && q->n == k.n &&
+		    !memcmp(q->key, k.s, k.n)) {
 			free(k.s);
-			*err = memos[i].err;
-			return memos[i].m;
+			*err = q->err;
+			return q->m;
 		}
 	}
 	m.key = k.s;
 	m.n = k.n;
-	m.m = shape_mass_to(sh, accuracy, &m.err);
-	PUSH(memos, nmemos, capmemos, m);
+	m.m = shape_mass_to(sh, mt->accuracy, &m.err);
+	PUSH(mt->v, mt->n, mt->cap, m);
 	*err = m.err;
 	return m.m;
 }
@@ -466,21 +475,21 @@ static double part_accuracy(const struct part *p)
 }
 
 // The volume, area and moment of part p, where it stands: of its shape
-// in its own frame, moved by its place.
-static struct solid_mass solid_mass_of(const struct part *p,
+// in its own frame, moved by its place; mt the memos of own_mass.
+static struct solid_mass solid_mass_of(struct memos *mt, const struct part *p,
 				       struct solid_mass *err)
 {
 	struct solid_mass m;
 
 	if (p->solid) {
-		m = own_mass(p->solid, err);
+		m = own_mass(mt, p->solid, err);
 	} else {
 		struct part own = *p;
 		struct shape sh;
 
 		own.place = rig_id();
 		part_shape(&own, &sh);
-		m = own_mass(&sh, err);
+		m = own_mass(mt, &sh, err);
 		shape_free(&sh);
 	}
 	if (m.volume != 0) {
@@ -638,6 +647,9 @@ int main(int argc, char **argv)
 	struct mass_sum *m = NULL;
 	char *end = NULL;
 	int a = 1;
+	double accuracy = ACCURACY; // Of each integral, of the part,
+	int accuracy_set = 0; // or for every part as -e says.
+	struct memos mt = { NULL, 0, 0, ACCURACY };
 
 	if (argc == 4 && !strcmp(argv[1], "-e")) {
 		accuracy = strtod(argv[2], &end);
@@ -656,12 +668,13 @@ int main(int argc, char **argv)
 	n = read_parts(argv[a], &ps);
 	m = xmalloc((n + 1) * sizeof(*m));
 	for (size_t i = 0; i < n; i++) {
-		struct solid_mass mm = { 0, 0, { 0, 0, 0 } }, ee = mm;
+		struct solid_mass mm = { 0, 0, { 0, 0, 0 } };
+		struct solid_mass ee = mm;
 
 		m[i] = (struct mass_sum){ 0, v3(0, 0, 0), 0 };
-		accuracy = accuracy_set ? accuracy : part_accuracy(&ps[i]);
+		mt.accuracy = accuracy_set ? accuracy : part_accuracy(&ps[i]);
 		if (ps[i].solid || ps[i].base) {
-			mm = solid_mass_of(&ps[i], &ee);
+			mm = solid_mass_of(&mt, &ps[i], &ee);
 		}
 		if (ps[i].solid) {
 			struct shape sh;
@@ -692,10 +705,10 @@ int main(int argc, char **argv)
 		print_sum("total", total);
 	}
 	free(m);
-	for (size_t i = 0; i < nmemos; i++) {
-		free(memos[i].key);
+	for (size_t i = 0; i < mt.n; i++) {
+		free(mt.v[i].key);
 	}
-	free(memos);
+	free(mt.v);
 	free_parts(ps, n);
 	close_stdout();
 	return 0;

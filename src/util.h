@@ -102,4 +102,11 @@ void sort_doubles(double *v, size_t n);
 // Whether v is a finite number no larger than NUM_MAX either way.
 int num_ok(double v);
 
+// Reads *in by fmt as sscanf does, for the conversions %lf, %d and %Ns
+// (each of them suppressed with a *, as %*f) and %n, and the blanks and
+// other characters between them: each number by strtod or strtol, its
+// end checked.  Returns the number of conversions assigned; *in is set
+// past what it read.
+int scan(const char **in, const char *fmt, ...);
+
 #endif

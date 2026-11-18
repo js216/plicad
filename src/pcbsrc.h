@@ -13,6 +13,7 @@
 
 enum { PAD_RECT, PAD_RRECT, PAD_CIRCLE }; // The shapes of pads.
 enum { LAYER_SIGNAL, LAYER_PLANE }; // The kinds of copper layers.
+enum { PCB_CUTS = 8 }; // The most cutouts of a board.
 
 // A pad of a footprint: its name (the pin number), its shape and its
 // box from the origin of the footprint, as seen from the top; a hole
@@ -56,6 +57,21 @@ struct pcb_part {
 // A pad of a part on a net: the part and the index of its pad.
 struct pcb_end {
 	size_t part, pad;
+};
+
+// A point on the board.
+struct pcb_pt {
+	double x, y;
+};
+
+// A segment from a to b.
+struct pcb_seg {
+	struct pcb_pt a, b;
+};
+
+// A disk: its center and radius.
+struct pcb_disk {
+	double x, y, r;
 };
 
 // A net: its name, the plane layer it is on (-1 for none), the width of
@@ -122,7 +138,7 @@ struct pcb {
 	double board[4]; // The outline, a rectangle.
 	// The cutouts, rectangles through the board, which are edge like
 	// the outline, and the radii of their corners.
-	double cut[8][4], cutr[8];
+	double cut[PCB_CUTS][4], cutr[PCB_CUTS];
 	size_t ncut;
 	double clearance, track, via_dia, via_drill, edge;
 	// The classes of class CLASS width W: their names and widths.
@@ -175,6 +191,20 @@ struct pcb_spot {
 	int layer, shape;
 };
 
+// The footprint library of a run: the directories of the footprints of
+// each library (-L LIB, LIB/footprints), and the footprints read so far,
+// by name, which every board read shares.
+struct pcb_lib {
+	char **dir;
+	size_t ndir;
+	struct fp **fp;
+	size_t nfp;
+};
+// Adds the footprints of the library at path to l.
+void pcb_add_lib(struct pcb_lib *l, const char *path);
+// Frees the directories of l.
+void pcb_free_lib(struct pcb_lib *l);
+
 void *pcb_alloc(size_t n);
 void *pcb_grow(void *p, size_t n, size_t size);
 char *pcb_strdup(const char *s);
@@ -188,8 +218,8 @@ void pcb_error(struct pcb *b, int line, const char *fmt, ...);
 // f (which may be NULL): its section of the group (group GROUP up to the
 // next), or for a NULL group the board's (before any group line); the
 // other sections are kept as they are.
-void pcb_read(struct pcb *b, const char *file, char **lib, size_t nlib,
-	      FILE *lock, const char *group);
+void pcb_read(struct pcb *b, const char *file, struct pcb_lib *lib, FILE *lock,
+	      const char *group);
 // Frees what pcb_read and the programs made of the board, but the
 // footprints, which every board read shares.
 void pcb_free(struct pcb *b);
@@ -197,20 +227,29 @@ void pcb_free(struct pcb *b);
 // copper), the others as they were, the board's first and the groups'
 // in the order of their names.
 void pcb_write_lock(const struct pcb *b, FILE *f);
-// A pass of a program over one section of the lock: the group's (NULL,
-// the board's), read from in (which may be NULL: nothing locked yet),
-// the whole lock written to out; returns non-zero on a fault.
-typedef int pcb_pass(const char *file, char **lib, size_t nlib,
-		     const char *group, FILE *in, FILE *out);
+// A run of a program over the lock of the source file, its footprints
+// from lib: over one section, the group's (NULL, the board's), read from
+// in (which may be NULL: nothing locked yet), the whole lock written to
+// out; and the program's own, ctx, the same for every pass.
+struct pcb_run {
+	const char *file;
+	struct pcb_lib *lib;
+	const char *group;
+	FILE *in;
+	FILE *out;
+	void *ctx;
+};
+// A pass of a program over the section of r; returns non-zero on a
+// fault.
+typedef int pcb_pass(const struct pcb_run *r);
 // Runs pass over every group of a block statement of the source, the
 // deepest first (a group within another before it; of one depth, in the
 // order of their names, the copies last), then over the board, each on
 // the lock the one before wrote; or over the group alone, if one is
 // given.  A copy is no pass: its sections become its source's, renamed
-// part for part and net for net.  The lock is read from in and the last
-// pass writes to out.  Returns non-zero if any pass failed.
-int pcb_passes(const char *file, char **lib, size_t nlib, const char *group,
-	       FILE *in, FILE *out, pcb_pass *pass);
+// part for part and net for net.  The lock is read from the in of r and
+// the last pass writes to its out.  Returns non-zero if any pass failed.
+int pcb_passes(const struct pcb_run *r, pcb_pass *pass);
 // Tells the faults of the copies (block GROUP as GROUP): a source that
 // is no block, or is or holds a copy; a copy and source of which one
 // holds the other, or the source shallower; the two not of the same
@@ -240,7 +279,7 @@ double pcb_edge_dist(const struct pcb *b, int box, const double s[4], double r,
 // The keep-out of pad k of part q, a hole a screw goes through: its
 // center and radius on the board; returns 0 if it has none.
 int pcb_keepout(const struct pcb *b, const struct pcb_part *q, size_t k,
-		double *x, double *y, double *r);
+		struct pcb_disk *d);
 // Whether placed parts q and o clash: their courtyards overlap on one
 // side, or a keep-out of either overlaps the courtyard of the other
 // (a keep-out is on both sides), whatever their nets.  The fault, in
@@ -257,7 +296,7 @@ int pcb_in_keepout(const struct pcb *b, double x, double y, double rad,
 		   char *why, size_t n);
 // Finds a pin, PART.PIN (by number, or by name for a part with pin
 // names): the part, and the first pad of the pin; returns 0 if none.
-int pcb_pin(const struct pcb *b, const char *s, size_t *part, size_t *pad);
+int pcb_pin(const struct pcb *b, const char *s, struct pcb_end *at);
 // The net of pad k of part q, or -1.
 int pcb_net_of(const struct pcb *b, size_t q, size_t k);
 // The words of a statement, joined.
@@ -288,7 +327,7 @@ double pcb_link_width(const struct pcb *b, int n, const char *a,
 // The width of the neck of a pad of part q on plane net n, to its via or
 // its plane: the net's, but no wider than rule track on a small part of
 // two pins, which takes heat alike at its two pads.
-double pcb_neck_width(const struct pcb *b, int n, size_t q);
+double pcb_neck_width(const struct pcb *b, const struct pcb_part *q, int n);
 // Adds a connection; returns its index.
 int pcb_add_link(struct pcb *b, int n, const char *a, const char *bb, double w);
 // The designator of a part, or its name if it has none: for the lock,
@@ -306,6 +345,11 @@ struct pcb_stroke {
 		// of a designator that found no room.
 	int bottom;
 };
+// The strokes of the silkscreen: n of them at s.
+struct pcb_strokes {
+	struct pcb_stroke *s;
+	size_t n;
+};
 // The silkscreen of the board, in the stroke font (stroke.h): the lines
 // of each placed part's footprint, its designator, and the text of each
 // text statement (its baseline's left end at X Y, its capitals H high).
@@ -318,11 +362,10 @@ struct pcb_stroke {
 // side placed before it, and inside the board by the edge rule; the
 // designators with the fewest places clear choose first; with none
 // clear, a designator takes its first place.  Nothing moves for them.
-// On the bottom a text reads from below.  Returns the number of strokes,
-// in *s.
-size_t pcb_silk(const struct pcb *b, struct pcb_stroke **s);
+// On the bottom a text reads from below.  Returns the strokes.
+struct pcb_strokes pcb_silk(const struct pcb *b);
 // The box of the designator of part q among the strokes, if it has one.
-int pcb_ref_box(const struct pcb_stroke *s, size_t n, size_t q, double box[4]);
+int pcb_ref_box(const struct pcb_strokes *ss, size_t q, double box[4]);
 // What would give the designator of part q room among the strokes, for
 // a fault, into buf: "; REF is W x H mm at SIZE (tried SIDES)", then the
 // first place clear, searched as the rule does but at the gap, in the
@@ -332,11 +375,11 @@ int pcb_ref_box(const struct pcb_stroke *s, size_t n, size_t q, double box[4]);
 // most, the part that needs most and the gap from it, to 0.1 mm, "; try:
 // place PART WAY of PART GAP (E mm more SIDE)"; else "; nothing within
 // 2 mm: move PART or a neighbor (NAME)", the part in the way.
-void pcb_ref_hint(const struct pcb *b, const struct pcb_stroke *s, size_t n,
-		  size_t q, char *buf, size_t len);
-// The opening of the solder mask round pad k of part q, as a box; 0 if
-// the pad is not on that side (bottom or not).
-int pcb_opening(const struct pcb *b, size_t q, size_t k, int bottom,
+void pcb_ref_hint(const struct pcb *b, const struct pcb_strokes *ss, size_t q,
+		  char *buf, size_t len);
+// The opening of the solder mask round the pad at, as a box; 0 if the
+// pad is not on that side (bottom or not).
+int pcb_opening(const struct pcb *b, struct pcb_end at, int bottom,
 		double box[4]);
 // The distance from (x, y) to the copper of a pad, 0 inside it.
 double pcb_spot_dist(const struct pcb_spot *s, double x, double y);
@@ -356,8 +399,7 @@ int pcb_small_two_pin(const struct pcb_part *q);
 // of its pour, joined by a neck track instead (a thermal relief): a pad
 // of a small part of two pins, so it heats as its other pad does.
 int pcb_relieved(const struct pcb *b, size_t q, size_t k);
-// The distance from (x, y) to the segment (ax, ay)-(bx, by).
-double pcb_seg_dist(double x, double y, double ax, double ay, double bx,
-		    double by);
+// The distance from p to the segment s.
+double pcb_seg_dist(struct pcb_pt p, struct pcb_seg s);
 
 #endif

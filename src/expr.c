@@ -22,6 +22,10 @@ enum {
 // exact integer.  FLOOR_SLACK covers that.
 #define FLOOR_SLACK 1e-9
 
+#define TURN_DEG 360.0 // A whole turn, in degrees,
+#define HALF_TURN_DEG 180.0 // half of it,
+#define RIGHT_DEG 90.0 // and a right angle.
+
 const char *expr_where(const struct names *nm)
 {
 	return nm->where ? nm->where : "";
@@ -389,19 +393,19 @@ static struct ival atan2_range(const struct names *nm, struct ival y,
 	if (y.lo <= 0 && y.hi >= 0 && x.lo <= 0 && x.hi >= 0) {
 		expr_fail(nm, "the range of atan2 holds the origin", NULL);
 	}
-	for (int k = 0; k < 4; k++) {
+	for (unsigned k = 0; k < 4; k++) {
 		double a =
-			atan2(k & 1 ? y.hi : y.lo, k & 2 ? x.hi : x.lo) / rad;
+			atan2(k & 1U ? y.hi : y.lo, k & 2U ? x.hi : x.lo) / rad;
 
 		if (cut && a < 0) {
-			a += 360;
+			a += TURN_DEG;
 		}
 		r.lo = fmin(r.lo, a);
 		r.hi = fmax(r.hi, a);
 	}
 	if (cut && v < 0) {
-		r.lo -= 360;
-		r.hi -= 360;
+		r.lo -= TURN_DEG;
+		r.hi -= TURN_DEG;
 	}
 	return r;
 }
@@ -420,7 +424,8 @@ static struct ival apply_range(const struct names *nm, enum fn f,
 	}
 	switch (f) {
 	case F_TAN:
-		if (floor((lo[0] + 90) / 180) < floor((hi[0] + 90) / 180)) {
+		if (floor((lo[0] + RIGHT_DEG) / HALF_TURN_DEG) <
+		    floor((hi[0] + RIGHT_DEG) / HALF_TURN_DEG)) {
 			expr_fail(nm, "the range of tan holds a pole", NULL);
 		}
 		r.lo = apply(f, lo);
@@ -430,10 +435,11 @@ static struct ival apply_range(const struct names *nm, enum fn f,
 	case F_COS:
 		r.lo = fmin(apply(f, lo), apply(f, hi));
 		r.hi = fmax(apply(f, lo), apply(f, hi));
-		if (holds(lo[0], hi[0], f == F_SIN ? 90 : 0, 360)) {
+		if (holds(lo[0], hi[0], f == F_SIN ? RIGHT_DEG : 0, TURN_DEG)) {
 			r.hi = 1;
 		}
-		if (holds(lo[0], hi[0], f == F_SIN ? -90 : 180, 360)) {
+		if (holds(lo[0], hi[0], f == F_SIN ? -RIGHT_DEG : HALF_TURN_DEG,
+			  TURN_DEG)) {
 			r.lo = -1;
 		}
 		break;
@@ -554,9 +560,9 @@ static struct ival times(const struct names *nm, struct ival a, struct ival b,
 	if (divide && b.lo <= 0 && b.hi >= 0 && b.lo < b.hi) {
 		expr_fail(nm, "the range of a divisor holds 0", NULL);
 	}
-	for (int k = 0; k < 4; k++) {
-		double x = k & 1 ? a.hi : a.lo;
-		double y = k & 2 ? b.hi : b.lo;
+	for (unsigned k = 0; k < 4; k++) {
+		double x = k & 1U ? a.hi : a.lo;
+		double y = k & 2U ? b.hi : b.lo;
 		double q = divide ? x / y : x * y;
 
 		r.lo = fmin(r.lo, q);
@@ -894,6 +900,28 @@ static struct tol cut_tolerance(struct names *nm, char *buf,
 	return t;
 }
 
+// Gives the length or angle s of the name, a base value without a
+// tolerance of its own, the tolerance of the statement above it in t.
+static void default_tol(const struct names *nm, const struct sym *s,
+			const char *name, struct tol *t)
+{
+	if (!s->base || t->stated || s->kind == KIND_NUMBER) {
+		return;
+	}
+	if (!nm->tol_set) {
+		expr_fail(nm,
+			  s->kind == KIND_LENGTH ?
+				  "a length needs a tolerance: NAME = "
+				  "EXPR +- TOL, or a tolerance "
+				  "statement above it" :
+				  "an angle needs a tolerance: NAME = "
+				  "EXPR +- TOL, or a tolerance "
+				  "statement above it",
+			  name);
+	}
+	t->up = t->down = s->kind == KIND_LENGTH ? nm->tol_len : nm->tol_ang;
+}
+
 void define(struct names *nm, const char *name, const char *text,
 	    int from_include)
 {
@@ -920,21 +948,7 @@ void define(struct names *nm, const char *name, const char *text,
 	v = q.r;
 	s.base = !sc.named;
 	s.kind = s.base ? kind_of(q) : KIND_NUMBER;
-	if (s.base && !t.stated && s.kind != KIND_NUMBER) {
-		if (!nm->tol_set) {
-			expr_fail(nm,
-				  s.kind == KIND_LENGTH ?
-					  "a length needs a tolerance: NAME = "
-					  "EXPR +- TOL, or a tolerance "
-					  "statement above it" :
-					  "an angle needs a tolerance: NAME = "
-					  "EXPR +- TOL, or a tolerance "
-					  "statement above it",
-				  name);
-		}
-		t.up = t.down = s.kind == KIND_LENGTH ? nm->tol_len :
-							nm->tol_ang;
-	}
+	default_tol(nm, &s, name, &t);
 	if (s.base) {
 		v.lo = v.v - t.down;
 		v.hi = v.v + t.up;

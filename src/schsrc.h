@@ -162,8 +162,18 @@ struct sch {
 void *sch_alloc(size_t n);
 char *sch_strdup(const char *s);
 void sch_warn(const char *fmt, ...);
-// Whether to tell each placement on stderr, with its line and rule.
-extern int sch_verbose;
+// The symbols of a run: the directories of each library, the shapes
+// and devices read so far, which every page read shares, and whether to
+// tell each placement on stderr, with its line and rule.
+struct sch_lib {
+	char **dir;
+	size_t ndir;
+	struct sch_shape **shape;
+	size_t nshape;
+	struct sch_device **dev;
+	size_t ndev;
+	int verbose;
+};
 // Prints a message as sch_warn does and exits.  As a macro, the exit is
 // visible in every caller and to the analyzer.
 #define sch_die(...) (sch_warn(__VA_ARGS__), exit(EXIT_FAILURE))
@@ -174,10 +184,13 @@ extern int sch_verbose;
 // that cannot be placed is not placed); the faults of the file as a
 // whole (a page name twice, a sheet port on one page alone) are told
 // with page 0.  Returns the number of faults.
-int sch_read(struct sch *s, const char *file, size_t k, char **lib,
-	     size_t nlib);
-// Where the pin p of part q stands, in grid units, and the way it points.
-void sch_pin_at(const struct sch_part *q, size_t p, int *x, int *y, int *dir);
+int sch_read(struct sch *s, const char *file, size_t k, struct sch_lib *lib);
+// Where a pin stands, in grid units, and the way it points.
+struct sch_at {
+	int x, y, dir;
+};
+// Where the pin p of part q stands.
+struct sch_at sch_pin_at(const struct sch_part *q, size_t p);
 // The box of part q in grid units, turned as it is.
 void sch_box(const struct sch_part *q, double b[4]);
 // The pin number of pin p of the device.
@@ -187,7 +200,10 @@ double sch_text_width(const char *s, double size);
 // The size in points of the label of a part: its designator over its
 // value and rating.  The designator is taken as its prefix and three
 // digits until it is known.
-void sch_label_size(const struct sch_part *q, double *w, double *h);
+struct sch_dims {
+	double w, h;
+};
+struct sch_dims sch_label_size(const struct sch_part *q);
 // The symbols of the library next to the program: ../lib/symbols from
 // the directory of argv0.
 char *sch_default_lib(const char *argv0);

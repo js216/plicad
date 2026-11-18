@@ -748,6 +748,30 @@ static void add_wall(struct scene *sc, const struct wall *w, int fill)
 	}
 }
 
+// Adds the walls of hole h, w round it, with its countersink.
+static void add_hole_walls(struct scene *sc, struct wall *w,
+			   const struct hole *h)
+{
+	const struct part *p = sc->p;
+	double zm = h->side > 0 ? -h->h : -p->t + h->h;
+
+	w->c = pt2(h->cx, h->cy);
+	w->r0 = w->r1 = h->r;
+	w->z0 = h->side > 0 ? zm : 0;
+	w->z1 = h->side < 0 ? zm : -p->t;
+	if (h->blind > 0) {
+		w->z0 = h->bside > 0 ? 0 : -p->t + h->blind;
+		w->z1 = h->bside > 0 ? -h->blind : -p->t;
+	}
+	add_wall(sc, w, 0);
+	if (h->side) {
+		w->z0 = h->side > 0 ? 0 : -p->t;
+		w->z1 = zm;
+		w->r0 = h->rc;
+		add_wall(sc, w, 0);
+	}
+}
+
 // Adds the walls of the arcs and holes of slab face f, seen from the
 // side: the arcs of the outline, and each hole with its countersink.
 static void add_walls(struct scene *sc, size_t f)
@@ -774,26 +798,8 @@ static void add_walls(struct scene *sc, size_t f)
 	w.a0 = 0;
 	w.da = 2 * PI;
 	for (size_t i = 0; i < p->nholes; i++) {
-		const struct hole *h = &p->holes[i];
-		double zm = h->side > 0 ? -h->h : -p->t + h->h;
-
-		if (h->face != f) {
-			continue;
-		}
-		w.c = pt2(h->cx, h->cy);
-		w.r0 = w.r1 = h->r;
-		w.z0 = h->side > 0 ? zm : 0;
-		w.z1 = h->side < 0 ? zm : -p->t;
-		if (h->blind > 0) {
-			w.z0 = h->bside > 0 ? 0 : -p->t + h->blind;
-			w.z1 = h->bside > 0 ? -h->blind : -p->t;
-		}
-		add_wall(sc, &w, 0);
-		if (h->side) {
-			w.z0 = h->side > 0 ? 0 : -p->t;
-			w.z1 = zm;
-			w.r0 = h->rc;
-			add_wall(sc, &w, 0);
+		if (p->holes[i].face == f) {
+			add_hole_walls(sc, &w, &p->holes[i]);
 		}
 	}
 }
@@ -1995,74 +2001,103 @@ static void read_view(const struct place *c, char *l, struct sview *v)
 	v->cut = v->section ? field_num(c, cut, 1) : 0;
 }
 
+// The views under way: of the n parts ps, at c, the material of no
+// mark (or NULL), and whether a view has come.
+struct views_in {
+	const struct part *ps;
+	size_t n;
+	struct place c;
+	const char *unmarked;
+	int seen;
+};
+
+// Takes the record l at *c if it is #line N NAME: prints it and moves
+// *c to the line before line N of NAME; returns whether it was.
+static int line_mark(struct place *c, char *l)
+{
+	static const char head[] = "#line ";
+	char *end = NULL;
+	unsigned long k = 0;
+
+	if (strncmp(l, head, sizeof(head) - 1) != 0) {
+		return 0;
+	}
+	k = strtoul(l + sizeof(head) - 1, &end, DECIMAL);
+	if (end == l + sizeof(head) - 1 || *end != ' ' || !k) {
+		die("%s:%u: expected #line N NAME", c->what, c->line);
+	}
+	printf("%s\n", l);
+	c->what = end + 1;
+	c->line = (unsigned)(k - 1);
+	return 1;
+}
+
+// The material of the rest l of an unmarked record at c, or NULL for -.
+static const char *read_unmarked(const struct place *c, char *l)
+{
+	char *w = split_first(&l);
+
+	if (!w || split_first(&l)) {
+		die("%s:%u: expected unmarked MATERIAL|-", c->what, c->line);
+	}
+	return strcmp(w, "-") != 0 ? w : NULL;
+}
+
+// Takes the record l of the views in: prints a view, or passes the
+// record on for smdim.
+static void view_record(struct views_in *in, char *l)
+{
+	char *w = NULL;
+
+	if (l[0] == ' ' || l[0] == '\t') {
+		if (!in->seen) {
+			die("%s:%u: a record before the first view", in->c.what,
+			    in->c.line);
+		}
+		printf("%s\n", l);
+		return;
+	}
+	if (strncmp(l, "units ", strlen("units ")) == 0) {
+		printf("%s\n", l);
+		return;
+	}
+	w = split_first(&l);
+	if (!w) {
+		return;
+	}
+	if (strcmp(w, "unmarked") == 0) {
+		in->unmarked = read_unmarked(&in->c, l);
+	} else if (strcmp(w, "view") == 0) {
+		struct sview v;
+		char where[WHERE_LEN];
+
+		memset(&v, 0, sizeof(v));
+		xsnprintf(where, "%s:%u", in->c.what, in->c.line);
+		read_view(&in->c, l, &v);
+		v.unmarked = in->unmarked;
+		v.where = where;
+		print_one(in->ps, in->n, v);
+		in->seen = 1;
+	} else {
+		die("%s:%u: unknown record %s", in->c.what, in->c.line, w);
+	}
+}
+
 // Prints each view that the records of input ask for, of the n parts
 // ps, and passes on the records for smdim.
 static void print_views(const struct part *ps, size_t n, char *input)
 {
-	static const char head[] = "#line ";
-	struct place c = { "stdin", 0 };
-	const char *unmarked = NULL;
-	int seen = 0;
+	struct views_in in = { ps, n, { "stdin", 0 }, NULL, 0 };
 	char *rest = input;
 	char *l = NULL;
 
 	while ((l = next_line(&rest)) != NULL) {
-		char *w = NULL;
-
-		c.line++;
-		if (strncmp(l, head, sizeof(head) - 1) == 0) {
-			char *end = NULL;
-			unsigned long k =
-				strtoul(l + sizeof(head) - 1, &end, DECIMAL);
-
-			if (end == l + sizeof(head) - 1 || *end != ' ' || !k) {
-				die("%s:%u: expected #line N NAME", c.what,
-				    c.line);
-			}
-			printf("%s\n", l);
-			c.what = end + 1;
-			c.line = (unsigned)(k - 1);
-			continue;
-		}
-		if (l[0] == ' ' || l[0] == '\t') {
-			if (!seen) {
-				die("%s:%u: a record before the first view",
-				    c.what, c.line);
-			}
-			printf("%s\n", l);
-			continue;
-		}
-		if (strncmp(l, "units ", strlen("units ")) == 0) {
-			printf("%s\n", l);
-			continue;
-		}
-		w = split_first(&l);
-		if (!w) {
-			continue;
-		}
-		if (strcmp(w, "unmarked") == 0) {
-			w = split_first(&l);
-			if (!w || split_first(&l)) {
-				die("%s:%u: expected unmarked MATERIAL|-",
-				    c.what, c.line);
-			}
-			unmarked = strcmp(w, "-") != 0 ? w : NULL;
-		} else if (strcmp(w, "view") == 0) {
-			struct sview v;
-			char where[WHERE_LEN];
-
-			memset(&v, 0, sizeof(v));
-			xsnprintf(where, "%s:%u", c.what, c.line);
-			read_view(&c, l, &v);
-			v.unmarked = unmarked;
-			v.where = where;
-			print_one(ps, n, v);
-			seen = 1;
-		} else {
-			die("%s:%u: unknown record %s", c.what, c.line, w);
+		in.c.line++;
+		if (!line_mark(&in.c, l)) {
+			view_record(&in, l);
 		}
 	}
-	if (!seen) {
+	if (!in.seen) {
 		die("stdin: no view");
 	}
 }

@@ -370,6 +370,41 @@ static struct bface cap_surface(const struct part *p, size_t f, int k)
 		       fabs(z - za), (m->ang > 0) == (k != 0) ? 1 : -1);
 }
 
+// Uses the n halves h of an outline loop on the cap k: the top cap
+// (k 0) runs them forward, the bottom cap back.
+static void cap_loop(struct ctx *c, int k, const struct half *h, size_t n)
+{
+	if (!k) {
+		for (size_t j = 0; j < n; j++) {
+			use(c->b, c->et[h[j].e], h[j].fwd);
+		}
+	} else {
+		for (size_t j = n; j-- > 0;) {
+			use(c->b, c->eb[h[j].e], !h[j].fwd);
+		}
+	}
+}
+
+// Adds the loops of the holes of the face of o to the cap face fi of o.
+static void cap_holes(struct ctx *c, struct origin o, size_t fi)
+{
+	const struct part *p = c->p;
+	struct brep *b = c->b;
+	int k = o.from == F_FAR;
+
+	for (size_t i = 0; i < p->nholes; i++) {
+		size_t first = b->nu;
+		size_t e = k ? c->hb[i] : c->ht[i];
+
+		if (p->holes[i].face != o.idx || e == NONE) {
+			continue;
+		}
+		use(b, e, k);
+		end_loop(b, first);
+		b->f[fi].nloops++;
+	}
+}
+
 static void cap_faces(struct ctx *c, size_t f)
 {
 	const struct part *p = c->p;
@@ -385,29 +420,11 @@ static void cap_faces(struct ctx *c, size_t f)
 		for (size_t l = 0; l < nl; l++) {
 			size_t first = b->nu;
 
-			if (!k) {
-				for (size_t j = st[l]; j < st[l + 1]; j++) {
-					use(b, c->et[hs[j].e], hs[j].fwd);
-				}
-			} else {
-				for (size_t j = st[l + 1]; j-- > st[l];) {
-					use(b, c->eb[hs[j].e], !hs[j].fwd);
-				}
-			}
+			cap_loop(c, k, hs + st[l], st[l + 1] - st[l]);
 			end_loop(b, first);
 			b->f[fi].nloops++;
 		}
-		for (size_t i = 0; i < p->nholes; i++) {
-			size_t first = b->nu;
-
-			if (p->holes[i].face != f ||
-			    (k ? c->hb[i] : c->ht[i]) == NONE) {
-				continue;
-			}
-			use(b, k ? c->hb[i] : c->ht[i], k);
-			end_loop(b, first);
-			b->f[fi].nloops++;
-		}
+		cap_holes(c, o, fi);
 	}
 	free(hs);
 	free(st);

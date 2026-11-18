@@ -2,14 +2,18 @@
 // util.c -- Errors, memory, arrays, words and whole-file reading
 // Copyright (c) 2026 Jakob Kastelic
 
-#define _POSIX_C_SOURCE 200112L // For readlink.
-
 #include "util.h"
+#include <ctype.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+enum { DECIMAL_BASE = 10 }; // The base of decimal numbers.
+
+enum { PATH_LEN = 4096 }; // Room for the path of the program.
 
 void close_stdout(void)
 {
@@ -181,7 +185,7 @@ char *base_name(const char *path)
 
 char *lib_file(const char *dir, const char *name)
 {
-	char exe[4096];
+	char exe[PATH_LEN];
 	ssize_t len = readlink("/proc/self/exe", exe, sizeof exe - 1);
 	size_t n = 0;
 	char *out = NULL;
@@ -199,7 +203,7 @@ char *lib_file(const char *dir, const char *name)
 		}
 		*slash = '\0';
 	}
-	n = strlen(exe) + strlen(dir) + strlen(name) + 7;
+	n = strlen(exe) + strlen(dir) + strlen(name) + sizeof("/lib//");
 	out = xmalloc(n);
 	(void)snprintf(out, n, "%s/lib/%s%s%s", exe, dir, *dir ? "/" : "",
 		       name);
@@ -282,4 +286,132 @@ void sort_doubles(double *v, size_t n)
 			v[j] = x;
 		}
 	}
+}
+
+// A conversion of a format of scan: suppressed, its width (0 none), and
+// its letter.
+struct conv {
+	int skip;
+	size_t width;
+	char kind;
+};
+
+// The conversion at *fmt, past its %, which is set to its letter.
+static struct conv conv_at(const char **fmt)
+{
+	struct conv c = { 0, 0, 0 };
+	const char *f = *fmt;
+
+	if (*f == '*') {
+		c.skip = 1;
+		f++;
+	}
+	while (isdigit((unsigned char)*f)) {
+		c.width = (c.width * DECIMAL_BASE) + (size_t)(*f - '0');
+		f++;
+	}
+	if (*f == 'l') {
+		f++;
+	}
+	c.kind = *f;
+	*fmt = f;
+	return c;
+}
+
+// Reads the word at *p, a run of up to c->width bytes but blanks, into
+// the array of the next argument unless suppressed; *p is set past it.
+static int scan_word(const char **p, const struct conv *c, va_list *ap)
+{
+	const char *s = *p;
+	char *out = c->skip ? NULL : va_arg(*ap, char *);
+	size_t n = 0;
+
+	while (s[n] && !isspace((unsigned char)s[n]) &&
+	       (!c->width || n < c->width)) {
+		n++;
+	}
+	if (!n) {
+		return 0;
+	}
+	if (out) {
+		memcpy(out, s, n);
+		out[n] = 0;
+	}
+	*p = s + n;
+	return 1;
+}
+
+// Reads the number at *p by the conversion c into the next argument
+// unless suppressed; *p is set past it.  Returns 0 if there is none.
+static int scan_number(const char **p, const struct conv *c, va_list *ap)
+{
+	char *end = NULL;
+
+	if (c->kind == 'd') {
+		long v = strtol(*p, &end, DECIMAL_BASE);
+
+		if (end == *p) {
+			return 0;
+		}
+		if (!c->skip) {
+			*va_arg(*ap, int *) = (int)v;
+		}
+	} else {
+		double v = strtod(*p, &end);
+
+		if (end == *p) {
+			return 0;
+		}
+		if (!c->skip) {
+			*va_arg(*ap, double *) = v;
+		}
+	}
+	*p = end;
+	return 1;
+}
+
+int scan(const char **in, const char *fmt, ...)
+{
+	va_list ap;
+	const char *s = *in;
+	const char *p = s;
+	int got = 0;
+
+	va_start(ap, fmt);
+	for (; *fmt; fmt++) {
+		struct conv c = { 0, 0, 0 };
+		int ok = 0;
+
+		if (isspace((unsigned char)*fmt)) {
+			while (isspace((unsigned char)*p)) {
+				p++;
+			}
+			continue;
+		}
+		if (*fmt != '%') {
+			if (*p != *fmt) {
+				break;
+			}
+			p++;
+			continue;
+		}
+		fmt++;
+		c = conv_at(&fmt);
+		if (c.kind == 'n') {
+			*va_arg(ap, int *) = (int)(p - s);
+			continue;
+		}
+		while (isspace((unsigned char)*p)) {
+			p++;
+		}
+		ok = c.kind == 's' ? scan_word(&p, &c, &ap) :
+				     scan_number(&p, &c, &ap);
+		if (!ok) {
+			break;
+		}
+		got += !c.skip;
+	}
+	va_end(ap);
+	*in = p;
+	return got;
 }

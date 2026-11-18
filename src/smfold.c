@@ -1172,6 +1172,28 @@ static void check_sheet(struct smf *g, const struct insert_type *t)
 	}
 }
 
+// Reads the options of an insert statement into in, length L and as
+// BODY; returns the word after them.
+static size_t insert_options(struct smf *g, struct ins *in)
+{
+	size_t i = INSERT_UV;
+
+	for (;;) {
+		if (is(g, i, "length") && i + 1 < g->nargs) {
+			in->length = arg(g, i + 1);
+			if (!(in->length > 0)) {
+				expr_fail(&g->nm, "a length is above 0", NULL);
+			}
+		} else if (is(g, i, "as") && i + 1 < g->nargs && !in->body) {
+			in->body = xstrdup(g->args[i + 1]);
+			body_name(g, in->body);
+		} else {
+			return i;
+		}
+		i += 2;
+	}
+}
+
 static void st_insert(struct smf *g)
 {
 	struct ins in;
@@ -1195,20 +1217,7 @@ static void st_insert(struct smf *g)
 		expr_fail(&g->nm, "an insert stands near or far", g->args[3]);
 	}
 	in.side = is(g, 3, "near") ? 1 : -1;
-	for (;;) {
-		if (is(g, i, "length") && i + 1 < g->nargs) {
-			in.length = arg(g, i + 1);
-			if (!(in.length > 0)) {
-				expr_fail(&g->nm, "a length is above 0", NULL);
-			}
-		} else if (is(g, i, "as") && i + 1 < g->nargs && !in.body) {
-			in.body = xstrdup(g->args[i + 1]);
-			body_name(g, in.body);
-		} else {
-			break;
-		}
-		i += 2;
-	}
+	i = insert_options(g, &in);
 	check_sheet(g, &in.t);
 	new_name(g, g->args[1]);
 	in.name = xstrdup(g->args[1]);
@@ -3358,9 +3367,15 @@ struct args {
 // Builds the part of the command line into g, or with -M only reads it,
 // and sets *deps then; with vary, 1 plus the index of a parameter, with
 // it moved by by.
-static void build(struct smf *g, struct args a, size_t vary, double by,
-		  int *deps)
+struct varied {
+	size_t vary;
+	double by;
+};
+
+static void build(struct smf *g, struct args a, struct varied v, int *deps)
 {
+	size_t vary = v.vary;
+	double by = v.by;
 	int i = 0;
 
 	memset(g, 0, sizeof(*g));
@@ -3415,7 +3430,9 @@ static void rec_num(struct rec *r, double x)
 {
 	char b[NUM_ROOM];
 
-	xsnprintf(b, "%.12g", fabs(x) < ZERO_NUM ? 0.0 : x);
+	double v = fabs(x) < ZERO_NUM ? 0.0 : x;
+
+	xsnprintf(b, "%.12g", v);
 	rec_word(r, b);
 }
 
@@ -3460,7 +3477,7 @@ static void rec_end(struct ranges *g, struct rec *r, const double *n,
 			new_form(e);
 		}
 		rec_num(r, n[i] + (e.k * (m[i] - n[i])));
-		d |= fabs(m[i] - n[i]) > SAME_NUM;
+		d = d || fabs(m[i] - n[i]) > SAME_NUM;
 	}
 	if (d) {
 		add_vary(g, e.tol, e.hi, r->s);
@@ -3536,6 +3553,62 @@ static size_t first_corner(const struct coat *a, const struct coat *b)
 // Adds to g the vary records of end e of the sheet, the vertices, the
 // arcs, the holes and the coats of the part p that q, rebuilt, moves;
 // dies if q has another form.
+// The records of the arcs of the edges of p and q, as vary_blank.
+static void vary_edges(struct ranges *g, const struct part *p,
+		       const struct part *q, struct end_of e)
+{
+	struct rec r = { "", 0 };
+
+	for (size_t i = 0; i < p->nedges; i++) {
+		const struct edge *a = &p->edges[i];
+		const struct edge *b = &q->edges[i];
+		const double x[] = { a->cx, a->cy };
+		const double y[] = { b->cx, b->cy };
+
+		if (a->v0 != b->v0 || a->v1 != b->v1 || a->lf != b->lf ||
+		    a->rf != b->rf || a->arc != b->arc) {
+			new_form(e);
+		}
+		r.n = 0;
+		rec_index(&r, "edge", i);
+		if (a->arc) {
+			rec_end(g, &r, x, y, 2, e);
+		}
+	}
+}
+
+// The records of the holes of p and q, as vary_blank.
+static void vary_holes(struct ranges *g, const struct part *p,
+		       const struct part *q, struct end_of e)
+{
+	struct rec r = { "", 0 };
+
+	for (size_t i = 0; i < p->nholes; i++) {
+		const struct hole *a = &p->holes[i];
+		const struct hole *b = &q->holes[i];
+		const double x[] = { a->cx,
+				     a->cy,
+				     a->r,
+				     a->side ? a->rc : a->r,
+				     a->side ? a->h : 0,
+				     a->blind };
+		const double y[] = { b->cx,
+				     b->cy,
+				     b->r,
+				     b->side ? b->rc : b->r,
+				     b->side ? b->h : 0,
+				     b->blind };
+
+		if (a->face != b->face || a->side != b->side ||
+		    a->bside != b->bside) {
+			new_form(e);
+		}
+		r.n = 0;
+		rec_index(&r, "hole", i);
+		rec_end(g, &r, x, y, sizeof(x) / sizeof(x[0]), e);
+	}
+}
+
 static void vary_blank(struct ranges *g, const struct part *p,
 		       const struct part *q, struct end_of e)
 {
@@ -3562,46 +3635,8 @@ static void vary_blank(struct ranges *g, const struct part *p,
 		rec_index(&r, "vertex", i);
 		rec_end(g, &r, x, y, 2, e);
 	}
-	for (size_t i = 0; i < p->nedges; i++) {
-		const struct edge *a = &p->edges[i];
-		const struct edge *b = &q->edges[i];
-		const double x[] = { a->cx, a->cy };
-		const double y[] = { b->cx, b->cy };
-
-		if (a->v0 != b->v0 || a->v1 != b->v1 || a->lf != b->lf ||
-		    a->rf != b->rf || a->arc != b->arc) {
-			new_form(e);
-		}
-		r.n = 0;
-		rec_index(&r, "edge", i);
-		if (a->arc) {
-			rec_end(g, &r, x, y, 2, e);
-		}
-	}
-	for (size_t i = 0; i < p->nholes; i++) {
-		const struct hole *a = &p->holes[i];
-		const struct hole *b = &q->holes[i];
-		const double x[] = { a->cx,
-				     a->cy,
-				     a->r,
-				     a->side ? a->rc : a->r,
-				     a->side ? a->h : 0,
-				     a->blind };
-		const double y[] = { b->cx,
-				     b->cy,
-				     b->r,
-				     b->side ? b->rc : b->r,
-				     b->side ? b->h : 0,
-				     b->blind };
-
-		if (a->face != b->face || a->side != b->side ||
-		    a->bside != b->bside) {
-			new_form(e);
-		}
-		r.n = 0;
-		rec_index(&r, "hole", i);
-		rec_end(g, &r, x, y, sizeof(x) / sizeof(x[0]), e);
-	}
+	vary_edges(g, p, q, e);
+	vary_holes(g, p, q, e);
 	for (size_t i = 0; i < p->ncoats; i++) {
 		const struct coat *a = &p->coats[i];
 		const struct coat *b = &q->coats[i];
@@ -3667,7 +3702,7 @@ static void vary_all(struct smf *g, struct args a)
 		struct smf h;
 		int deps = 0;
 
-		build(&h, a, ps.i[k] + 1, by, &deps);
+		build(&h, a, (struct varied){ ps.i[k] + 1, by }, &deps);
 		for (e.hi = 0; e.hi < 2; e.hi++) {
 			e.k = ((e.hi ? s->hi : s->lo) - s->v) / by;
 			vary_blank(&g->out.rg, &g->out, &h.out, e);
@@ -3683,7 +3718,7 @@ int main(int argc, char **argv)
 	struct smf g;
 	int deps = 0;
 
-	build(&g, a, 0, 0, &deps);
+	build(&g, a, (struct varied){ 0, 0 }, &deps);
 	if (deps) {
 		print_deps(&g);
 		free_smf(&g);
