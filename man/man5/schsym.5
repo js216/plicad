@@ -84,6 +84,7 @@ lower left corner, and says where the drawing goes:
 .nf
 paper W H
 room X0 Y0 X1 Y1
+foot X0 Y0 X1 Y1
 clear body|text|label|flag D
 line X Y X Y ...
 text S A J X Y TEXT
@@ -103,5 +104,9 @@ part not on its net, and between two bodies; text, between a label and
 any wire, body or other label; label, from a body to its own label; and
 flag, round a flag, which labels keep off.
 A sheet must give all four.
+The foot is where the row of the parts placed at the bottom
+.RI ( sch (5))
+goes, left of the title block; without it the row stays under the
+drawing.
 .SH SEE ALSO
 schdraw(1), sch(5)

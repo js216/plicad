@@ -17,7 +17,6 @@
 
 #define BIG 1e9 // Beyond any page, in grid units.
 #define EMPTY_BOX 1e300 // The corners of a box of nothing yet.
-#define GAP_SLACK 1e-9 // What a gap may fall short of rounding.
 enum {
 	LINE = 4096,
 	WORDS = 256,
@@ -645,11 +644,10 @@ struct sch_dims sch_label_size(const struct sch_part *q)
 // The statements are read first and carried out after: names are
 // looked up once all are known, and the parts are placed in the order
 // their anchors allow, not the order they were written.
-enum { ROOT, FROM, BESIDE, OF, BETWEEN }; // How a part is placed.
+enum { ROOT, FROM, BESIDE, OF, BETWEEN, BOTTOM }; // How a part is placed.
 
 struct place {
 	int kind, dir, line;
-	int gap; // Of WAY of PART N: the least gap between the boxes, or -1.
 	char *ref[2], *scope;
 	size_t pid[2], part; // The pins or the part it is placed against.
 	char *group; // Or the group, as its path and a dot ("ch1.").
@@ -686,7 +684,6 @@ static const int way_dy[4] = { 0, 1, 0, -1 };
 
 // Tells a fault of the source and goes on, counted in n.
 #define FLAG_PAD 0.6 // A flag's label beyond its text, in grid units,
-#define FLAG_H 1.2 // its height,
 #define FLAG_OUT 0.4 // and how far it stands out from the pin.
 #define LABEL_GAP_X 0.3 // From a body to its label beside it,
 #define LABEL_GAP_Y 0.4 // and above or below it.
@@ -703,6 +700,8 @@ static const int way_dy[4] = { 0, 1, 0, -1 };
 enum { FIRST = 2, HANG = 3, STEP = 2, BESIDE_OFF = 3, OF_GAP = 2, FAR = 80 };
 enum { PAIR_GAP = 2 }; // Between parts in parallel, in grid units.
 enum { ROOT_GAP = 6 }; // Right of all placed, a part against nothing.
+enum { BOTTOM_GAP = 6 }; // From the drawing down to the row at the bottom.
+enum { PORT_OFF = 3 }; // From its pin out to a port with no branches.
 
 // Whether buf is a record clear KIND D: its KIND into kind, D into *d.
 static int clear_record(const char *buf, char kind[KIND_LEN], double *d)
@@ -1015,14 +1014,16 @@ static int overlap(const double a[4], const double b[4])
 // The box the label of a placed part takes, in grid units, on its own
 // side; empty for a part without one.  A flag's text counts as its
 // label.
-// The box of the label of flag q, its text, out from its pin; 0 if it
-// has none.
-static int flag_label_box(const struct sch_part *q, double b[4])
+// The box of the label of flag q, its text, out from its pin, with the
+// room text keeps of the page s above and below it; 0 if it has none.
+static int flag_label_box(const struct sch *s, const struct sch_part *q,
+			  double b[4])
 {
 	const char *flag = q->dev->shape->flag;
 	struct sch_at at;
 	double w = NAN;
-	double h = FLAG_H;
+	double h =
+		(SCH_FLAG_TEXT + SCH_FLAG_DESCENT + s->clear_text) / SCH_GRID;
 	double ox = NAN;
 	double oy = NAN;
 	int out = 0;
@@ -1034,14 +1035,14 @@ static int flag_label_box(const struct sch_part *q, double b[4])
 	}
 	at = sch_pin_at(q, 0);
 	out = (at.dir + 2) % 4;
-	w = (sch_text_width(q->text, SCH_TEXT) / SCH_GRID) + FLAG_PAD;
+	w = (sch_text_width(q->text, SCH_FLAG_TEXT) / SCH_GRID) + FLAG_PAD;
 	ox = w / 2;
 	if (out == SCH_L) {
 		ox = w;
 	} else if (out == SCH_R) {
 		ox = 0;
 	}
-	oy = h / 2;
+	oy = (h / 2) + (SCH_FLAG_DESCENT / 2 / SCH_GRID);
 	if (out == SCH_D) {
 		oy = h;
 	} else if (out == SCH_U) {
@@ -1065,7 +1066,8 @@ static int own_side(const struct sch_part *q)
 	return (side + q->rot) % 4;
 }
 
-static int label_box_at(const struct sch_part *q, int want, double b[4])
+static int label_box_at(const struct sch *s, const struct sch_part *q, int want,
+			double b[4])
 {
 	struct sch_dims d = { NAN, NAN };
 	double w = NAN;
@@ -1075,7 +1077,7 @@ static int label_box_at(const struct sch_part *q, int want, double b[4])
 	int side = want;
 
 	if (q->dev->shape->flag) {
-		return flag_label_box(q, b);
+		return flag_label_box(s, q, b);
 	}
 	d = sch_label_size(q);
 	w = d.w / g;
@@ -1098,9 +1100,9 @@ static int label_box_at(const struct sch_part *q, int want, double b[4])
 	return 1;
 }
 
-static int label_box(const struct sch_part *q, double b[4])
+static int label_box(const struct sch *s, const struct sch_part *q, double b[4])
 {
-	return label_box_at(q, q->side, b);
+	return label_box_at(s, q, q->side, b);
 }
 
 // A label tried: on the side, among the parts placed but skip.
@@ -1117,7 +1119,7 @@ static int label_clear(struct reader *rd, const struct sch_part *q,
 	double la[4];
 	long skip = lt->skip;
 
-	if (!label_box_at(q, lt->side, la)) {
+	if (!label_box_at(rd->s, q, lt->side, la)) {
 		return 1;
 	}
 	for (size_t i = 0; i < rd->s->npart; i++) {
@@ -1129,7 +1131,8 @@ static int label_clear(struct reader *rd, const struct sch_part *q,
 			continue;
 		}
 		sch_box(o, b);
-		if (overlap(la, b) || (label_box(o, lb) && overlap(la, lb))) {
+		if (overlap(la, b) ||
+		    (label_box(rd->s, o, lb) && overlap(la, lb))) {
 			return 0;
 		}
 		for (size_t p = 0; p < o->dev->shape->npin; p++) {
@@ -1218,19 +1221,20 @@ static int pins_clear(const struct sch_part *q, struct sch_at at,
 	return 1;
 }
 
-// The box of part q, CLEAR_PAD out, into b.
-static void padded_box(const struct sch_part *q, double b[4])
+// The box of part q, pad out, into b.
+static void padded_box(const struct sch_part *q, double pad, double b[4])
 {
 	sch_box(q, b);
-	b[0] -= CLEAR_PAD;
-	b[1] -= CLEAR_PAD;
-	b[2] += CLEAR_PAD;
-	b[3] += CLEAR_PAD;
+	b[0] -= pad;
+	b[1] -= pad;
+	b[2] += pad;
+	b[3] += pad;
 }
 
 // Whether part q, where it stands, keeps clear of the parts placed, and
 // of skip: no body or label on a body, a pin or a label, and no pin on a
-// pin or on the point just out from one.
+// pin or on the point just out from one.  A body keeps CLEAR_PAD round
+// it, a flag none, so the flags of two pins side by side stand so.
 static int clear(struct reader *rd, const struct sch_part *q, long skip)
 {
 	struct clear_boxes cb;
@@ -1238,15 +1242,15 @@ static int clear(struct reader *rd, const struct sch_part *q, long skip)
 	if (label_side(rd, q, skip) == -2) {
 		return 0;
 	}
-	padded_box(q, cb.a);
+	padded_box(q, q->dev->shape->flag ? 0 : CLEAR_PAD, cb.a);
 	for (size_t i = 0; i < rd->s->npart; i++) {
 		const struct sch_part *o = &rd->s->part[i];
 
 		if (!rd->placed[i] || (long)i == skip) {
 			continue;
 		}
-		padded_box(o, cb.b);
-		cb.has_lb = label_box(o, cb.lb);
+		padded_box(o, CLEAR_PAD, cb.b);
+		cb.has_lb = label_box(rd->s, o, cb.lb);
 		if (overlap(cb.a, cb.b) ||
 		    (cb.has_lb && overlap(cb.a, cb.lb))) {
 			return 0;
@@ -1285,8 +1289,54 @@ static void ground_spot(struct reader *rd, size_t pid, int *fx, int *fy)
 	*fy = y - 1;
 }
 
-// Whether part k stands clear where it is, with the ground flags of its
-// pins where they would go.
+// Whether the flag of pin r is a ground or a chassis, which hangs under
+// its pin.
+static int grounds(const struct pinrec *r)
+{
+	return r->flagpart >= 0 && (strcmp(r->flag->flag, "ground") == 0 ||
+				    strcmp(r->flag->flag, "chassis") == 0);
+}
+
+// Stands the flag of pin i off units out from the pin, facing it.
+static void put_flag(struct reader *rd, size_t i, int off)
+{
+	const struct pinrec *r = &rd->pins[i];
+	struct sch_part *f = &rd->s->part[r->flagpart];
+	struct sch_at at = sch_pin_at(&rd->s->part[r->part], r->pin);
+
+	f->rot = ((at.dir + 2) % 4 - f->dev->shape->pin[0].dir + 4) % 4;
+	f->x = at.x + (way_dx[at.dir] * off);
+	f->y = at.y + (way_dy[at.dir] * off);
+}
+
+// How far out from their pins the flags of part k that point the way d
+// stand, grounds aside: as far as the farthest needs, past the branches
+// of its pin, so they stand in one column.
+static int column(struct reader *rd, size_t k, int d)
+{
+	const struct sch_part *q = &rd->s->part[k];
+	int col = 1;
+
+	for (size_t p = 0; p < q->dev->shape->npin; p++) {
+		const struct pinrec *r = &rd->pins[rd->base[k] + p];
+		int need = 1;
+
+		if (r->flagpart < 0 || grounds(r) ||
+		    sch_pin_at(q, r->pin).dir != d) {
+			continue;
+		}
+		if (r->reach) {
+			need = r->reach + STEP;
+		} else if (strcmp(r->flag->flag, "port") == 0) {
+			need = PORT_OFF;
+		}
+		col = need > col ? need : col;
+	}
+	return col;
+}
+
+// Whether part k stands clear where it is, with the flags of its pins
+// where they would go, their text too.
 static int clear_unit(struct reader *rd, size_t k)
 {
 	const struct sch_part *q = &rd->s->part[k];
@@ -1295,24 +1345,47 @@ static int clear_unit(struct reader *rd, size_t k)
 		return 0;
 	}
 	for (size_t p = 0; p < q->dev->shape->npin; p++) {
-		const struct pinrec *r = &rd->pins[rd->base[k] + p];
+		size_t i = rd->base[k] + p;
+		const struct pinrec *r = &rd->pins[i];
+		struct label_try lt = { -1, (long)k };
 		struct sch_part *f = NULL;
 
-		if (r->flagpart < 0 ||
-		    (strcmp(r->flag->flag, "ground") != 0 &&
-		     strcmp(r->flag->flag, "chassis") != 0)) {
+		if (r->flagpart < 0) {
 			continue;
 		}
 		f = &rd->s->part[r->flagpart];
-		ground_spot(rd, rd->base[k] + p, &f->x, &f->y);
-		if (!clear(rd, f, (long)k)) {
+		if (grounds(r)) {
+			ground_spot(rd, i, &f->x, &f->y);
+		} else if (!f->placed) {
+			put_flag(rd, i, column(rd, k, sch_pin_at(q, p).dir));
+		}
+		if (!clear(rd, f, (long)k) || !label_clear(rd, f, &lt)) {
 			return 0;
 		}
 	}
 	return 1;
 }
 
-// Marks part k placed, and its ground flags with it.
+// Marks part k placed, or not (on), and its ground flags with it.
+static void mark(struct reader *rd, size_t k, int on)
+{
+	const struct sch_part *q = &rd->s->part[k];
+
+	rd->placed[k] = on;
+	rd->s->part[k].placed = on;
+	for (size_t p = 0; p < q->dev->shape->npin; p++) {
+		const struct pinrec *r = &rd->pins[rd->base[k] + p];
+		struct sch_part *f = NULL;
+
+		if (!grounds(r)) {
+			continue;
+		}
+		f = &rd->s->part[r->flagpart];
+		ground_spot(rd, rd->base[k] + p, &f->x, &f->y);
+		rd->placed[r->flagpart] = on;
+		f->placed = on;
+	}
+}
 
 static void trace(struct reader *rd, size_t k, const char *text)
 {
@@ -1343,11 +1416,12 @@ static void tell_traces(struct reader *rd)
 static void commit(struct reader *rd, size_t k)
 {
 	int side = label_side(rd, &rd->s->part[k], -1);
-	static const char *const how[] = {
-		"first clear place to the right",
-		"first clear place along the pin", "beside its twin",
-		"next to its anchor", "past what stands between the pins"
-	};
+	static const char *const how[] = { "first clear place to the right",
+					   "first clear place along the pin",
+					   "beside its twin",
+					   "next to its anchor",
+					   "past what stands between the pins",
+					   "in the row at the bottom" };
 
 	if (rd->lib->verbose) {
 		char t[TRACE_LEN];
@@ -1359,20 +1433,7 @@ static void commit(struct reader *rd, size_t k)
 		trace(rd, k, t);
 	}
 	rd->s->part[k].side = side >= 0 ? side : rd->s->part[k].side;
-	rd->placed[k] = 1;
-	rd->s->part[k].placed = 1;
-	for (size_t p = 0; p < rd->s->part[k].dev->shape->npin; p++) {
-		const struct pinrec *r = &rd->pins[rd->base[k] + p];
-
-		if (r->flagpart >= 0 && (strcmp(r->flag->flag, "ground") == 0 ||
-					 !strcmp(r->flag->flag, "chassis"))) {
-			ground_spot(rd, rd->base[k] + p,
-				    &rd->s->part[r->flagpart].x,
-				    &rd->s->part[r->flagpart].y);
-			rd->placed[r->flagpart] = 1;
-			rd->s->part[r->flagpart].placed = 1;
-		}
-	}
+	mark(rd, k, 1);
 }
 
 // The way a pin faces to take a lead going dir.
@@ -1514,7 +1575,7 @@ static void loop_box(struct reader *rd, const struct sch_hint *h, size_t net,
 		}
 		sch_box(o, c);
 		grow_box(b, c);
-		if (label_box(o, c)) {
+		if (label_box(rd->s, o, c)) {
 			grow_box(b, c);
 		}
 	}
@@ -1554,6 +1615,101 @@ static int out_of_loops(struct reader *rd, size_t k, struct lead ld)
 	return 1;
 }
 
+static int up_int(double v);
+static int down_int(double v);
+
+// Whether pin q of the part of pin p points the way p does and stands
+// past it the way dir.
+static int ahead(const struct reader *rd, size_t p, size_t q, int dir)
+{
+	const struct sch_part *o = &rd->s->part[rd->pins[p].part];
+	struct sch_at a = { 0, 0, 0 };
+	struct sch_at b = { 0, 0, 0 };
+
+	if (rd->pins[q].part != rd->pins[p].part) {
+		return 0;
+	}
+	a = sch_pin_at(o, rd->pins[p].pin);
+	b = sch_pin_at(o, rd->pins[q].pin);
+	return b.dir == a.dir &&
+	       (way_dx[dir] * (b.x - a.x)) + (way_dy[dir] * (b.y - a.y)) > 0;
+}
+
+// Whether some pin of the part of pin pid stands past it the way dir,
+// pointing its way.
+static int any_ahead(const struct reader *rd, size_t pid, int dir)
+{
+	for (size_t i = 0; i < rd->npins; i++) {
+		if (ahead(rd, pid, i, dir)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+// How far the box b reaches out past the point at, the way it points.
+static double out_past(struct sch_at at, const double b[4])
+{
+	switch (at.dir) {
+	case SCH_R:
+		return b[2] - at.x;
+	case SCH_U:
+		return b[3] - at.y;
+	case SCH_L:
+		return at.x - b[0];
+	default:
+		return at.y - b[1];
+	}
+}
+
+// How far out along the lead of pin pid a part hung across it the way
+// dir stands: past the branches of the pin, and past the branches and
+// the text of the flags of the pins of its part that point its way and
+// stand on that side, so the part's lead crosses none of theirs.
+static int beyond(struct reader *rd, size_t pid, int dir)
+{
+	size_t k = rd->pins[pid].part;
+	const struct sch_part *q = &rd->s->part[k];
+	struct sch_at at = sch_pin_at(q, rd->pins[pid].pin);
+	int col = column(rd, k, at.dir);
+	int off = rd->pins[pid].reach ? rd->pins[pid].reach + STEP : HANG;
+
+	for (size_t i = rd->base[k]; i < rd->base[k] + q->dev->shape->npin;
+	     i++) {
+		double b[4];
+
+		if (!ahead(rd, pid, i, dir)) {
+			continue;
+		}
+		off = rd->pins[i].reach + STEP > off ?
+			      rd->pins[i].reach + STEP :
+			      off;
+		if (rd->pins[i].flagpart < 0) {
+			continue;
+		}
+		put_flag(rd, i, col);
+		if (label_box(rd->s, &rd->s->part[rd->pins[i].flagpart], b)) {
+			double far = out_past(at, b) + 1;
+
+			off = far > off ? up_int(far) : off;
+		}
+	}
+	return off;
+}
+
+// The first place along the lead of pin pid, pointing pd, that a part
+// placed from it the way dir tries.
+static int from_start(struct reader *rd, size_t pid, int dir, int pd)
+{
+	if (dir != pd) {
+		return beyond(rd, pid, dir);
+	}
+	if (rd->pins[pid].reach) {
+		return rd->pins[pid].reach + STEP;
+	}
+	return FIRST + extra_pins(rd, pid);
+}
+
 static int place_from(struct reader *rd, size_t k)
 {
 	struct sch_part *q = &rd->s->part[k];
@@ -1565,7 +1721,8 @@ static int place_from(struct reader *rd, size_t k)
 	int ex = 0;
 	int ey = 0;
 	int dir = pl->dir;
-	int start = HANG;
+	int start = 0;
+	int past = 0;
 	size_t entry = entry_pin(rd, q, dir);
 
 	if (entry == (size_t)-1) {
@@ -1578,6 +1735,8 @@ static int place_from(struct reader *rd, size_t k)
 		py = pin_at.y;
 		pd = pin_at.dir;
 	}
+	// Past the leads of other pins, it keeps out of their loops so.
+	past = dir != pd && any_ahead(rd, pl->pid[0], dir);
 	if (dir == (pd + 2) % 4) {
 		fault(rd->faults,
 		      "%s: a pin can lead only its own way or across",
@@ -1595,11 +1754,7 @@ static int place_from(struct reader *rd, size_t k)
 		ex = pin_at.x;
 		ey = pin_at.y;
 	}
-	if (a->reach) {
-		start = a->reach + STEP;
-	} else if (dir == pd) {
-		start = FIRST + extra_pins(rd, pl->pid[0]);
-	}
+	start = from_start(rd, pl->pid[0], dir, pd);
 	for (int off = start;; off++) {
 		int tx = 0;
 		int ty = 0;
@@ -1620,7 +1775,7 @@ static int place_from(struct reader *rd, size_t k)
 		}
 		q->x = tx - ex;
 		q->y = ty - ey;
-		if (out_of_loops(rd, k, ld) && clear_unit(rd, k)) {
+		if ((past || out_of_loops(rd, k, ld)) && clear_unit(rd, k)) {
 			a->reach = off;
 			a->series = dir == pd;
 			break;
@@ -1710,8 +1865,6 @@ static int place_beside(struct reader *rd, size_t k)
 
 // Places part k next to another without joining them: past its box the
 // way said.
-static int up_int(double v);
-static int down_int(double v);
 
 // The group of the name, from the scope out, as its path and a dot, if
 // some part is in it.
@@ -1772,7 +1925,7 @@ static const struct sch_part *group_box(struct reader *rd,
 					      strlen(pl->group))) {
 			sch_box(&rd->s->part[i], c);
 			grow_box(b, c);
-			if (label_box(&rd->s->part[i], c)) {
+			if (label_box(rd->s, &rd->s->part[i], c)) {
 				grow_box(b, c);
 			}
 			if (strcmp(rd->s->part[i].name, same) == 0) {
@@ -1822,19 +1975,85 @@ static void place_past(struct sch_part *q, const struct of_place *op,
 	}
 }
 
-// The gap from the box b to the box c past it the way dir.
-static double gap_past(int dir, const double b[4], const double c[4])
+static int ready(struct reader *rd, size_t k);
+
+// Whether part m, not placed yet, is placed from a pin of part k, across
+// the pin's way, and is ready.
+static int hung_across(struct reader *rd, size_t k, size_t m)
 {
-	switch (dir) {
-	case SCH_R:
-		return c[0] - b[2];
-	case SCH_L:
-		return b[0] - c[2];
-	case SCH_U:
-		return c[1] - b[3];
-	default:
-		return b[1] - c[3];
+	const struct place *pl = &rd->places[m];
+	const struct pinrec *a = &rd->pins[pl->pid[0]];
+
+	return !rd->placed[m] && !rd->dead[m] && pl->kind == FROM &&
+	       a->part == k && ready(rd, m) &&
+	       pl->dir != sch_pin_at(&rd->s->part[k], a->pin).dir;
+}
+
+// Whether the lead out from part k to part m, hung across one of its
+// pins, keeps a unit clear of every body placed but theirs.
+static int lead_clear(const struct reader *rd, size_t k, size_t m)
+{
+	const struct pinrec *a = &rd->pins[rd->places[m].pid[0]];
+	struct sch_at at = sch_pin_at(&rd->s->part[k], a->pin);
+	int d = at.dir;
+	double ld[4];
+
+	ld[0] = ld[2] = at.x + (way_dx[d] * a->reach);
+	ld[1] = ld[3] = at.y + (way_dy[d] * a->reach);
+	ld[d] = d % 2 ? at.y : at.x;
+	ld[1 - (d % 2)] -= 1; // A unit across it, for leads.
+	ld[3 - (d % 2)] += 1;
+	for (size_t i = 0; i < rd->s->npart; i++) {
+		double b[4];
+
+		sch_box(&rd->s->part[i], b);
+		if (rd->placed[i] && i != k && i != m &&
+		    !rd->s->part[i].dev->shape->flag && overlap(ld, b)) {
+			return 0;
+		}
 	}
+	return 1;
+}
+
+// Whether the parts hung across from the pins of part k, where it
+// stands, find room with their leads straight out from the pins, a unit
+// clear of every body: each is placed as it will be, in its order, and
+// all are taken back after.
+static int branches_fit(struct reader *rd, size_t k)
+{
+	size_t np = rd->s->part[k].dev->shape->npin;
+	int *was = sch_alloc((np + 1) * sizeof *was);
+	int ok = 1;
+	int more = 1;
+
+	for (size_t p = 0; p < np; p++) {
+		was[p] = rd->pins[rd->base[k] + p].reach;
+	}
+	rd->placed[k] = 1;
+	while (ok && more) {
+		more = 0;
+		for (size_t m = 0; ok && m < rd->s->npart; m++) {
+			if (!hung_across(rd, k, m)) {
+				continue;
+			}
+			ok = place_from(rd, m);
+			mark(rd, m, 1);
+			more = 1;
+			ok = ok && lead_clear(rd, k, m);
+		}
+	}
+	for (size_t m = 0; m < rd->s->npart; m++) {
+		if (rd->placed[m] && rd->places[m].kind == FROM &&
+		    rd->pins[rd->places[m].pid[0]].part == k) {
+			mark(rd, m, 0);
+		}
+	}
+	for (size_t p = 0; p < np; p++) {
+		rd->pins[rd->base[k] + p].reach = was[p];
+	}
+	rd->placed[k] = 0;
+	free(was);
+	return ok;
 }
 
 static int place_of(struct reader *rd, size_t k)
@@ -1842,7 +2061,6 @@ static int place_of(struct reader *rd, size_t k)
 	struct sch_part *q = &rd->s->part[k];
 	const struct place *pl = &rd->places[k];
 	double b[4];
-	double c[4];
 	const struct sch_part *o = NULL;
 	struct of_place op = { pl->dir, pl->group != NULL, 0, 0 };
 
@@ -1867,13 +2085,7 @@ static int place_of(struct reader *rd, size_t k)
 		}
 		// Past the box, by how far the group reaches beyond its part.
 		place_past(q, &op, b, off);
-		if (pl->gap >= 0) {
-			sch_box(q, c);
-			if (gap_past(op.dir, b, c) < pl->gap - GAP_SLACK) {
-				continue;
-			}
-		}
-		if (clear_unit(rd, k)) {
+		if (clear_unit(rd, k) && branches_fit(rd, k)) {
 			return 1;
 		}
 	}
@@ -1959,17 +2171,17 @@ static double box_side(int dir, const double e[4])
 	}
 }
 
-// The farthest out of part o, and its label, that lies across the span
-// bt, past edge.
-static double part_edge(const struct sch_part *o, const struct between *bt,
-			double edge)
+// The farthest out of part o of the page pg, and its label, that lies
+// across the span bt, past edge.
+static double part_edge(const struct sch *pg, const struct sch_part *o,
+			const struct between *bt, double edge)
 {
 	double b[4];
 	double l[4];
 	int has = 0;
 
 	sch_box(o, b);
-	has = label_box(o, l);
+	has = label_box(pg, o, l);
 	for (int pass = 0; pass < 1 + has; pass++) {
 		const double *e = pass ? l : b;
 		double s0 = bt->along == SCH_R ? e[0] : e[1];
@@ -2009,7 +2221,7 @@ static int place_between(struct reader *rd, size_t k)
 	// The farthest out of what lies across the span, its labels too.
 	for (size_t i = 0; i < rd->s->npart; i++) {
 		if (rd->placed[i]) {
-			edge = part_edge(&rd->s->part[i], &bt, edge);
+			edge = part_edge(rd->s, &rd->s->part[i], &bt, edge);
 		}
 	}
 	if (bt.along == SCH_R) {
@@ -2089,13 +2301,30 @@ static int rank(struct reader *rd, size_t k)
 	}
 }
 
+// Whether a part waits to be hung the way dir from a pin past pin pid,
+// on its part.
+static int waits_ahead(struct reader *rd, size_t pid, int dir)
+{
+	for (size_t m = 0; m < rd->s->npart; m++) {
+		const struct place *pl = &rd->places[m];
+
+		if (!rd->placed[m] && !rd->dead[m] && pl->kind == FROM &&
+		    pl->dir == dir && ahead(rd, pid, pl->pid[0], dir)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 static int ready(struct reader *rd, size_t k)
 {
 	const struct place *pl = &rd->places[k];
 
 	switch (pl->kind) {
 	case FROM:
-		return rd->placed[rd->pins[pl->pid[0]].part];
+		// A branch waits for those hung its way from the pins past it.
+		return !waits_ahead(rd, pl->pid[0], pl->dir) &&
+		       rd->placed[rd->pins[pl->pid[0]].part];
 	case OF:
 		for (size_t i = 0; pl->group && i < rd->s->npart; i++) {
 			if (i != k && !rd->placed[i] && !rd->dead[i] &&
@@ -2124,6 +2353,7 @@ static long best_ready(struct reader *rd, int between)
 	for (size_t k = 0; k < rd->s->npart; k++) {
 		if (rd->placed[k] || rd->dead[k] ||
 		    rd->s->part[k].dev->shape->flag || !ready(rd, k) ||
+		    rd->places[k].kind == BOTTOM ||
 		    (rd->places[k].kind == BETWEEN) != between) {
 			continue;
 		}
@@ -2194,35 +2424,18 @@ static void place_ready(struct reader *rd, int between)
 static void place_flags(struct reader *rd)
 {
 	for (size_t i = 0; i < rd->npins; i++) {
-		struct pinrec *r = &rd->pins[i];
+		const struct pinrec *r = &rd->pins[i];
 		struct sch_part *f = NULL;
-		int x = 0;
-		int y = 0;
 		int d = 0;
-		int off = 0;
 
 		if (r->flagpart < 0 || rd->placed[r->flagpart] ||
 		    !rd->placed[r->part]) {
 			continue;
 		}
 		f = &rd->s->part[r->flagpart];
-		{
-			struct sch_at pin_at =
-				sch_pin_at(&rd->s->part[r->part], r->pin);
-			x = pin_at.x;
-			y = pin_at.y;
-			d = pin_at.dir;
-		}
-		f->rot = ((d + 2) % 4 - f->dev->shape->pin[0].dir + 4) % 4;
-		off = 1;
-		if (r->reach) {
-			off = r->reach + STEP;
-		} else if (!strcmp(r->flag->flag, "port")) {
-			off = 3;
-		}
-		for (;; off++) {
-			f->x = x + way_dx[d] * off;
-			f->y = y + way_dy[d] * off;
+		d = sch_pin_at(&rd->s->part[r->part], r->pin).dir;
+		for (int off = column(rd, r->part, d);; off++) {
+			put_flag(rd, i, off);
 			if (clear(rd, f, (long)r->part) ||
 			    off > r->reach + FAR) {
 				break;
@@ -2392,6 +2605,82 @@ static void center_besides(struct reader *rd)
 	free(row);
 }
 
+// The lower left corner of all that is placed, labels too, and of the
+// origin, into c.
+static void lower_left(struct reader *rd, double c[2])
+{
+	c[0] = 0;
+	c[1] = 0;
+	for (size_t i = 0; i < rd->s->npart; i++) {
+		double b[4];
+
+		if (!rd->placed[i]) {
+			continue;
+		}
+		sch_box(&rd->s->part[i], b);
+		c[0] = fmin(c[0], b[0]);
+		c[1] = fmin(c[1], b[1]);
+		if (label_box(rd->s, &rd->s->part[i], b)) {
+			c[0] = fmin(c[0], b[0]);
+			c[1] = fmin(c[1], b[1]);
+		}
+	}
+}
+
+// Whether part k, said to be at the bottom, is joined by its flags
+// alone; if not, it is told and left out.
+static int flags_alone(struct reader *rd, size_t k)
+{
+	const struct sch_part *q = &rd->s->part[k];
+
+	for (size_t p = rd->base[k]; p < rd->base[k] + q->dev->shape->npin;
+	     p++) {
+		if (rd->pins[p].used && rd->pins[p].flagpart < 0) {
+			at_line(rd, rd->places[k].line);
+			fault(rd->faults,
+			      "%s: a part at the bottom is joined by its "
+			      "flags alone",
+			      rd->where);
+			rd->dead[k] = 1;
+			return 0;
+		}
+	}
+	return 1;
+}
+
+// Places the parts said to be at the bottom in one row, in the order of
+// the source, from the left of all there is and BOTTOM_GAP under it; the
+// drawer moves the row to the foot of the sheet.  Such a part is joined
+// by its flags alone.
+static void place_bottom(struct reader *rd)
+{
+	double c[2];
+
+	lower_left(rd, c);
+	for (size_t k = 0; k < rd->s->npart; k++) {
+		struct sch_part *q = &rd->s->part[k];
+
+		if (rd->places[k].kind != BOTTOM || rd->dead[k] ||
+		    !flags_alone(rd, k)) {
+			continue;
+		}
+		q->x = down_int(c[0]);
+		q->y = down_int(c[1]) - BOTTOM_GAP;
+		while (!clear_unit(rd, k)) {
+			q->x++;
+		}
+		commit(rd, k);
+		c[0] = q->x;
+		q->bottom = 1;
+		for (size_t p = rd->base[k];
+		     p < rd->base[k] + q->dev->shape->npin; p++) {
+			if (rd->pins[p].flagpart >= 0) {
+				rd->s->part[rd->pins[p].flagpart].bottom = 1;
+			}
+		}
+	}
+}
+
 static void place_all(struct reader *rd)
 {
 	place_ready(rd, 0);
@@ -2399,6 +2688,8 @@ static void place_all(struct reader *rd)
 	place_ready(rd, 1);
 	place_flags(rd);
 	center_besides(rd);
+	place_bottom(rd);
+	place_flags(rd);
 	for (size_t k = 0; k < rd->s->npart; k++) {
 		if (!rd->placed[k] && !rd->dead[k] &&
 		    !rd->s->part[k].dev->shape->flag) {
@@ -2412,7 +2703,7 @@ static void place_all(struct reader *rd)
 
 // Reads a part statement: KIND NAME [VALUE] [rating R] [mpn M]
 // [side WAY] [flip] [WAY from PIN | beside PART [WAY] | WAY of PART |
-// between PIN and PIN WAY].
+// between PIN and PIN WAY | bottom].
 // Whether a value is as sch(5) has it for the kind: a resistor's, a
 // capacitor's or an inductor's a number with its capital unit letter
 // right after it (100R, 10.0K, 120P, 1.5U); any other kind's anything.
@@ -2468,8 +2759,8 @@ static int lacks_word(char **w, int n, int i)
 }
 
 // Reads the words of a placement of a part statement from w[*i] on,
-// into pl: WAY from PIN, WAY of PART [N], beside PART [WAY] or between
-// PIN and PIN WAY; *i is set to its last word.  Returns 1 if it is one,
+// into pl: WAY from PIN, WAY of PART, beside PART [WAY], between PIN
+// and PIN WAY or bottom; *i is set to its last word.  Returns 1 if it is one,
 // 0 if not, -1 on a fault.
 static int read_placement(struct reader *rd, char **w, int n, int *i,
 			  struct place *pl)
@@ -2484,12 +2775,14 @@ static int read_placement(struct reader *rd, char **w, int n, int *i,
 		free(pl->ref[0]);
 		pl->ref[0] = sch_strdup(w[k + 2]);
 		k += 2;
-		// WAY of PART N: N grid steps between the boxes.
 		if (pl->kind == OF && k + 1 < n &&
-		    strspn(w[k + 1], "0123456789") == strlen(w[k + 1]) &&
-		    integer(w[k + 1], &pl->gap)) {
-			k++;
+		    strspn(w[k + 1], "0123456789") == strlen(w[k + 1])) {
+			fault(rd->faults, "%s: WAY of PART takes no number",
+			      rd->where);
+			return -1;
 		}
+	} else if (!strcmp(w[k], "bottom")) {
+		pl->kind = BOTTOM;
 	} else if (!strcmp(w[k], "beside")) {
 		pl->kind = BESIDE;
 		free(pl->ref[0]);
@@ -2610,7 +2903,6 @@ static void read_part(struct reader *rd, struct sch_shape *sh, char **w, int n)
 	q.line = rd->line_no;
 	pl.kind = ROOT;
 	pl.dir = -1;
-	pl.gap = -1;
 	pl.line = rd->line_no;
 	if (n < 2) {
 		fault(rd->faults, "%s: %s NAME ...", rd->where, w[0]);
@@ -2894,7 +3186,6 @@ static void flag_pin(struct reader *rd, size_t pid, struct flag_of fo)
 	f.side = -1;
 	f.line = rd->line_no;
 	pl.kind = ROOT;
-	pl.gap = -1;
 	k = add_part(rd, &f, &pl);
 	r = &rd->pins[pid];
 	r->flagpart = (long)k;

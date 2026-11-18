@@ -18,6 +18,9 @@ enum { SCH_R, SCH_U, SCH_L, SCH_D }; // The four ways a pin can point.
 #define SCH_TEXT 4.5 // The size of the text of the parts.
 #define SCH_LEAD 7.6 // From one line of a label to the next.
 #define SCH_DESCENT 1.8 // Under the baseline of the last line of a label.
+// The text of a flag or a port, which so fits a unit of the grid.
+#define SCH_FLAG_TEXT 4.0
+#define SCH_FLAG_DESCENT 1.6
 #define SCH_LW 0.5 // The weight of every line but the bold ones.
 
 // A pin of a shape: its name, where its end lies in grid units from the
@@ -75,6 +78,7 @@ struct sch_part {
 	char *name, *ref, *value, *rating, *mpn;
 	struct sch_device *dev;
 	int x, y, rot, mirror, flip, side, line, novalue, placed;
+	int bottom; // Whether it stands in the row at the bottom of the sheet.
 	char *text; // The text of a flag: the name of its net.
 	// Of each pin, whether an nc statement leaves it unconnected on
 	// purpose; NULL for none.

@@ -6,6 +6,8 @@
 # room; the title block stands in the lower right corner, under it.
 paper 792 612
 room 36 104 756 576
+# The room of the row of parts at the bottom, left of the title block.
+foot 36 22 476 86
 # The room the drawing keeps, in points at scale 1: a wire from a body
 # of another net and a body from a body; text from anything else; a
 # body from its own label; round a flag, for the labels.

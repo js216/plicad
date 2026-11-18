@@ -43,10 +43,10 @@ PLACE is one of
 .RS
 .nf
 WAY from PIN            joined to the pin
-WAY of PART [N]         next to the part, not joined, N grid
-                        steps between the two boxes at least
+WAY of PART             next to the part, not joined
 beside PART [WAY]       in parallel with the part
 between PIN and PIN WAY joined to both pins, out the way past them
+bottom                  in the row at the bottom of the sheet
 .fi
 .RE
 .PP
@@ -130,7 +130,12 @@ places the part against the pin, its own pin facing back.
 If WAY is the way the pin points, the part continues the line, past
 the branches hung from the pin, with room for the junctions of the
 net; if WAY is across, the part hangs from the pin's lead as a branch,
-after the others.
+after the others, and past all that the other pins of its part that
+point the same way, on the side WAY, have out on their leads: their
+flags with their text and their branches, those hung farther that way
+first.
+So no lead crosses another, and a part placed next to another leaves
+room for its branches.
 .B beside
 lays a part of the same shape in parallel, pin to pin: below one lying
 across and right of one standing, or above and left if there is no
@@ -142,8 +147,13 @@ joins their pins of a kind at each end, and the line meets the bar in
 its middle.
 A row that would not be clear so stays as it was laid.
 .B of
-places a part next to another without joining them, with N whole
-steps of the grid at least between their boxes if N is said.
+places a part next to another without joining them, at the first place
+out the way said where it, its flags and their text are clear.
+.B bottom
+places the part in one row along the bottom of the sheet, in the order
+of the source from left to right, level with the title block and left
+of it, clear of the drawing: mounting holes, fiducials, test points.
+Such a part is joined by its flags alone.
 .B between
 places a part of two pins along the line of the two pins, out the way
 said past everything that stands across that span; its pin 1 joins the
@@ -170,6 +180,8 @@ CHASSIS, or the name of the supply or of the global.
 Flags of one name join, whatever their kind and on whatever page.
 A ground hangs under its pin; a supply, a global or a port stands at
 the end of its line, past the branches.
+The flags on the pins of a part that point one way stand in one column,
+as far out as the farthest needs.
 A global is drawn as its name at the pin, by a small filled diamond of
 its own, with no list of pages.
 .B nc

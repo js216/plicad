@@ -61,6 +61,8 @@
 #define TEXT SCH_TEXT
 #define LEAD SCH_LEAD
 #define DESCENT SCH_DESCENT
+#define FLAG_TEXT SCH_FLAG_TEXT
+#define FLAG_DESCENT SCH_FLAG_DESCENT
 #define PINNUM 3.25 // The pin numbers of an integrated circuit.
 #define NOTE_BOX 10.0 // The side of the box of a note, in points of the page.
 #define FLAG_TEXT_OFF 2.5 // The text of a flag beyond its end, in points,
@@ -84,6 +86,8 @@
 #define FAR_GRID 1e9 // Beyond any page, in grid units.
 #define NC_R 1.8 // Half the cross of a pin left unconnected, in points.
 #define ROOM_SLACK 0.01 // What the room the drawing keeps lets go, in points.
+#define NO_ROW (-1e9) // The top of the row at the bottom when there is none,
+#define ROW_FLOOR (-1e8) // and over any top it has.
 enum {
 	MARGIN = 8, // Grid units round everything, for the router.
 	LABEL_OUTS = 4, // The steps a label moves out.
@@ -176,6 +180,11 @@ struct draw {
 	// The note boxes placed so far, in points of the drawing.
 	double (*note_box)[4];
 	size_t nnote_box;
+	// The room of the row of parts at the bottom of the sheet, in
+	// points, from the foot record of its template, and the top of the
+	// row in grid units, NO_ROW for none.
+	double foot[4];
+	double row_top;
 };
 
 static void *xrealloc(void *p, size_t n)
@@ -1297,20 +1306,20 @@ static int flag_box(const struct sch_part *q, double b[4], struct text_at *ta)
 	off = flag_off(fl);
 	px = pin_at.x * GRID + way_dx[out] * off;
 	py = pin_at.y * GRID + way_dy[out] * off;
-	w = sch_text_width(q->text, TEXT);
+	w = sch_text_width(q->text, FLAG_TEXT);
 	ta->x = px;
 	if (out == SCH_U || out == SCH_D) {
 		ta->align = 1;
-		ta->y = out == SCH_U ? py : py - TEXT;
+		ta->y = out == SCH_U ? py : py - FLAG_TEXT;
 		b[0] = px - w / 2;
 	} else {
 		ta->align = out == SCH_L ? 2 : 0;
-		ta->y = py - TEXT / 2;
+		ta->y = py - FLAG_TEXT / 2;
 		b[0] = out == SCH_L ? px - w : px;
 	}
-	b[1] = ta->y - DESCENT;
+	b[1] = ta->y - FLAG_DESCENT;
 	b[2] = b[0] + w;
-	b[3] = ta->y + TEXT;
+	b[3] = ta->y + FLAG_TEXT;
 	return 1;
 }
 
@@ -1653,6 +1662,7 @@ static void sheet(struct draw *dr, double room[4], double paper[2], int print)
 	FILE *f = NULL;
 
 	room[0] = room[1] = room[2] = room[3] = 0;
+	dr->foot[0] = dr->foot[1] = dr->foot[2] = dr->foot[3] = 0;
 	paper[0] = paper[1] = 0;
 	if (!path) {
 		sch_die("%s: no sheet %s in the library", dr->sch.file,
@@ -1675,6 +1685,9 @@ static void sheet(struct draw *dr, double room[4], double paper[2], int print)
 		} else if ((!strncmp(buf, "room", strlen("room")) &&
 			    read_numbers(buf + strlen("room"), room, 4, &end) ==
 				    4) ||
+			   (!strncmp(buf, "foot", strlen("foot")) &&
+			    read_numbers(buf + strlen("foot"), dr->foot, 4,
+					 &end) == 4) ||
 			   !print) {
 		} else if (!strncmp(buf, "line ", strlen("line "))) {
 			printf("line %.2f%s\n", LW, buf + 4);
@@ -1788,7 +1801,23 @@ static const char *field(struct draw *dr, const char *name)
 	return "";
 }
 
-// The extent of the drawing in grid units.
+// Whether part i, or wire i, is of the row at the bottom: a part placed
+// there or its flag, or a wire wholly under the top of the row.
+static int in_row(const struct draw *dr, int wire, size_t i)
+{
+	int in = dr->row_top > ROW_FLOOR;
+
+	if (!wire) {
+		return in && dr->sch.part[i].bottom;
+	}
+	for (size_t j = 0; in && j < dr->polys[i].n; j++) {
+		in = dr->polys[i].xy[(2 * j) + 1] <= dr->row_top;
+	}
+	return in;
+}
+
+// The extent of the drawing in grid units, the row at the bottom left
+// out.
 static void extent(struct draw *dr, double e[4])
 {
 	e[0] = e[1] = FAR_GRID;
@@ -1796,6 +1825,9 @@ static void extent(struct draw *dr, double e[4])
 	for (size_t i = 0; i < dr->sch.npart; i++) {
 		double b[4];
 
+		if (in_row(dr, 0, i)) {
+			continue;
+		}
 		sch_box(&dr->sch.part[i], b);
 		e[0] = fmin(e[0], b[0]);
 		e[1] = fmin(e[1], b[1]);
@@ -1811,7 +1843,8 @@ static void extent(struct draw *dr, double e[4])
 		}
 	}
 	for (size_t i = 0; i < dr->npolys; i++) {
-		for (size_t j = 0; j < dr->polys[i].n; j++) {
+		for (size_t j = 0; !in_row(dr, 1, i) && j < dr->polys[i].n;
+		     j++) {
 			e[0] = fmin(e[0], dr->polys[i].xy[2 * j]);
 			e[1] = fmin(e[1], dr->polys[i].xy[(2 * j) + 1]);
 			e[2] = fmax(e[2], dr->polys[i].xy[2 * j]);
@@ -1841,7 +1874,7 @@ static void flag_text(struct draw *dr, const struct sch_part *q)
 		return;
 	}
 	r[0].s = q->name;
-	r[0].size = TEXT;
+	r[0].size = FLAG_TEXT;
 	if (t == q->text) {
 		r[0].s = q->text;
 		t = "";
@@ -2344,6 +2377,8 @@ static void write_part(struct draw *dr, const struct sch_part *q,
 	printf("part\n");
 }
 
+static void to_foot(struct draw *dr);
+
 // Writes the sheet as vec(5): the template, then each net's wires and
 // dots, then each part, its symbol and its text, and the flags.
 static void write_vec(struct draw *dr)
@@ -2364,6 +2399,7 @@ static void write_vec(struct draw *dr)
 	}
 	dr->ox = (room[0] + room[2]) / 2 - (e[0] + e[2]) / 2 * GRID * dr->sc;
 	dr->oy = (room[1] + room[3]) / 2 - (e[1] + e[3]) / 2 * GRID * dr->sc;
+	to_foot(dr);
 	for (size_t k = 0; k < dr->sch.nnet; k++) {
 		int any = net_wires(dr, k);
 
@@ -2682,6 +2718,20 @@ static void move_blocks(struct draw *dr, size_t a, const struct span *sp,
 	free(shift);
 }
 
+// Leaves the row at the bottom out of the spans sp[0] .. sp[n-1], which
+// keep their order; their number comes back.
+static size_t row_out(const struct draw *dr, struct span *sp, size_t n)
+{
+	size_t m = 0;
+
+	for (size_t k = 0; k < n; k++) {
+		if (!in_row(dr, sp[k].wire, sp[k].i)) {
+			sp[m++] = sp[k];
+		}
+	}
+	return m;
+}
+
 static void spread(struct draw *dr, size_t a)
 {
 	double room[4];
@@ -2695,7 +2745,7 @@ static void spread(struct draw *dr, size_t a)
 	int ok = 1;
 
 	sheet(dr, room, paper, 0);
-	n = spans(dr, a, sp);
+	n = row_out(dr, sp, spans(dr, a, sp));
 	bl.lo = sch_alloc((n + 1) * sizeof *bl.lo);
 	bl.end = sch_alloc((n + 1) * sizeof *bl.end);
 	make_blocks(sp, n, &bl);
@@ -2721,6 +2771,71 @@ static void spread(struct draw *dr, size_t a)
 	free(sp);
 	free(bl.lo);
 	free(bl.end);
+}
+
+// Finds the top of the row at the bottom, if the sheet has a foot for
+// it: of its parts, their labels and the text of their flags.
+static void find_row(struct draw *dr)
+{
+	double room[4];
+	double paper[2];
+	struct span *sp =
+		sch_alloc((dr->sch.npart + dr->npolys + 1) * sizeof *sp);
+	size_t n = spans(dr, 1, sp);
+
+	sheet(dr, room, paper, 0);
+	dr->row_top = NO_ROW;
+	for (size_t k = 0; dr->foot[2] > dr->foot[0] && k < n; k++) {
+		if (!sp[k].wire && dr->sch.part[sp[k].i].bottom) {
+			dr->row_top = fmax(dr->row_top, sp[k].hi);
+		}
+	}
+	free(sp);
+}
+
+// How far the row at the bottom moves on axis a, from where it stands,
+// from first to last: its left end to the left of the foot of the
+// sheet, its middle to the middle of the foot's height; in grid units.
+static int foot_shift(const struct draw *dr, size_t a, double first,
+		      double last)
+{
+	double unit = GRID * dr->sc;
+	double mid = (dr->foot[1] + dr->foot[3]) / 2;
+
+	if (a) {
+		return (int)round(((mid - dr->oy) / unit) -
+				  ((first + last) / 2));
+	}
+	return hi(((dr->foot[0] - dr->ox) / unit) - first);
+}
+
+// Moves the row at the bottom, its wires with it, to the left end of the
+// foot of the sheet, in the middle of its height.
+static void to_foot(struct draw *dr)
+{
+	struct span *sp =
+		sch_alloc((dr->sch.npart + dr->npolys + 1) * sizeof *sp);
+
+	for (size_t a = 0; dr->row_top > ROW_FLOOR && a < 2; a++) {
+		size_t n = spans(dr, a, sp);
+		double first = FAR_GRID;
+		double last = -FAR_GRID;
+		int d = 0;
+
+		for (size_t k = 0; k < n; k++) {
+			if (in_row(dr, sp[k].wire, sp[k].i)) {
+				first = fmin(first, sp[k].lo);
+				last = fmax(last, sp[k].hi);
+			}
+		}
+		d = foot_shift(dr, a, first, last);
+		for (size_t k = 0; k < n; k++) {
+			if (in_row(dr, sp[k].wire, sp[k].i)) {
+				move_span(dr, a, &sp[k], d);
+			}
+		}
+	}
+	free(sp);
 }
 
 // Leaves out of the drawing the parts that found no place (the reader
@@ -2904,6 +3019,7 @@ int main(int argc, char **argv)
 		route_all(&ctx);
 		trace(&ctx);
 		labels_all(&ctx);
+		find_row(&ctx);
 		spread(&ctx, 0);
 		spread(&ctx, 1);
 		check_room(&ctx);
