@@ -39,6 +39,7 @@
 // -l each net's track length and vias are printed too, one net a line.
 
 #include "pcbsrc.h"
+#include "util.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -664,12 +665,12 @@ static void stale_part(struct check *ck, const struct pcb_part *p,
 	y = pcb_strdup(was);
 	x[a - by] = 0;
 	y[b - was] = 0;
-	for (char *u = strtok_r(x + 4, " ", &sx),
-		  *v = strtok_r(y + 4, " ", &sy);
-	     u && v;
-	     u = strtok_r(NULL, " ", &sx), v = strtok_r(NULL, " ", &sy)) {
-		char *nu = strtok_r(NULL, " ", &sx);
-		char *nv = strtok_r(NULL, " ", &sy);
+	sx = x + 4;
+	sy = y + 4;
+	for (char *u = token(&sx, " "), *v = token(&sy, " "); u && v;
+	     u = token(&sx, " "), v = token(&sy, " ")) {
+		char *nu = token(&sx, " ");
+		char *nv = token(&sy, " ");
 
 		if (nu && nv && strcmp(nu, nv) != 0) {
 			printf("%s: %s (%s) was placed with its pad %s on %s, "

@@ -64,6 +64,7 @@
 // statement puts its root, then pushed out its way until clear.
 
 #include "pcbsrc.h"
+#include "util.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1494,7 +1495,7 @@ static int top_block(const struct placer *pl, size_t s)
 static void read_block(struct placer *pl, const struct pcb_stmt *st)
 {
 	char *text = pcb_section(&pl->b, st->w[1]);
-	FILE *f = text ? fmemopen(text, strlen(text), "r") : NULL;
+	FILE *f = text ? text_stream(text, strlen(text)) : NULL;
 	struct block bl;
 
 	if (!f) {

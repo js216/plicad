@@ -491,10 +491,7 @@ static struct lines read_lines(const char *path, int k)
 			fail(path, "out of memory");
 		}
 		ls.line = more;
-		ls.line[ls.n] = strdup(buf);
-		if (!ls.line[ls.n]) {
-			fail(path, "out of memory");
-		}
+		ls.line[ls.n] = xstrdup(buf);
 		if (starts(buf, "clear")) {
 			ls.nclear++;
 		}
@@ -853,11 +850,11 @@ static void read_opts(int argc, char **argv, struct opts *o)
 			}
 			o->have = 1;
 		} else if (!strcmp(argv[i], "-p") && i + 1 < argc) {
-			char *save = NULL;
+			char *rest = argv[++i];
 
 			o->region = 1;
-			for (char *t = strtok_r(argv[++i], ",", &save); t;
-			     t = strtok_r(NULL, ",", &save)) {
+			for (char *t = token(&rest, ","); t;
+			     t = token(&rest, ",")) {
 				char **more = (char **)realloc(
 					(void *)o->want,
 					(o->nwant + 1) * sizeof *o->want);

@@ -482,7 +482,7 @@ void vg_load_stream(struct vg *vg, struct vg_file *f, FILE *in, double via)
 	double *xy = NULL;
 
 	start_file(vg, f);
-	while (getline(&line, &cap, in) > 0) {
+	while (get_line(&line, &cap, in) > 0) {
 		line[strcspn(line, "\n")] = 0;
 		state_record(vg, line);
 		if (starts(line, "disk ") || starts(line, "line ") ||

@@ -119,9 +119,8 @@ void vg_corner(struct vg *vg, const char *s)
 
 void vg_title(Display *dp, Window w, const char *path, int dir)
 {
-	char *full = realpath(path, NULL);
 	char *t = NULL;
-	const char *name = full ? full : path;
+	const char *name = path;
 	size_t n = strlen(name);
 
 	if (dir) {
@@ -144,7 +143,6 @@ void vg_title(Display *dp, Window w, const char *path, int dir)
 				(const unsigned char *)t, (int)strlen(t));
 	}
 	free(t);
-	free(full);
 }
 
 // Writes the picture of the window to the shot asked for, as PPM, and

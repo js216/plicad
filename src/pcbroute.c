@@ -66,6 +66,7 @@
 // renamed part for part and net for net (pcb_passes).
 
 #include "pcbsrc.h"
+#include "util.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -2269,7 +2270,7 @@ static void take_block(struct router *rt, const struct pcb_stmt *st,
 {
 	struct pcb lk;
 	char *text = pcb_section(&rt->b, st->w[1]);
-	FILE *f = text ? fmemopen(text, strlen(text), "r") : NULL;
+	FILE *f = text ? text_stream(text, strlen(text)) : NULL;
 	long r = -1;
 	struct pcb_pt mv = { NAN, NAN };
 

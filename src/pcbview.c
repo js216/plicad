@@ -580,12 +580,10 @@ struct pad {
 };
 
 // The files of the names of one kind, of pads or of tracks: the text of
-// each size as it is written, a stream into memory opened when a name
-// of the size comes.
+// each size as it is written, a temporary file opened when a name of the
+// size comes.
 struct sizes {
 	FILE *out[NAMES];
-	char *buf[NAMES];
-	size_t len[NAMES];
 };
 
 // The text of a name, centered at (x, y), turned a degrees and upright,
@@ -603,12 +601,13 @@ static void name(struct sizes *o, const char *text, double x, double y,
 		return;
 	}
 	if (!o->out[b]) {
-		o->out[b] = open_memstream(&o->buf[b], &o->len[b]);
+		o->out[b] = tmpfile();
 		if (!o->out[b]) {
 			return;
 		}
 	}
-	// The middle of the capitals on (x, y); an error shows at the end.
+	// The middle of the capitals on (x, y); an error shows as the file
+	// is read back.
 	(void)fprintf(o->out[b], "text %.5f %.3f 1 %.5f %.5f %s\n", s, a,
 		      x + (s * sin(r) / 2), y - (s * cos(r) / 2), text);
 }
@@ -763,6 +762,12 @@ static void out_of_memory(void)
 	exit(2);
 }
 
+static void no_temp(void)
+{
+	(void)fprintf(stderr, "pcbview: cannot write a temporary file\n");
+	exit(2);
+}
+
 // A net record: net NAME [class CLASS].
 static void net_record(struct reader *rd, char *line)
 {
@@ -897,24 +902,17 @@ static void load_names(struct pcbv *pv, struct names *nm, struct sizes *out)
 {
 	for (int k = 0; k < 2; k++) {
 		for (int b = 0; b < NAMES; b++) {
-			FILE *f = NULL;
-			int failed = 0;
+			FILE *f = out[k].out[b];
 
-			if (!out[k].out[b]) {
+			if (!f) {
 				continue;
 			}
-			failed = ferror(out[k].out[b]);
-			if (fclose(out[k].out[b]) || failed) {
-				out_of_memory();
+			if (!stream_rewind(f)) {
+				no_temp();
 			}
-			f = fmemopen(out[k].buf[b], out[k].len[b], "r");
-			if (f) {
-				vg_load_stream(&pv->vg,
-					       k ? &nm->track[b] : &nm->pad[b],
-					       f, -1);
-				(void)fclose(f);
-			}
-			free(out[k].buf[b]);
+			vg_load_stream(&pv->vg, k ? &nm->track[b] : &nm->pad[b],
+				       f, -1);
+			(void)fclose(f);
 		}
 	}
 }
@@ -935,7 +933,7 @@ static struct names *make_names(struct pcbv *pv, const char *path)
 		(void)fprintf(stderr, "%s: cannot read\n", path);
 		exit(2);
 	}
-	while (getline(&line, &cap, in) > 0) {
+	while (get_line(&line, &cap, in) > 0) {
 		record(&rd, line);
 	}
 	for (size_t i = 0; i < rd.npad; i++) {
@@ -1123,16 +1121,12 @@ static void corner_text(struct pcbv *pv, const struct track *t)
 static void select_track(struct pcbv *pv, size_t l, const struct track *t)
 {
 	const struct names *nm = pv->ls[l].names;
-	char *buf = NULL;
-	size_t len = 0;
-	FILE *out = open_memstream(&buf, &len);
-	FILE *in = NULL;
-	int failed = 0;
+	FILE *out = tmpfile();
 
 	if (!out) {
 		return;
 	}
-	// An error of a write shows at the end.
+	// An error of a write shows as the file is read back.
 	for (size_t k = 0; k < nm->ntracks; k++) {
 		const struct track *r = &nm->tracks[k];
 
@@ -1145,17 +1139,12 @@ static void select_track(struct pcbv *pv, size_t l, const struct track *t)
 		}
 		(void)fprintf(out, "\n");
 	}
-	failed = ferror(out);
-	if (fclose(out) || failed) {
-		out_of_memory();
+	if (!stream_rewind(out)) {
+		no_temp();
 	}
-	in = fmemopen(buf, len, "r");
 	vg_free(&pv->vg, &pv->sel_file);
-	if (in) {
-		vg_load_stream(&pv->vg, &pv->sel_file, in, -1);
-		(void)fclose(in);
-	}
-	free(buf);
+	vg_load_stream(&pv->vg, &pv->sel_file, out, -1);
+	(void)fclose(out);
 	pv->sel_layer = (long)l;
 	corner_text(pv, t);
 }

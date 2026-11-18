@@ -61,21 +61,19 @@ char *xstrdup(const char *s)
 	return p;
 }
 
-enum { READ_CHUNK = 65536 }; // The first buffer of read_file.
+enum {
+	READ_CHUNK = 65536, // The first buffer of read_file,
+	LINE_FIRST = 128 // and of get_line.
+};
 
-char *read_file(const char *path)
+// Reads f from where it is to its end into a new string, a NUL after;
+// ferror(f) tells whether a read failed.
+static char *read_rest(FILE *f)
 {
-	int is_stdin = strcmp(path, "-") == 0;
-	FILE *f = is_stdin ? stdin : fopen(path, "rb");
 	size_t cap = READ_CHUNK;
 	size_t n = 0;
-	char *b = NULL;
-	int bad = 0;
+	char *b = xmalloc(cap);
 
-	if (!f) {
-		die("cannot open %s", path);
-	}
-	b = xmalloc(cap);
 	for (;;) {
 		size_t want = 0;
 		size_t k = 0;
@@ -91,6 +89,21 @@ char *read_file(const char *path)
 			break;
 		}
 	}
+	b[n] = 0;
+	return b;
+}
+
+char *read_file(const char *path)
+{
+	int is_stdin = strcmp(path, "-") == 0;
+	FILE *f = is_stdin ? stdin : fopen(path, "rb");
+	char *b = NULL;
+	int bad = 0;
+
+	if (!f) {
+		die("cannot open %s", path);
+	}
+	b = read_rest(f);
 	bad = ferror(f);
 	if (!is_stdin && fclose(f) != 0) {
 		bad = 1;
@@ -99,8 +112,76 @@ char *read_file(const char *path)
 		free(b);
 		die("cannot read %s", path);
 	}
-	b[n] = 0;
 	return b;
+}
+
+long get_line(char **line, size_t *cap, FILE *in)
+{
+	size_t n = 0;
+	int c = 0;
+
+	while ((c = getc(in)) != EOF) {
+		if (n + 2 > *cap) {
+			*cap = *cap ? 2 * *cap : LINE_FIRST;
+			*line = xrealloc(*line, *cap);
+		}
+		(*line)[n++] = (char)c;
+		if (c == '\n') {
+			break;
+		}
+	}
+	if (!n) {
+		return -1;
+	}
+	(*line)[n] = 0;
+	return (long)n;
+}
+
+char *token(char **s, const char *delim)
+{
+	char *t = *s + strspn(*s, delim);
+	char *end = t + strcspn(t, delim);
+
+	if (!*t) {
+		*s = t;
+		return NULL;
+	}
+	*s = *end ? end + 1 : end;
+	*end = 0;
+	return t;
+}
+
+FILE *text_stream(const char *text, size_t len)
+{
+	FILE *f = tmpfile();
+
+	if (f && (fwrite(text, 1, len, f) != len || fflush(f) != 0 ||
+		  fseek(f, 0, SEEK_SET) != 0)) {
+		(void)fclose(f);
+		return NULL;
+	}
+	return f;
+}
+
+int stream_rewind(FILE *f)
+{
+	return !ferror(f) && fflush(f) == 0 && fseek(f, 0, SEEK_SET) == 0;
+}
+
+char *stream_text(FILE *f)
+{
+	char *t = NULL;
+	int bad = !stream_rewind(f);
+
+	if (!bad) {
+		t = read_rest(f);
+		bad = ferror(f);
+	}
+	if (fclose(f) != 0 || bad) {
+		free(t);
+		return NULL;
+	}
+	return t;
 }
 
 char *next_line(char **s)

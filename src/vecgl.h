@@ -193,8 +193,8 @@ void vg_stroke(double x, double y, const char *s);
 // Draws text in the stroke font in a black box in the upper right
 // corner of the window.
 void vg_corner(struct vg *vg, const char *s);
-// Titles window w by the absolute path of path (WM_NAME and
-// _NET_WM_NAME), or with dir by its directory, a slash at the end.
+// Titles window w by path as given (WM_NAME and _NET_WM_NAME), or with
+// dir by its directory, a slash at the end (./ for none).
 void vg_title(Display *d, Window w, const char *path, int dir);
 
 #endif

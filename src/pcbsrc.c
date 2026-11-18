@@ -8,6 +8,7 @@
 
 #include "pcbsrc.h"
 #include "stroke.h"
+#include "util.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -1631,17 +1632,15 @@ static size_t store_of(struct pcb *b, const char *name)
 
 // Splits the lock into its sections: the group's (the board's, "",
 // for none) goes to the stream returned, the rest to the stores.
-static FILE *sections(struct pcb *b, FILE *lock, const char *group, char **text,
-		      size_t *len)
+static FILE *sections(struct pcb *b, FILE *lock, const char *group)
 {
 	static const char head[] = "# lock of ";
 	char *line = pcb_alloc(LINE);
 	char name[NAME_LEN] = "";
-	FILE *mine = open_memstream(text, len);
-	int failed = 0;
+	FILE *mine = tmpfile();
 
 	if (!mine) {
-		pcb_die("out of memory");
+		pcb_die("cannot write a temporary file");
 	}
 	while (fgets(line, LINE, lock)) {
 		size_t k = 0;
@@ -1664,11 +1663,10 @@ static FILE *sections(struct pcb *b, FILE *lock, const char *group, char **text,
 		b->sec_text[k] = t;
 	}
 	free(line);
-	failed = ferror(mine);
-	if (fclose(mine) || failed) {
-		pcb_die("out of memory");
+	if (!stream_rewind(mine)) {
+		pcb_die("cannot write a temporary file");
 	}
-	return fmemopen(*text, *len, "r");
+	return mine;
 }
 
 // The depth of a group: its dots.
@@ -2139,12 +2137,10 @@ static char *copy_text(const struct pcb *b, const struct pcb_copy *cp,
 	char *out = NULL;
 	char *line = pcb_alloc(LINE);
 	char **w = (char **)pcb_alloc(WORDS * sizeof *w);
-	size_t len = 0;
-	FILE *f = open_memstream(&out, &len);
-	int failed = 0;
+	FILE *f = tmpfile();
 
 	if (!f) {
-		pcb_die("out of memory");
+		pcb_die("cannot write a temporary file");
 	}
 	while (*text) {
 		size_t l = strcspn(text, "\n");
@@ -2161,9 +2157,9 @@ static char *copy_text(const struct pcb *b, const struct pcb_copy *cp,
 			copy_line(b, cp, &r, f);
 		}
 	}
-	failed = ferror(f);
-	if (fclose(f) || failed) {
-		pcb_die("out of memory");
+	out = stream_text(f);
+	if (!out) {
+		pcb_die("cannot write a temporary file");
 	}
 	free(line);
 	free((void *)w);
@@ -2280,39 +2276,29 @@ static struct pass_group *pass_groups(const struct pcb *src, size_t *n)
 	return g;
 }
 
-// The lock the pass before wrote, the len bytes of text, to read; NULL
-// for none.
-static FILE *lock_in(char *text, size_t len)
+// The lock the pass before wrote into the temporary file f, to read
+// from its start; NULL for none, f closed.  Dies if it is not all
+// written.
+static FILE *lock_in(FILE *f)
 {
-	FILE *f = NULL;
+	long n = ftell(f);
 
-	if (!len) {
+	if (n < 0 || !stream_rewind(f)) {
+		pcb_die("cannot write a temporary file");
+	}
+	if (!n) {
+		(void)fclose(f);
 		return NULL;
 	}
-	f = fmemopen(text, len, "r");
-	if (!f) {
-		pcb_die("out of memory");
-	}
 	return f;
-}
-
-// Closes the stream f in memory, or dies if it is not all written.
-static void close_mem(FILE *f)
-{
-	int bad = ferror(f);
-
-	if (fclose(f) || bad) {
-		pcb_die("out of memory");
-	}
 }
 
 int pcb_passes(const struct pcb_run *r, pcb_pass *pass)
 {
 	struct pcb src;
 	struct pass_group *groups = NULL;
-	char *text = NULL;
+	FILE *prev = NULL; // The lock the pass before wrote, to read.
 	size_t ng = 0;
-	size_t len = 0;
 	int failed = 0;
 
 	pcb_read(&src, r->file, r->lib, NULL, NULL);
@@ -2326,14 +2312,12 @@ int pcb_passes(const struct pcb_run *r, pcb_pass *pass)
 	groups = pass_groups(&src, &ng);
 	for (size_t i = 0; i <= ng; i++) {
 		struct pcb_run step = *r;
-		char *next = NULL;
-		size_t nlen = 0;
 
 		step.group = i < ng ? groups[i].name : NULL;
-		step.out = i < ng ? open_memstream(&next, &nlen) : r->out;
-		step.in = i ? lock_in(text, len) : r->in;
+		step.out = i < ng ? tmpfile() : r->out;
+		step.in = i ? prev : r->in;
 		if (!step.out) {
-			pcb_die("out of memory");
+			pcb_die("cannot write a temporary file");
 		}
 		if (i < ng && groups[i].copy) {
 			failed = copy_lock(&step) || failed;
@@ -2343,14 +2327,8 @@ int pcb_passes(const struct pcb_run *r, pcb_pass *pass)
 		if (i && step.in) {
 			(void)fclose(step.in);
 		}
-		if (i < ng) {
-			close_mem(step.out);
-		}
-		free(text);
-		text = next;
-		len = nlen;
+		prev = i < ng ? lock_in(step.out) : NULL;
 	}
-	free(text);
 	free(groups);
 	pcb_free(&src);
 	return failed;
@@ -2472,15 +2450,10 @@ static void read_widths(struct pcb *b)
 // Reads the section of the group of the lock into b.
 static void read_section(struct pcb *b, FILE *lock, const char *group)
 {
-	char *text = NULL;
-	size_t len = 0;
-	FILE *mine = sections(b, lock, group, &text, &len);
+	FILE *mine = sections(b, lock, group);
 
-	if (mine) {
-		read_lock(b, mine);
-		(void)fclose(mine);
-	}
-	free(text);
+	read_lock(b, mine);
+	(void)fclose(mine);
 }
 
 void pcb_read(struct pcb *b, const char *file, struct pcb_lib *lib, FILE *lock,

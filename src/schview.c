@@ -28,7 +28,7 @@
 // times), C zooms out two times, F5 reads the file again (Loading... in
 // the upper right meanwhile), ? shows or hides a help of the keys, and
 // q quits.  The
-// window's title is the absolute path of the file.  Commands come on
+// window's title is the path of the file as given.  Commands come on
 // stdin, one a line: "select NAME", "select", "center",
 // "shot FILE" (the next frame as a picture), and "page next", "page
 // prev" and "page N".  So two viewers
@@ -263,12 +263,11 @@ static void open_color(struct vg *vg, const struct vg_run *r)
 
 static void badge(FILE *out, const struct note *nt);
 
-// Closes a stream of text written, or exits if a write failed.
-static void close_text(FILE *out)
+// Takes a temporary file written back to its start, or exits if a write
+// failed.
+static void rewind_text(FILE *f)
 {
-	int failed = ferror(out);
-
-	if (fclose(out) || failed) {
+	if (!stream_rewind(f)) {
 		exit(2);
 	}
 }
@@ -287,10 +286,7 @@ static void *grow(void *p, size_t n)
 static void open_badge(struct schv *sv)
 {
 	struct vg_file *f = sv->open_file;
-	char *text = NULL;
-	size_t len = 0;
 	FILE *out = NULL;
-	FILE *in = NULL;
 
 	if (sv->hover != sv->badge_of || !f) {
 		if (f) {
@@ -302,20 +298,18 @@ static void open_badge(struct schv *sv)
 		if (sv->hover < 0) {
 			return;
 		}
-		out = open_memstream(&text, &len);
+		out = tmpfile();
 		if (!out) {
 			exit(2);
 		}
 		badge(out, &sv->notes[sv->hover]);
-		close_text(out);
-		in = fmemopen(text, len, "r");
+		rewind_text(out);
 		f = calloc(1, sizeof *f);
-		if (!in || !f) {
+		if (!f) {
 			exit(2);
 		}
-		vg_load_stream(&sv->vg, f, in, 0);
-		(void)fclose(in);
-		free(text);
+		vg_load_stream(&sv->vg, f, out, 0);
+		(void)fclose(out);
 		sv->open_file = f;
 	}
 	if (sv->hover >= 0) {
@@ -718,13 +712,10 @@ static void note_record(struct schv *sv, const char *line, size_t pg)
 	if (scan(&r, "note %lf %lf %511s %n", &nt.x, &nt.y, nt.group, &o) ==
 		    3 &&
 	    o) {
-		nt.text = strdup(line + o);
+		nt.text = xstrdup(line + o);
 		nt.page = pg;
 		sv->notes =
 			grow(sv->notes, (sv->nnotes + 1) * sizeof *sv->notes);
-		if (!nt.text) {
-			exit(2);
-		}
 		sv->notes[sv->nnotes++] = nt;
 	}
 }
@@ -893,7 +884,7 @@ static void badge(FILE *out, const struct note *nt)
 {
 	double h = NOTE_BOX / 2;
 
-	// An error of a write shows as the stream closes.
+	// An error of a write shows as the file is read back.
 	(void)fprintf(out,
 		      "line 0.6 %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f "
 		      "%.3f %.3f\n",
@@ -907,10 +898,8 @@ static void badge(FILE *out, const struct note *nt)
 // their own.
 static void note_boxes(struct schv *sv, size_t pg)
 {
-	char *text = NULL;
-	size_t len = 0;
-	FILE *out = open_memstream(&text, &len);
-	FILE *in = NULL;
+	FILE *out = tmpfile();
+	size_t n = 0;
 
 	sv->note_files = (struct vg_file **)grow(
 		(void *)sv->note_files, (pg + 1) * sizeof *sv->note_files);
@@ -923,19 +912,18 @@ static void note_boxes(struct schv *sv, size_t pg)
 
 		if (nt->page == pg) {
 			badge(out, nt);
+			n++;
 		}
 	}
-	close_text(out);
-	in = len ? fmemopen(text, len, "r") : NULL;
-	if (in) {
+	rewind_text(out);
+	if (n) {
 		sv->note_files[pg] = calloc(1, sizeof **sv->note_files);
 		if (!sv->note_files[pg]) {
 			exit(2);
 		}
-		vg_load_stream(&sv->vg, sv->note_files[pg], in, 0);
-		(void)fclose(in);
+		vg_load_stream(&sv->vg, sv->note_files[pg], out, 0);
 	}
-	free(text);
+	(void)fclose(out);
 }
 
 // The number of the page of the text buf: of its page record, page W H
@@ -955,9 +943,9 @@ static int page_number(const struct schv *sv, const char *buf)
 
 // Takes the text buf of a page, len long and a NUL after, as the next
 // page.
-static void add_page(struct schv *sv, char *buf, size_t len)
+static void add_page(struct schv *sv, const char *buf, size_t len)
 {
-	FILE *m = fmemopen(buf, len, "r");
+	FILE *m = text_stream(buf, len);
 
 	sv->pages = (struct vg_file **)grow(
 		(void *)sv->pages, (sv->npages + 1) * sizeof *sv->pages);
@@ -986,7 +974,7 @@ static void load(struct schv *sv)
 	size_t cap = 0;
 	size_t len = 0;
 	size_t bcap = 0;
-	ssize_t n = 0;
+	long n = 0;
 	int paged = 0;
 
 	sv->npages = 0;
@@ -1003,7 +991,7 @@ static void load(struct schv *sv)
 		exit(2);
 	}
 	for (int more = 1; more;) {
-		n = getline(&line, &cap, in);
+		n = get_line(&line, &cap, in);
 		more = n > 0;
 		// A page ends at the next page record; what comes before the
 		// first is the first page's.

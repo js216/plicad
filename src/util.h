@@ -61,6 +61,27 @@ char *xstrdup(const char *s);
 // Returns the file, or stdin for "-", NUL terminated.
 char *read_file(const char *path);
 
+// Reads the next line of in, its newline kept, into *line, its room
+// *cap, grown as needed, a NUL after it; returns its length, or -1 at
+// the end of in or on an error.  As POSIX getline.
+long get_line(char **line, size_t *cap, FILE *in);
+
+// Splits the next token off *s in place, at a character of delim, and
+// moves *s past it; returns the token, or NULL if *s holds no more.  As
+// strtok_r, *s its state.
+char *token(char **s, const char *delim);
+
+// A temporary file holding the len bytes of text, at its start, or NULL
+// if it cannot be made.
+FILE *text_stream(const char *text, size_t len);
+// Takes the temporary file f, all written, back to its start to be read;
+// returns 0 if a write failed or it cannot.
+int stream_rewind(FILE *f);
+// Reads the temporary file f, all written, back from its start and
+// closes it: its text, a NUL after, a new string; NULL if a write or the
+// read failed.
+char *stream_text(FILE *f);
+
 // Splits s in place at newlines and returns the next line without its
 // line end, or NULL.  A carriage return before the newline goes too.
 char *next_line(char **s);

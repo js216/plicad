@@ -26,6 +26,7 @@
 // flashes, arcs (G02, G03, as short lines) and regions (G36, G37), and
 // the polarity (LP).  Excellon: tools and holes, as disks.
 
+#include "util.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
@@ -121,7 +122,8 @@ struct gbr {
 
 // Prints the message and exits; as a macro, the exit shows to the
 // analyzer.
-#define die(g, msg) ((void)fprintf(stderr, "%s: %s\n", (g)->file, msg), exit(2))
+#define fail(g, msg) \
+	((void)fprintf(stderr, "%s: %s\n", (g)->file, msg), exit(2))
 
 // The whole number of steps at or over v.
 static int steps(double v)
@@ -136,7 +138,7 @@ static void *grow(const struct gbr *g, void *p, size_t n, size_t size)
 	void *q = realloc(p, (n + 1) * size);
 
 	if (!q) {
-		die(g, "out of memory");
+		fail(g, "out of memory");
 	}
 	memset((char *)q + (n * size), 0, size);
 	return q;
@@ -169,7 +171,7 @@ static void touch(struct gbr *g, struct pt p, double r)
 		g->names = grow(g, g->names, g->nnames, sizeof *g->names);
 		g->names[i].name = malloc(len);
 		if (!g->names[i].name) {
-			die(g, "out of memory");
+			fail(g, "out of memory");
 		}
 		memcpy(g->names[i].name, g->current_name, len);
 		g->names[i].box[0] = g->names[i].box[1] = NONE_YET;
@@ -399,7 +401,7 @@ static void prim_outline(struct gbr *g, const struct prim *pr)
 	double s = sin(rot * PI / HALF_TURN);
 
 	if (!xy) {
-		die(g, "out of memory");
+		fail(g, "out of memory");
 	}
 	for (int i = 0; i <= k && 4 + 2 * i < pr->n; i++) {
 		size_t j = (size_t)i;
@@ -538,14 +540,13 @@ static void flash_macro(struct gbr *g, const struct macro *m, const double *p,
 	size_t len = strlen(m->body) + 1;
 	char *body = malloc(len);
 	char *prim = NULL;
-	char *save = NULL;
+	char *rest = body;
 
 	if (!body) {
-		die(g, "out of memory");
+		fail(g, "out of memory");
 	}
 	memcpy(body, m->body, len);
-	for (prim = strtok_r(body, "*", &save); prim;
-	     prim = strtok_r(NULL, "*", &save)) {
+	for (prim = token(&rest, "*"); prim; prim = token(&rest, "*")) {
 		double a[PRIM_PARAMS];
 		struct prim pr = { a, 0, at };
 
@@ -921,11 +922,10 @@ static void excellon(struct gbr *g, char *text)
 	double d = 0;
 	double u = 1;
 	char *line = NULL;
-	char *save = NULL;
+	char *rest = text;
 
 	set_dark(g, 1);
-	for (line = strtok_r(text, "\n", &save); line;
-	     line = strtok_r(NULL, "\n", &save)) {
+	for (line = token(&rest, "\n"); line; line = token(&rest, "\n")) {
 		if (!strncmp(line, "INCH", 4)) {
 			u = MM_PER_INCH;
 		} else if (line[0] == 'T') {
@@ -1027,15 +1027,15 @@ static char *read_all(const struct gbr *g)
 	long n = -1;
 
 	if (!f || fseek(f, 0, SEEK_END)) {
-		die(g, "cannot read");
+		fail(g, "cannot read");
 	}
 	n = ftell(f);
 	if (n < 0 || fseek(f, 0, SEEK_SET)) {
-		die(g, "cannot read");
+		fail(g, "cannot read");
 	}
 	text = malloc((size_t)n + 1);
 	if (!text || fread(text, 1, (size_t)n, f) != (size_t)n) {
-		die(g, "cannot read");
+		fail(g, "cannot read");
 	}
 	text[n] = 0;
 	(void)fclose(f);

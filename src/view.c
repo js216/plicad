@@ -20,7 +20,7 @@
 // middle, centering nothing; F5 reads the scene again,
 // Loading... in the upper right meanwhile;
 // Escape deselects and hides the help; q quits.  The window's title is
-// the absolute path of the scene file.
+// the path of the scene file as given.
 // The keys h, o and s act on the part under the pointer: h hides it, o
 // shows it alone (or, with one part alone, all again, wherever the
 // pointer is) and s turns it see-through or back; H, O and S do the same
