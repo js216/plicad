@@ -2001,6 +2001,7 @@ static int lead_clear(const struct reader *rd, size_t k, size_t m)
 	ld[0] = ld[2] = at.x + (way_dx[d] * a->reach);
 	ld[1] = ld[3] = at.y + (way_dy[d] * a->reach);
 	ld[d] = d % 2 ? at.y : at.x;
+	ld[(d + 2) % 4] += d < 2 ? 1 : -1; // And a unit past.
 	ld[1 - (d % 2)] -= 1; // A unit across it, for leads.
 	ld[3 - (d % 2)] += 1;
 	for (size_t i = 0; i < rd->s->npart; i++) {
@@ -2056,6 +2057,35 @@ static int branches_fit(struct reader *rd, size_t k)
 	return ok;
 }
 
+// Moves where part k stands on part o, op, so that the first pin of k
+// on a net of o lines up with o's pin across the way, and the wire
+// between them runs straight.
+static void shared_pins(struct reader *rd, size_t k, size_t o,
+			struct of_place *op)
+{
+	struct sch_part *q = &rd->s->part[k];
+	size_t nk = q->dev->shape->npin;
+	size_t no = rd->s->part[o].dev->shape->npin;
+
+	for (size_t p = 0; p < nk; p++) {
+		for (size_t r = 0; r < no; r++) {
+			struct sch_at a = { 0, 0, 0 };
+			struct sch_at b = { 0, 0, 0 };
+
+			if (root(rd, rd->base[k] + p) !=
+			    root(rd, rd->base[o] + r)) {
+				continue;
+			}
+			q->x = q->y = 0;
+			a = sch_pin_at(q, p);
+			b = sch_pin_at(&rd->s->part[o], r);
+			op->ox = b.x - a.x;
+			op->oy = b.y - a.y;
+			return;
+		}
+	}
+}
+
 static int place_of(struct reader *rd, size_t k)
 {
 	struct sch_part *q = &rd->s->part[k];
@@ -2077,6 +2107,9 @@ static int place_of(struct reader *rd, size_t k)
 	}
 	op.ox = o ? o->x : (int)((b[0] + b[2]) / 2);
 	op.oy = o ? o->y : (int)((b[1] + b[3]) / 2);
+	if (!pl->group) {
+		shared_pins(rd, k, pl->part, &op);
+	}
 	for (int off = OF_GAP;; off++) {
 		if (off > FAR) {
 			fault(rd->faults, "%s: no room for %s", rd->where,
